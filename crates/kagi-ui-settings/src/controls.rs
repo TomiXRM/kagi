@@ -108,6 +108,8 @@ impl SettingsView {
             .or_insert_with(|| cx.focus_handle())
             .clone()
     }
+    // Keep the recorder's accessibility and interaction-state inputs explicit.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn measured(
         &self,
         id: String,
@@ -124,7 +126,7 @@ impl SettingsView {
             let paint_probes = probes.clone();
             let paint_id = id.clone();
             let focus = self.focus.get(&id).cloned();
-            return canvas(
+            canvas(
                 move |bounds, window, _| {
                     let focused = focus
                         .as_ref()
@@ -159,7 +161,7 @@ impl SettingsView {
             .top_0()
             .left_0()
             .size_full()
-            .into_any_element();
+            .into_any_element()
         }
         #[cfg(not(feature = "gui-e2e"))]
         {
@@ -167,6 +169,8 @@ impl SettingsView {
             div().absolute().into_any_element()
         }
     }
+    // One leaf builder owns accessibility, roving focus and the typed intent.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn control(
         &mut self,
         id: String,

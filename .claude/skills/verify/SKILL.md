@@ -60,8 +60,8 @@ against all three gap pixels, accounting for the theme card's existing border.
 Reverse segment and sidebar navigation put focus immediately before a selected
 sibling, so a later sibling cannot silently cover half the stroke. Disabled
 labels are dimmed without dimming the ring; its external-gap backplate gives
-one compositing surface. Deferred decoration retains the ancestor scroll mask
-and rechecks active focus, rather than escaping clips or painting over dialogs.
+one compositing surface. Ordinary local decoration stays below host overlays;
+at least 6px sibling spacing preserves its stroke without escaping ancestor clips.
 A second actual browser tab tests
 inactive ring removal without clearing selection. This does not claim an OS
 Increase Contrast bridge: the shared ring always adjusts its composited contrast.

@@ -203,8 +203,9 @@ impl SettingsView {
                 self.snapshot.effective_accent,
                 focus_background,
             );
-            let ring = div()
-                .relative()
+            div()
+                .absolute()
+                .inset(-(border_inset + px(5.)))
                 .child(
                     div()
                         .absolute()
@@ -231,8 +232,7 @@ impl SettingsView {
                         false,
                         false,
                     ))
-                });
-            (handle.clone(), ring)
+                })
         });
         let probe = cfg!(feature = "gui-e2e").then(|| self.measured(
             id.clone(),
@@ -269,40 +269,7 @@ impl SettingsView {
             .when(enabled && !selected && role != Role::RadioButton, |el| {
                 el.hover(|s| s.bg(rgb(theme().surface)))
             })
-            .when_some(focus_overlay, |el, (focus, ring)| {
-                el.child(
-                    canvas(
-                        move |bounds, window, cx| {
-                            if !focus.is_focused(window) || !window.is_window_active() {
-                                return;
-                            }
-                            // Expand the inner border box to the outer 3px gap.
-                            let bounds = bounds.dilate(border_inset + px(5.));
-                            let mut ring = ring
-                                .w(bounds.size.width)
-                                .h(bounds.size.height)
-                                .into_any_element();
-                            ring.layout_as_root(
-                                bounds.size.map(gpui::AvailableSpace::Definite),
-                                window,
-                                cx,
-                            );
-                            // Above siblings, still clipped by the ancestors.
-                            window.defer_draw(
-                                ring,
-                                bounds.origin,
-                                0,
-                                Some(window.content_mask()),
-                            );
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full(),
-                )
-            })
+            .children(focus_overlay)
             .children(probe)
             .on_prepaint(move |bounds, window, cx| {
                 if !reveal_focus.is_focused(window) {
@@ -521,7 +488,7 @@ impl SettingsView {
             .max_w_full()
             .flex()
             .flex_wrap()
-            .gap(pt(4.))
+            .gap(pt(4.).max(px(6.)))
             .px(pt(2.))
             .role(Role::RadioGroup)
             .child(
@@ -631,7 +598,7 @@ impl SettingsView {
             .p(pt(8.))
             .flex()
             .flex_col()
-            .gap(pt(4.))
+            .gap(pt(4.).max(px(6.)))
             .bg(rgb(theme().surface))
             .role(Role::TabList);
         for (index, pane) in Pane::ALL.into_iter().enumerate() {

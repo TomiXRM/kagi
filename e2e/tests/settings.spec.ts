@@ -117,6 +117,55 @@ test("theme focus is separate from selection and switch focus is separate from O
   expect((await observed(page)).graphLaneCompact).toBe(true);
 });
 
+test("short theme captions have usable width and paint names, not only ellipses", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 740 });
+  await boot(page);
+  for (const appearance of ["apple-light", "apple-dark"]) {
+    await click(page, `settings-theme-${appearance}`);
+    for (const slug of ["apple-light", "apple-dark"]) {
+      const card = await probe(page, `settings-theme-${slug}`);
+      const caption = await probe(page, `settings-theme-caption-${slug}`);
+      expect(caption.width).toBeGreaterThan(card.width * 0.6);
+      // Inspect actual painted pixels inside the real caption's layout bounds.
+      // Accessible names or fixture strings would still pass if only "..." painted.
+      const png = await page.screenshot({
+        type: "png",
+        clip: {
+          x: Math.ceil(caption.x), y: Math.ceil(caption.y),
+          width: Math.floor(caption.width) - 1, height: Math.floor(caption.height) - 1,
+        },
+      });
+      const inkWidth = await page.evaluate(async encoded => {
+        const bytes = Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0));
+        const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        image.close();
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+        let left = canvas.width;
+        let right = -1;
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 0; x < canvas.width; x++) {
+            const at = (y * canvas.width + x) * 4;
+            const contrast = Math.abs(data[at] - data[0])
+              + Math.abs(data[at + 1] - data[1])
+              + Math.abs(data[at + 2] - data[2]);
+            if (contrast > 90) {
+              left = Math.min(left, x);
+              right = Math.max(right, x);
+            }
+          }
+        }
+        return Math.max(0, right - left + 1);
+      }, png.toString("base64"));
+      expect(inkWidth, `${appearance}: ${slug} must paint a readable short name`).toBeGreaterThan(35);
+    }
+  }
+});
+
 test("all ordinary preferences use real controls and unsupported native effects are explicit", async ({ page }) => {
   await boot(page);
   await click(page, "settings-accent-theme");

@@ -64,6 +64,15 @@ impl SettingsView {
                 });
             let name: SharedString =
                 kagi_domain::text_safety::sanitize_control_bytes(palette.display_name()).into();
+            let caption_probe = self.measured(
+                format!("settings-theme-caption-{}", palette.slug),
+                Role::Label,
+                name.to_string(),
+                String::new(),
+                false,
+                false,
+                false,
+            );
             let card = self
                 .control(
                     ids[index].clone(),
@@ -120,7 +129,15 @@ impl SettingsView {
                         .flex()
                         .justify_between()
                         .gap(pt(4.))
-                        .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                        .child(
+                            div()
+                                .relative()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(caption_probe)
+                                .child(name.clone()),
+                        )
                         .when(selected, |el| el.child("✓")),
                 )
                 .when(!readable, |el| {

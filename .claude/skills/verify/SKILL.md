@@ -32,6 +32,10 @@ retaining the view while unmounted; native window/consent lifecycle still needs
 Tier A. Run the entire `npx playwright test --workers=1` suite to include the
 existing inspector resize story. WASM input uses the non-macOS keymap (Ctrl+A);
 type real key events rather than `insertText`, which bypasses that platform path.
+Theme-caption coverage measures the actual caption allocation and screenshot
+ink span for short names in both Apple themes. Accessible-name or fixture-string
+echoes are insufficient: a caption can have 122px of usable space but paint only
+a 9px ellipsis after an incorrect text-layout cache reuse.
 
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.

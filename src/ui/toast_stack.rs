@@ -347,7 +347,13 @@ pub struct ToastStack {
     removed_focus: Vec<(gpui::WindowId, gpui::FocusHandle)>,
     pub(super) expanded: [bool; 2],
     pub(super) summary_focus: [super::types::ToastCloseFocus; 2],
-    host_audiences: Vec<(gpui::WindowId, ToastAudience, gpui::ScrollHandle)>,
+    // Portable Settings and its background repository share a window, not a
+    // scroll viewport. Keep the foreground audience separate from both offsets.
+    host_audiences: Vec<(
+        gpui::WindowId,
+        ToastAudience,
+        [Option<gpui::ScrollHandle>; 2],
+    )>,
 }
 
 impl ToastStack {
@@ -373,16 +379,20 @@ impl ToastStack {
         window: gpui::WindowId,
         audience: ToastAudience,
     ) -> gpui::ScrollHandle {
-        if let Some((_, scope, scroll)) = self
+        if let Some((_, scope, scrolls)) = self
             .host_audiences
             .iter_mut()
             .find(|(id, _, _)| *id == window)
         {
             *scope = audience;
-            scroll.clone()
+            scrolls[audience as usize]
+                .get_or_insert_with(gpui::ScrollHandle::default)
+                .clone()
         } else {
             let scroll = gpui::ScrollHandle::default();
-            self.host_audiences.push((window, audience, scroll.clone()));
+            let mut scrolls = [None, None];
+            scrolls[audience as usize] = Some(scroll.clone());
+            self.host_audiences.push((window, audience, scrolls));
             scroll
         }
     }
@@ -875,8 +885,26 @@ mod tests {
             assert_eq!(stack.toasts().len(), 2);
         }
         let window = gpui::WindowId::from(1);
-        stack.set_host_audience(window, ToastAudience::Repository);
-        stack.set_host_audience(window, ToastAudience::Settings);
+        let repository = stack.set_host_audience(window, ToastAudience::Repository);
+        let settings = stack.set_host_audience(window, ToastAudience::Settings);
+        repository.set_offset(gpui::point(gpui::px(0.), gpui::px(-20.)));
+        settings.set_offset(gpui::point(gpui::px(0.), gpui::px(-80.)));
+        assert_eq!(repository.offset().y, gpui::px(-20.));
+        assert_eq!(settings.offset().y, gpui::px(-80.));
+        assert_eq!(
+            stack
+                .set_host_audience(window, ToastAudience::Repository)
+                .offset()
+                .y,
+            gpui::px(-20.)
+        );
+        assert_eq!(
+            stack
+                .set_host_audience(window, ToastAudience::Settings)
+                .offset()
+                .y,
+            gpui::px(-80.)
+        );
         assert_eq!(stack.host_audiences.len(), 1);
         assert_eq!(stack.host_audiences[0].0, window);
         assert_eq!(stack.host_audiences[0].1, ToastAudience::Settings);

@@ -433,6 +433,30 @@ fn exercise_lane(
     cx.run_until_parked();
     paint_feedback(cx, window);
     assert_visible_control(window, "toast-summary");
+    scroll_feedback(cx, window, -10_000.);
+    if i18n::lang() == i18n::Lang::Ja && theme::zoom() > 1.6 {
+        let skip = bounds(window, "busy-snackbar-skip");
+        assert!(
+            !bounds(window, "toast-container").contains(&skip.center()),
+            "fixture scrolls Skip out of view before backward keyboard traversal"
+        );
+    }
+    cx.simulate_keystrokes(window, "shift-tab");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_eq!(
+        crate::native_ax::focused(cx, window)["aria"]["label"],
+        i18n::slow_read_skip()
+    );
+    assert_visible_control(window, "busy-snackbar-skip");
+    cx.simulate_keystrokes(window, "tab");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_visible_control(window, "toast-summary");
     cx.simulate_keystrokes(window, "enter");
     cx.run_until_parked();
     paint_feedback(cx, window);

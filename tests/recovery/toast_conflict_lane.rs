@@ -457,14 +457,18 @@ fn exercise_lane(
     cx.run_until_parked();
     paint_feedback(cx, window);
     assert_visible_control(window, "toast-summary");
-    cx.simulate_keystrokes(window, "enter");
+    assert_eq!(
+        crate::native_ax::focused(cx, window)["aria"]["label"],
+        i18n::Msg::ToastCollapse.t()
+    );
+    crate::keyboard_nav::keys(cx, window, "enter");
     cx.run_until_parked();
     paint_feedback(cx, window);
     assert_eq!(
         crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]["expanded"],
         false
     );
-    cx.simulate_keystrokes(window, "enter");
+    crate::keyboard_nav::keys(cx, window, "enter");
     cx.run_until_parked();
     paint_feedback(cx, window);
     assert_eq!(
@@ -492,7 +496,7 @@ fn exercise_lane(
     assert_visible_control(window, "operation-result-details");
     crate::native_ax::node(cx, window, "busy-snackbar-caption".into());
     capture_feedback(cx, window, layout, "durable-keyboard");
-    cx.simulate_keystrokes(window, "enter");
+    crate::keyboard_nav::keys(cx, window, "enter");
     cx.run_until_parked();
     paint_feedback(cx, window);
     cx.read(|cx| {

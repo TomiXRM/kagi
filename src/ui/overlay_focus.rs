@@ -432,20 +432,11 @@ impl KagiApp {
         self.capture_overlay_return_focus(window, cx);
         self.with_ui(|ui| ui.retire_issue_conversation_scope());
         self.menu_overlay = Some(MenuOverlay::Settings);
-        self.settings_scroll.set_offset(gpui::Point::default());
         let trap = self
             .settings_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
         window.focus(&trap, cx);
-        // The Select entity survives closing Settings. Menu and palette theme
-        // changes bypass its Confirm event, so sync its highlighted row on open.
-        if let Some(select) = &self.theme_select {
-            let slug = SharedString::from(super::theme::theme().slug.to_string());
-            select.update(cx, |state, cx| {
-                state.set_selected_value(&slug, window, cx);
-            });
-        }
         // Ensure an Ollama probe has run so the Smart Commit model picker is
         // usable even if the commit panel was never opened.
         self.refresh_smart_commit_detection(cx);

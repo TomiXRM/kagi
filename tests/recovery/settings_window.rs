@@ -94,20 +94,8 @@ fn assert_last_setting_reachable(
     repo: AnyWindowHandle,
     settings: AnyWindowHandle,
 ) {
-    let owner = cx
-        .update_window(repo, |_, window, cx| {
-            window
-                .root::<gpui_component::Root>()
-                .flatten()
-                .unwrap()
-                .read(cx)
-                .view()
-                .clone()
-                .downcast::<kagi::ui::KagiApp>()
-                .unwrap()
-        })
-        .unwrap();
-    let viewport = e2e::control_bounds(settings.window_id(), "settings-window-scrollbar")
+    let _ = repo;
+    let viewport = crate::settings_controls::bounds(cx, settings, "settings-detail-scroll")
         .expect("existing page scrollbar viewport");
     cx.simulate_event(
         settings,
@@ -119,8 +107,8 @@ fn assert_last_setting_reachable(
         },
     );
     draw(cx, settings);
-    let last = e2e::control_bounds(settings.window_id(), "terminal-auto-lock-toggle-key")
-        .expect("last General setting");
+    let last = crate::settings_controls::bounds(cx, settings, "settings-theme-guide")
+        .expect("final Appearance action");
     assert!(
         last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
         "wheel reaches entire final control: {last:?} in {viewport:?}"
@@ -134,8 +122,8 @@ fn assert_last_setting_reachable(
     );
     // Switching away/back uses the production scroll reset, rather than a test
     // setter that could hide an inaccessible keyboard path.
-    for pane in ["settings-pane-1", "settings-pane-0"] {
-        let at = e2e::control_bounds(settings.window_id(), pane)
+    for pane in ["settings-pane-general", "settings-pane-appearance"] {
+        let at = crate::settings_controls::bounds(cx, settings, pane)
             .unwrap()
             .center();
         cx.simulate_click(settings, at, gpui::Modifiers::none());
@@ -145,33 +133,30 @@ fn assert_last_setting_reachable(
     for _ in 0..80 {
         cx.simulate_keystrokes(settings, "tab");
         draw(cx, settings);
-        reached = cx
-            .update_window(settings, |_, window, cx| {
-                owner.read(cx).settings_switch_focused_for_e2e(window) == Some(4)
-            })
-            .unwrap();
+        reached = crate::settings_controls::probe(cx, settings, "settings-theme-guide")
+            .is_some_and(|probe| probe.focused);
         if reached {
             break;
         }
     }
-    assert!(reached, "real Tab reaches the final General switch");
+    assert!(reached, "real Tab reaches the final Appearance action");
     // Ordinary Page Down moves the existing page scroller while keeping focus
     // on the setting; no test-only scroll setter.
     for _ in 0..4 {
         cx.simulate_keystrokes(settings, "pagedown");
         draw(cx, settings);
     }
-    let last = e2e::control_bounds(settings.window_id(), "terminal-auto-lock-toggle-key").unwrap();
+    let last = crate::settings_controls::bounds(cx, settings, "settings-theme-guide").unwrap();
     assert!(
         last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
         "keyboard reveals entire final control: {last:?} in {viewport:?}"
     );
     crate::native_ax::activate(cx);
     draw(cx, settings);
-    let node = crate::native_ax::node(cx, settings, "terminal-auto-lock-toggle-key".into());
+    let node = crate::native_ax::node(cx, settings, "settings-theme-guide".into());
     assert_eq!(
         node["aria"]["label"],
-        kagi::ui::i18n::Msg::SettingsTerminalAutoLock.t()
+        kagi::ui::i18n::Msg::SettingsCustomThemesGuide.t()
     );
 }
 
@@ -187,20 +172,13 @@ pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
                     .unwrap();
                 assert_screen_fit(cx, settings, "first content-driven resize");
                 assert_manual_move_preserved(cx, settings);
-                for pane in [1, 2, 3, 0] {
-                    let bounds = e2e::control_bounds(
-                        settings.window_id(),
-                        [
-                            "settings-pane-0",
-                            "settings-pane-1",
-                            "settings-pane-2",
-                            "settings-pane-3",
-                        ][pane],
-                    )
+                for pane in kagi_ui_settings::Pane::ALL {
+                    let bounds = crate::settings_controls::bounds(cx, settings, &format!("settings-pane-{}", pane.id()))
                     .expect("pane control");
                     cx.simulate_click(settings, bounds.center(), gpui::Modifiers::none());
                     assert_screen_fit(cx, settings, "pane switch");
                 }
+                crate::settings_controls::click(cx, settings, "settings-pane-appearance");
                 let zoom = theme::zoom();
                 theme::set_zoom(1.);
                 cx.update(theme::sync_gpui_component_theme);
@@ -352,7 +330,7 @@ fn configurations(cx: &mut VisualTestAppContext, mut run: impl FnMut(&mut Visual
             i18n::set_lang(lang);
             theme::set_zoom(zoom);
             theme::set_active("apple-light");
-            kagi::ui::settings::write_setting("settings_pane", Some("0"));
+            kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
             cx.update(theme::sync_gpui_component_theme);
             run(cx);
         }
@@ -433,12 +411,12 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
             2,
             "Escape does not close Settings"
         );
-        let pane = e2e::control_bounds(settings.window_id(), "settings-pane-1")
-            .expect("Language pane")
+        let pane = crate::settings_controls::bounds(cx, settings, "settings-pane-general")
+            .expect("General pane")
             .center();
         cx.simulate_click(settings, pane, gpui::Modifiers::none());
         draw(cx, settings);
-        assert!(e2e::control_bounds(settings.window_id(), "settings-language-heading").is_some());
+        assert_eq!(kagi::ui::settings::read_setting("settings_pane").as_deref(), Some("general"));
         cx.simulate_keystrokes(settings, "cmd-w");
         cx.run_until_parked();
         cx.simulate_keystrokes(repo, "cmd-,");
@@ -451,7 +429,7 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
         });
         draw(cx, reopened);
         assert!(
-            e2e::control_bounds(reopened.window_id(), "settings-language-heading").is_some(),
+            crate::settings_controls::probe(cx, reopened, "settings-pane-general").unwrap().selected,
             "reopen restores the last pane"
         );
         cx.update_window(reopened, |_, window, _| {
@@ -464,6 +442,30 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
         .unwrap();
         cx.simulate_keystrokes(reopened, "cmd-w");
         cx.run_until_parked();
+    });
+    configurations(cx, |cx| {
+        for (legacy, expected) in [
+            ("0", kagi_ui_settings::Pane::Appearance),
+            ("1", kagi_ui_settings::Pane::General),
+            ("2", kagi_ui_settings::Pane::SmartCommit),
+            ("3", kagi_ui_settings::Pane::Analyze),
+        ] {
+            kagi::ui::settings::write_setting("settings_pane", Some(legacy));
+            let fixture = build_fixture();
+            let (app, repo) = mount(cx, fixture.path());
+            cx.simulate_keystrokes(repo, "cmd-,");
+            cx.run_until_parked();
+            let host = cx.read(|cx| cx.windows().into_iter()
+                .find(|window| window.window_id() != repo.window_id()).unwrap());
+            draw(cx, host);
+            assert!(crate::settings_controls::probe(cx, host,
+                &format!("settings-pane-{}", expected.id())).unwrap().selected);
+            assert_eq!(kagi::ui::settings::read_setting("settings_pane").as_deref(),
+                Some(expected.id()), "legacy pane migrates to a stable ID");
+            cx.simulate_keystrokes(host, "cmd-w");
+            cx.run_until_parked();
+            unmount(cx, app, repo);
+        }
     });
     eprintln!("[gui-e2e] PASS settings_window_open_raise");
 }
@@ -495,16 +497,12 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let (other_app, other_repo) = mount(cx, fixture.path());
         let before_token = theme::theme().chrome_surface();
-        let picker = e2e::control_bounds(settings.window_id(), "settings-theme-select")
-            .expect("existing theme picker in host");
-        cx.simulate_click(settings, picker.center(), gpui::Modifiers::none());
-        draw(cx, settings);
-        cx.simulate_keystrokes(settings, "up enter");
+        crate::settings_controls::click(cx, settings, "settings-theme-apple-dark");
         cx.run_until_parked();
         assert_ne!(
             theme::theme().slug,
             "apple-light",
-            "picker applies a different theme through its existing callback"
+            "theme card applies a different theme through its production handler"
         );
         // The blank toolbar drag region shows the unified frame's chrome fill,
         // not the panel fill (distinct in Apple Dark's elevation ladder).
@@ -515,7 +513,7 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
         );
         for repo in [repo, other_repo] {
             draw(cx, repo);
-            let at = e2e::control_bounds(repo.window_id(), "toolbar-drag-region")
+            let at = crate::settings_controls::bounds(cx, repo, "toolbar-drag-region")
                 .expect("blank repository chrome")
                 .center();
             cx.update_window(repo, |_, window, _| {
@@ -581,8 +579,8 @@ pub fn scenario_settings_window_owner_release(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_settings_window_position_restore(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, repo, settings| {
-        let pane = e2e::control_bounds(settings.window_id(), "settings-pane-1")
-            .expect("Language pane")
+        let pane = crate::settings_controls::bounds(cx, settings, "settings-pane-general")
+            .expect("General pane")
             .center();
         cx.simulate_click(settings, pane, gpui::Modifiers::none());
         settle(cx, settings);
@@ -649,7 +647,7 @@ fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
             (window.bounds(), f32::from(window.viewport_size().height))
         })
         .unwrap();
-    assert!(before.1 > 500., "General pane resized the initial frame");
+    assert!(before.1 > 500., "Appearance pane resized the initial frame");
     let _quit = QuitGuard::capture(cx);
     cx.simulate_keystrokes(repo, "cmd-q");
     cx.run_until_parked();

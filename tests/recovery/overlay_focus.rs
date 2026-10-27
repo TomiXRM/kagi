@@ -437,6 +437,9 @@ pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane", "theme"]);
+    kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
@@ -459,9 +462,8 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
     keys(cx, window, "up");
     assert_eq!(selected(cx), 0);
 
-    // #812's steps: open Settings the menu's way and use the theme picker (a
-    // real click — what moves focus into Settings), then close it by each of
-    // the reported routes and step the list with a raw arrow key.
+    // A real theme-card click moves focus into the production Settings tree.
+    // Cards have no popup: either close route must immediately restore focus.
     for (close_by, arrow, expected) in [("escape", "down", 1), ("×", "up", 0)] {
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {
@@ -470,40 +472,20 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
         draw(cx, window);
-        let picker = e2e::control_bounds(window.window_id(), "settings-theme-select")
-            .expect("Settings draws the theme picker");
-        cx.simulate_click(window, picker.center(), Modifiers::none());
-        draw(cx, window);
+        let id = format!("settings-theme-{}", kagi::ui::theme::theme().slug);
+        crate::settings_controls::click(cx, window, &id);
         assert!(
-            cx.update_window(window, |_, window, cx| {
-                let select = app.read(cx).theme_select.clone().expect("theme picker");
-                select.read(cx).focus_handle(cx).is_focused(window)
-            })
-            .unwrap(),
-            "precondition: the picker click moves focus into Settings"
+            cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
+                .control_probe(&id).unwrap().focused),
+            "the real theme card holds focus"
         );
         if close_by == "escape" {
             keys(cx, window, "escape");
-            assert!(
-                cx.read(|cx| app.read(cx).menu_overlay.is_some()),
-                "the open theme picker consumes Escape before Settings"
-            );
-            // #1479-S4: popup Escape wins over the workspace fallback.
-            keys(cx, window, "escape");
         } else {
-            // While the picker's list is open, a click outside it only
-            // dismisses the list (the picker keeps focus), so × may take a
-            // second click — as it does for a user.
-            for _ in 0..2 {
-                if cx.read(|cx| app.read(cx).menu_overlay.is_none()) {
-                    break;
-                }
-                draw(cx, window);
-                let close = e2e::control_bounds(window.window_id(), "settings-close")
-                    .expect("Settings draws its × button");
-                cx.simulate_click(window, close.center(), Modifiers::none());
-                cx.run_until_parked();
-            }
+            let close = e2e::control_bounds(window.window_id(), "settings-close")
+                .expect("Settings draws its × button");
+            cx.simulate_click(window, close.center(), Modifiers::none());
+            cx.run_until_parked();
         }
         assert!(
             cx.read(|cx| app.read(cx).menu_overlay.is_none()),
@@ -529,6 +511,7 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
 /// Settings closed the same wheel event does reach the workspace, so the
 /// check can fail.
 pub fn scenario_settings_scroll_stays_in_overlay(cx: &mut VisualTestAppContext) {
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
@@ -634,6 +617,9 @@ fn held(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowH
 /// reaches it — and Escape gives the focus back to the terminal. Opened by
 /// pointer, the focus lands on the trap container, which draws no ring.
 pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane", "theme"]);
+    kagi::ui::settings::write_setting("settings_pane", Some("analyze"));
     let _ports = crate::gui_isolation::PortStore::keep();
     let _shell = crate::gui_isolation::StandInShell::install();
     let fixture = build_fixture();
@@ -697,21 +683,21 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     };
     let steps = tab_to_editor(cx);
     assert!(
-        steps >= 3,
-        "Tab must visit Settings' controls, took {steps}"
+        steps >= 2,
+        "Tab must visit the sidebar before the Analyze editor, took {steps}"
     );
     let text = editor_text(cx);
 
     // The editor never keeps Tab: it is an auto-grow input, which gpui-
     // component does not indent, so Tab / Shift+Tab fall through to Root and
-    // move on (to Save), and the walk comes back to the editor after one
+    // move on (to Reset; clean Save is disabled), and return after one
     // full turn of the trap (#977). A code editor or plain multi-line input
     // here would take Tab for indenting and stop the walk.
     keys(cx, window, "tab");
     assert_eq!(
         held(cx, &app, window),
         Held::InSettings { editor: false },
-        "analyze-ignore-tab-leaves: Tab must move from the editor to Save"
+        "analyze-ignore-tab-leaves: Tab must leave the editor for its actions"
     );
     let turn = 1 + tab_to_editor(cx);
     assert!(
@@ -833,18 +819,12 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     draw(cx, window);
-    let picker = e2e::control_bounds(window.window_id(), "settings-theme-select")
-        .expect("Settings draws the theme picker");
-    cx.simulate_click(window, picker.center(), Modifiers::none());
-    draw(cx, window);
-    assert!(
-        cx.update_window(window, |_, window, cx| {
-            let select = app.read(cx).theme_select.clone().expect("theme picker");
-            select.read(cx).focus_handle(cx).is_focused(window)
-        })
-        .unwrap(),
-        "precondition: the open theme Select popup holds focus outside the trap"
-    );
+    crate::settings_controls::click(cx, window, "settings-pane-appearance");
+    let id = format!("settings-theme-{}", kagi::ui::theme::theme().slug);
+    crate::settings_controls::click(cx, window, &id);
+    assert!(cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
+        .control_probe(&id).unwrap().focused),
+        "the theme card holds focus before the modal arrives");
     app.update(cx, |app, cx| app.open_stash_push_modal(cx));
     draw(cx, window);
     assert!(
@@ -858,11 +838,11 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     keys(cx, window, "escape");
     assert!(
         cx.read(|cx| app.read(cx).stash_push_modal().is_none()),
-        "settings-select-yields-to-modal: Escape must close the arrived modal even with the theme popup open"
+        "settings-control-yields-to-modal: Escape closes the arrived modal"
     );
 
     // A fieldless modal cannot steal focus during input initialization. Its
-    // Escape has to be routed away from the Select popup by the yield itself.
+    // Escape must be routed away from the theme card by the yield itself.
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.handle_menu_command("app.settings", window, cx)
@@ -870,20 +850,11 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     draw(cx, window);
-    let picker = e2e::control_bounds(window.window_id(), "settings-theme-select")
-        .expect("Settings theme picker");
-    cx.simulate_click(window, picker.center(), Modifiers::none());
-    draw(cx, window);
-    assert!(
-        cx.update_window(window, |_, window, cx| {
-            let app = app.read(cx);
-            let select = app.theme_select.clone().expect("theme picker");
-            select.read(cx).focus_handle(cx).is_focused(window)
-                && !app.settings_trap_focused_for_e2e(window)
-        })
-        .unwrap(),
-        "precondition: the fieldless modal arrives while the theme Select holds focus"
-    );
+    let id = format!("settings-theme-{}", kagi::ui::theme::theme().slug);
+    crate::settings_controls::click(cx, window, &id);
+    assert!(cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
+        .control_probe(&id).unwrap().focused),
+        "the fieldless modal arrives while the theme card holds focus");
     app.update(cx, |app, cx| app.open_push_modal(cx));
     draw(cx, window);
     assert!(
@@ -894,12 +865,12 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
                 .is_some_and(|root| root.is_focused(window))
         })
         .unwrap(),
-        "settings-select-fieldless-modal-focus: the popup must yield focus to the modal's root"
+        "settings-control-fieldless-modal-focus: the card yields focus to the modal root"
     );
     keys(cx, window, "escape");
     assert!(
         cx.read(|cx| app.read(cx).push_modal().is_none()),
-        "settings-select-fieldless-modal-escape: Escape must close the arrived fieldless modal"
+        "settings-control-fieldless-modal-escape: Escape closes the arrived fieldless modal"
     );
 
     // The Commit Panel's plan confirmation (its own storage) is in front
@@ -1214,6 +1185,7 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
 /// a restore while the pane is *still closing* must also recover on unmount.
 pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     use std::time::{Duration, Instant};
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
 
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();

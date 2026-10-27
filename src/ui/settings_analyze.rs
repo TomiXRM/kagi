@@ -21,6 +21,7 @@ impl KagiApp {
             .is_some_and(|alert| alert.window == window)
         {
             self.settings_controls.reset_alert = None;
+            self.settings_controls.reset_request = None;
             true
         } else {
             false
@@ -62,6 +63,8 @@ impl KagiApp {
         modal.alert_return_focus.restore_settings(window, cx);
         if confirm {
             self.save_analyze_ignore(true, window, cx);
+        } else {
+            self.settings_controls.reset_request = None;
         }
         cx.notify();
     }

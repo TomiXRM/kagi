@@ -579,20 +579,6 @@ impl KagiApp {
         self.home_github.work.pane_focus.focused(window)
     }
 
-    /// Focus Settings' switch `slot` (in drawing order, #970).
-    pub fn focus_settings_switch_for_e2e(
-        &self,
-        slot: usize,
-        window: &mut Window,
-        cx: &mut gpui::App,
-    ) {
-        self.settings_switches.focus(slot, window, cx);
-    }
-
-    /// Which of Settings' switches holds the focus, if any.
-    pub fn settings_switch_focused_for_e2e(&self, window: &Window) -> Option<usize> {
-        self.settings_switches.focused(window)
-    }
 
     /// Is the focus inside Settings' focus trap (#974) — its container or a
     /// control in it?

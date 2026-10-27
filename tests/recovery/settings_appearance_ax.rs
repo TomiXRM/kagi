@@ -24,7 +24,7 @@ fn appearance_matrix(
                     theme::set_zoom(zoom);
                     theme::set_active(preset);
                     cx.update(theme::sync_gpui_component_theme);
-                    settings::write_setting("settings_pane", Some("0"));
+                    settings::write_setting("settings_pane", Some("appearance"));
                     let fixture = build_fixture();
                     let cell = std::rc::Rc::new(std::cell::RefCell::new(None));
                     let capture = cell.clone();
@@ -58,89 +58,51 @@ fn appearance_matrix(
     }
 }
 
+fn probe(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, id: &str) -> kagi_ui_settings::ControlProbe {
+    cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).control_probe(id).unwrap_or_else(|| panic!("missing shared control {id}")))
+}
+
+fn focused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<String> {
+    cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).control_probes().into_iter().find(|probe| probe.focused).map(|probe| probe.id))
+}
+
 fn focus_theme(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    let id = format!("settings-theme-{}", theme::theme().slug);
     cx.update_window(window, |_, w, cx| {
-        use gpui::Focusable as _;
-        let focus = app
-            .read(cx)
-            .theme_select
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .focus_handle(cx);
-        focus.focus(w, cx);
-    })
-    .unwrap();
+        let view = app.read(cx).settings_entity().unwrap();
+        view.update(cx, |view, cx| view.focus_control(&id, w, cx));
+    }).unwrap();
 }
 
 fn theme_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     draw(cx, window);
-    let ax = kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-        .expect("rendered theme picker");
-    assert_eq!(ax.role, gpui::Role::ComboBox);
-    assert_eq!(ax.name, Msg::SettingsTheme.t());
-    assert_eq!(ax.value, theme::theme().display_name());
-    assert_eq!(ax.expanded, Some(false));
     let slug = theme::theme().slug.to_string();
+    let id = format!("settings-theme-{slug}");
+    let ax = probe(cx, app, &id);
+    assert_eq!(ax.role, gpui::Role::RadioButton);
+    assert_eq!(ax.name, theme::theme().display_name());
+    assert!(ax.selected);
     focus_theme(cx, app, window);
-    kagi::ui::settings_view::take_theme_option_ax_for_e2e();
-    keys(cx, window, "enter");
+    keys(cx, window, "right");
     draw(cx, window);
-    assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .expanded,
-        Some(true)
-    );
-    let options = kagi::ui::settings_view::take_theme_option_ax_for_e2e();
-    assert!(!options.is_empty());
-    assert!(options
-        .iter()
-        .all(|ax| ax.role == gpui::Role::ListBoxOption && !ax.name.is_empty()));
-    keys(cx, window, "down escape");
+    let target = focused(cx, app).expect("theme card retains keyboard focus");
+    assert_ne!(target, id);
+    assert!(!probe(cx, app, &target).selected, "focus is not selection");
+    assert_eq!(theme::theme().slug, slug, "navigation does not apply a theme");
+    keys(cx, window, "escape");
     draw(cx, window);
     assert_eq!(theme::theme().slug, slug);
-    assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .expanded,
-        Some(false)
-    );
-    assert!(cx
-        .update_window(window, |_, w, cx| {
-            use gpui::Focusable as _;
-            app.read(cx)
-                .theme_select
-                .as_ref()
-                .unwrap()
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(w)
-        })
-        .unwrap());
-    keys(cx, window, "down down enter");
+    assert_eq!(focused(cx, app).as_deref(), Some(target.as_str()));
+    keys(cx, window, "space");
     draw(cx, window);
-    let selected = cx.read(|cx| {
-        app.read(cx)
-            .theme_select
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .selected_value()
-            .unwrap()
-            .to_string()
-    });
+    let selected = target.strip_prefix("settings-theme-").unwrap();
     assert_eq!(theme::theme().slug, selected);
-    assert_eq!(
-        settings::read_setting("theme").as_deref(),
-        Some(selected.as_str())
-    );
-    assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .value,
-        theme::theme().display_name()
-    );
+    assert_eq!(settings::read_setting("theme").as_deref(), Some(selected));
+    assert!(probe(cx, app, &target).selected);
+    assert_eq!(probe(cx, app, &target).name, theme::theme().display_name());
+    let selected_count = cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).control_probes()
+        .iter().filter(|probe| probe.id.starts_with("settings-theme-") && probe.selected).count());
+    assert_eq!(selected_count, 1, "theme cards are an exclusive choice");
     custom_theme_ax(cx, app, window);
 }
 
@@ -152,20 +114,19 @@ pub fn scenario_settings_theme_select_ax(cx: &mut VisualTestAppContext) {
 fn zoom_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     for zoom in [1.0, 0.7, 1.67, 1.556, 1.667, 2.0] {
         theme::set_zoom(zoom);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         cx.update(theme::sync_gpui_component_theme);
         cx.update(|cx| cx.refresh_windows());
         draw(cx, window);
         let value = format!("{:.0}%", theme::zoom() * 100.);
-        let status = kagi::ui::settings_view::appearance_ax_for_e2e("zoom-value")
-            .expect("rendered zoom value");
+        let status = probe(cx, app, "zoom-value");
         assert_eq!(status.role, gpui::Role::Status);
         assert_eq!(status.name, i18n::settings_zoom_value(&value));
         if i18n::lang() == i18n::Lang::Ja {
             assert_eq!(status.name, format!("{} {value}", Msg::SettingsZoom.t()));
         }
         for (id, increase) in [("zoom-dec", false), ("zoom-inc", true)] {
-            let ax =
-                kagi::ui::settings_view::appearance_ax_for_e2e(id).expect("rendered zoom button");
+            let ax = probe(cx, app, id);
             assert_eq!(ax.role, gpui::Role::Button);
             assert_eq!(ax.name, i18n::settings_zoom_action(increase, &value));
             if i18n::lang() == i18n::Lang::Ja {
@@ -198,10 +159,11 @@ fn compact_threshold_ax_leg(
     // targets itself and would otherwise mask missing keyboard reveal.
     if theme::zoom() == 1.67 {
         theme::set_compact_threshold_rem(80);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         cx.update(|cx| cx.refresh_windows());
         draw(cx, window);
-        let body = e2e::control_bounds(window.window_id(), "settings-window-scrollbar").unwrap();
-        let before = e2e::control_bounds(window.window_id(), "compact-threshold-inc").unwrap();
+        let body = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
+        let before = crate::settings_controls::bounds(cx, window, "compact-threshold-inc").unwrap();
         if i18n::lang() == i18n::Lang::Ja {
             assert!(
                 before.bottom() > body.bottom(),
@@ -210,7 +172,7 @@ fn compact_threshold_ax_leg(
         }
         focus_zoom_by_tab(cx, app, window, "compact-threshold-inc", None);
         draw(cx, window);
-        let focused = e2e::control_bounds(window.window_id(), "compact-threshold-inc").unwrap();
+        let focused = crate::settings_controls::bounds(cx, window, "compact-threshold-inc").unwrap();
         // The actual kit focus target (verified by F19 during traversal), not
         // merely its row, must clear both the fixed tabs and the body bottom.
         crate::recovery_layout::contained(
@@ -239,24 +201,19 @@ fn compact_threshold_ax_leg(
         );
         draw(cx, window);
         draw(cx, window);
-        let after = e2e::control_bounds(window.window_id(), "compact-threshold-inc").unwrap();
+        let after = crate::settings_controls::bounds(cx, window, "compact-threshold-inc").unwrap();
         assert!(
             (after.top() - before.top()).abs() < gpui::px(1.),
             "manual scroll returns to the top despite retained stepper focus",
         );
-        e2e::pr_detail::clear_key_focus();
-        keys(cx, window, "f19");
-        assert_eq!(
-            e2e::pr_detail::key_focus(),
-            Some(gpui::ElementId::from("compact-threshold-inc")),
-        );
+        assert_eq!(focused(cx, app).as_deref(), Some("compact-threshold-inc"));
     }
     for threshold in [40, 70, 160] {
         theme::set_compact_threshold_rem(threshold);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         cx.update(|cx| cx.refresh_windows());
         draw(cx, window);
-        let status = kagi::ui::settings_view::appearance_ax_for_e2e("compact-threshold-value")
-            .expect("rendered relative compact threshold");
+        let status = probe(cx, app, "compact-threshold-value");
         assert_eq!(status.role, gpui::Role::Status);
         assert_eq!(status.value, format!("{threshold}rem"));
         assert_eq!(
@@ -270,7 +227,7 @@ fn compact_threshold_ax_leg(
             ("compact-threshold-dec", false, threshold == 40),
             ("compact-threshold-inc", true, threshold == 160),
         ] {
-            let ax = kagi::ui::settings_view::appearance_ax_for_e2e(id).unwrap();
+            let ax = probe(cx, app, id);
             assert_eq!(ax.role, gpui::Role::Button);
             assert_eq!(
                 ax.name,
@@ -296,11 +253,11 @@ fn compact_threshold_ax_leg(
         keys(cx, window, key);
         draw(cx, window);
         let viewport =
-            e2e::control_bounds(window.window_id(), "settings-window-scrollbar").unwrap();
+            crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
         for button in ["compact-threshold-dec", "compact-threshold-inc"] {
             crate::recovery_layout::contained(
                 viewport,
-                e2e::control_bounds(window.window_id(), button).unwrap(),
+                crate::settings_controls::bounds(cx, window, button).unwrap(),
                 "threshold stepper remains keyboard-reachable inside Settings",
             );
         }
@@ -339,9 +296,7 @@ fn compact_threshold_ax_leg(
             Some(clicked.to_string()),
         );
         assert_eq!(
-            kagi::ui::settings_view::appearance_ax_for_e2e("compact-threshold-value")
-                .unwrap()
-                .value,
+            probe(cx, app, "compact-threshold-value").value,
             format!("{clicked}rem"),
         );
         e2e::clear_control_bounds(repo.window_id(), "compact-rail");
@@ -357,18 +312,14 @@ fn compact_threshold_ax_leg(
         (159, "compact-threshold-inc", 160, "compact-threshold-dec"),
     ] {
         theme::set_compact_threshold_rem(start);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         cx.update(|cx| cx.refresh_windows());
         draw(cx, window);
         focus_zoom_by_tab(cx, app, window, id, None);
         keys(cx, window, "enter");
         draw(cx, window);
         assert_eq!(theme::compact_threshold_rem(), expected);
-        e2e::pr_detail::clear_key_focus();
-        keys(cx, window, "f19");
-        assert_eq!(
-            e2e::pr_detail::key_focus(),
-            Some(gpui::ElementId::from(opposite))
-        );
+        assert_eq!(focused(cx, app).as_deref(), Some(opposite));
     }
 }
 
@@ -407,42 +358,24 @@ fn custom_theme_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window:
         theme
     });
     theme::install_custom_themes(themes.into());
-    cx.update_window(window, |_, w, cx| {
-        let select = app.read(cx).theme_select.clone().unwrap();
-        select.update(cx, |state, cx| {
-            state.set_items(
-                kagi::ui::settings_view::theme_options()
-                    .into_iter()
-                    .filter(|t| t.slug.starts_with("ax-theme-"))
-                    .collect(),
-                w,
-                cx,
-            );
-            state.set_selected_value(&"ax-theme-a".into(), w, cx);
-        });
-        app.update(cx, |app, cx| app.set_theme("ax-theme-a", cx));
-    })
-    .unwrap();
+    app.update(cx, |app, cx| app.set_theme("ax-theme-a", cx));
     draw(cx, window);
-    focus_theme(cx, app, window);
-    kagi::ui::settings_view::take_theme_option_ax_for_e2e();
+    for slug in ["ax-theme-a", "ax-theme-b"] {
+        let ax = probe(cx, app, &format!("settings-theme-{slug}"));
+        assert_eq!(ax.role, gpui::Role::RadioButton);
+        assert_eq!(ax.name, "Duplicate");
+        assert_eq!(ax.selected, slug == "ax-theme-a");
+    }
+    cx.update_window(window, |_, window, cx| {
+        let view = app.read(cx).settings_entity().unwrap();
+        view.update(cx, |view, cx| view.focus_control("settings-theme-ax-theme-b", window, cx));
+    }).unwrap();
     keys(cx, window, "enter");
     draw(cx, window);
-    let options = kagi::ui::settings_view::take_theme_option_ax_for_e2e();
-    assert_eq!(options.len(), 2);
-    assert!(options
-        .iter()
-        .all(|ax| ax.role == gpui::Role::ListBoxOption && ax.name == "Duplicate"));
-    keys(cx, window, "down enter");
-    draw(cx, window);
     assert_eq!(theme::theme().slug, "ax-theme-b");
-    assert_eq!(
-        settings::read_setting("theme").as_deref(),
-        Some("ax-theme-b")
-    );
-    let ax = kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select").unwrap();
-    assert_eq!(ax.value, "Duplicate");
-    assert_eq!(ax.expanded, Some(false));
+    assert_eq!(settings::read_setting("theme").as_deref(), Some("ax-theme-b"));
+    assert!(probe(cx, app, "settings-theme-ax-theme-b").selected);
+    assert!(!probe(cx, app, "settings-theme-ax-theme-a").selected);
 }
 
 fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -457,18 +390,17 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         (0.8, false, 0.7),
     ] {
         theme::set_zoom(start);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         cx.update(theme::sync_gpui_component_theme);
         cx.update(|cx| cx.refresh_windows());
         draw(cx, window);
         focus_zoom_by_tab(cx, app, window, "zoom-dec", None);
         if increase {
-            e2e::pr_detail::clear_key_focus();
             keys(cx, window, "tab");
             draw_focus(cx, window);
-            keys(cx, window, "f19");
             assert_eq!(
-                e2e::pr_detail::key_focus(),
-                Some(gpui::ElementId::from("zoom-inc")),
+                focused(cx, app).as_deref(),
+                Some("zoom-inc"),
                 "one Tab moves directly between zoom buttons"
             );
         }
@@ -477,9 +409,7 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         assert_eq!(theme::zoom(), expected);
         let value = format!("{:.0}%", expected * 100.);
         assert_eq!(
-            kagi::ui::settings_view::appearance_ax_for_e2e("zoom-value")
-                .unwrap()
-                .value,
+            probe(cx, app, "zoom-value").value,
             value
         );
         assert_eq!(
@@ -492,6 +422,7 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
     }
     for (zoom, id, next) in [(0.7, "zoom-dec", "zoom-inc"), (2., "zoom-inc", "zoom-dec")] {
         theme::set_zoom(zoom);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         cx.update(theme::sync_gpui_component_theme);
         cx.update(|cx| cx.refresh_windows());
         draw(cx, window);
@@ -499,13 +430,11 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         assert_eq!(theme::zoom(), zoom, "bound direction is inert");
         focus_zoom_by_tab(cx, app, window, next, Some(id));
         if zoom == theme::ZOOM_MAX {
-            e2e::pr_detail::clear_key_focus();
             keys(cx, window, "tab");
             draw_focus(cx, window);
-            keys(cx, window, "f19");
             assert_ne!(
-                e2e::pr_detail::key_focus(),
-                Some(gpui::ElementId::from(id)),
+                focused(cx, app).as_deref(),
+                Some(id),
                 "disabled increment is not a Tab stop"
             );
         }
@@ -521,16 +450,14 @@ fn focus_zoom_by_tab(
 ) {
     focus_theme(cx, app, window);
     draw_focus(cx, window);
-    for _ in 0..30 {
+    for _ in 0..80 {
         keys(cx, window, "tab");
         draw_focus(cx, window);
-        e2e::pr_detail::clear_key_focus();
-        keys(cx, window, "f19");
-        let focused = e2e::pr_detail::key_focus();
+        let focused = focused(cx, app);
         if let Some(disabled) = disabled {
-            assert_ne!(focused, Some(gpui::ElementId::from(disabled)));
+            assert_ne!(focused.as_deref(), Some(disabled));
         }
-        if focused == Some(gpui::ElementId::from(id)) {
+        if focused.as_deref() == Some(id) {
             return;
         }
     }
@@ -552,17 +479,14 @@ fn assert_boundary_focus(
     window: AnyWindowHandle,
     increased: bool,
 ) {
-    e2e::pr_detail::clear_key_focus();
-    keys(cx, window, "f19");
     let opposite = if increased { "zoom-dec" } else { "zoom-inc" };
     assert_eq!(
-        e2e::pr_detail::key_focus(),
-        Some(gpui::ElementId::from(opposite)),
+        focused(cx, app).as_deref(),
+        Some(opposite),
         "reaching a bound preserves focus on the opposite stepper"
     );
-    // Appearance now places the relative-width stepper between Zoom and Graph.
-    // Preserve the real Tab order, including disabled threshold stops, rather
-    // than treating the new controls as a lost-focus regression.
+    // Appearance places the relative-width stepper before Reduce motion.
+    // Preserve real Tab order, including disabled threshold stops.
     let threshold = theme::compact_threshold_rem();
     for (id, enabled) in [
         (
@@ -577,11 +501,9 @@ fn assert_boundary_focus(
         if enabled {
             keys(cx, window, "tab");
             draw_focus(cx, window);
-            e2e::pr_detail::clear_key_focus();
-            keys(cx, window, "f19");
             assert_eq!(
-                e2e::pr_detail::key_focus(),
-                Some(gpui::ElementId::from(id)),
+                focused(cx, app).as_deref(),
+                Some(id),
                 "Tab after the zoom boundary follows the visible threshold controls",
             );
         }
@@ -589,11 +511,8 @@ fn assert_boundary_focus(
     keys(cx, window, "tab");
     draw_focus(cx, window);
     assert_eq!(
-        cx.update_window(window, |_, w, cx| app
-            .read(cx)
-            .settings_switch_focused_for_e2e(w))
-            .unwrap(),
-        Some(0),
-        "Tab after the threshold controls continues to Compact graph, not the window's first stop"
+        focused(cx, app).as_deref(),
+        Some("reduce-motion-toggle"),
+        "Tab after the threshold controls continues to Reduce motion"
     );
 }

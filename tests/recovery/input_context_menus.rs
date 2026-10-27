@@ -274,7 +274,7 @@ pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane"]);
     let _host = crate::settings_window::SettingsHostGuard::portable(cx);
-    settings::write_setting("settings_pane", Some("0"));
+    settings::write_setting("settings_pane", Some("appearance"));
     theme::set_zoom(1.);
     cx.update(theme::sync_gpui_component_theme);
     let fixture = build_fixture();
@@ -286,25 +286,13 @@ pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     paint(cx, window);
+    let before = theme::theme().slug.to_string();
+    let card = format!("settings-theme-{before}");
     cx.update_window(window, |_, window, cx| {
-        app.read(cx)
-            .theme_select
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .focus_handle(cx)
-            .focus(window, cx);
+        let view = app.read(cx).settings_entity().unwrap();
+        view.update(cx, |view, cx| view.focus_control(&card, window, cx));
     })
     .unwrap();
-    crate::keyboard_nav::keys(cx, window, "enter");
-    paint(cx, window);
-    assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .expanded,
-        Some(true)
-    );
-    let before = theme::theme().slug.to_string();
     crate::keyboard_nav::keys(cx, window, "cmd-.");
     paint(cx, window);
     assert!(
@@ -312,15 +300,12 @@ pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
             app.read(cx).menu_overlay,
             Some(kagi::ui::commands::MenuOverlay::Settings)
         )),
-        "Command-Period in the theme dropdown must not close Settings"
+        "Command-Period on a theme card must not close Settings"
     );
-    assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .expanded,
-        Some(false),
-        "Command-Period must close only the focused Select dropdown"
-    );
+    assert!(cx.read(|cx| {
+        app.read(cx).settings_entity().unwrap().read(cx)
+            .control_probe(&card).unwrap().selected
+    }), "cancellation must preserve the selected theme card");
     assert_eq!(theme::theme().slug, before);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS command_period_settings_select");

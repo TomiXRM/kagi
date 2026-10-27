@@ -153,8 +153,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-10-18
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Check shared core, Settings and browser host

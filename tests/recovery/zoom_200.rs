@@ -24,12 +24,12 @@ fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     }
 }
 
-fn bounds(win: AnyWindowHandle, id: &str) -> Bounds<Pixels> {
-    e2e::control_bounds(win.window_id(), id).unwrap_or_else(|| panic!("missing {id}"))
+fn bounds(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) -> Bounds<Pixels> {
+    crate::settings_controls::bounds(cx, win, id).unwrap_or_else(|| panic!("missing {id}"))
 }
 
 fn click(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
-    let at = bounds(win, id).center();
+    let at = bounds(cx, win, id).center();
     cx.simulate_mouse_move(win, at, None, gpui::Modifiers::none());
     draw(cx, win);
     cx.simulate_click(win, at, gpui::Modifiers::none());
@@ -43,8 +43,8 @@ fn root(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHand
     .unwrap();
 }
 
-fn usable(viewport: Bounds<Pixels>, win: AnyWindowHandle, id: &str) {
-    let control = bounds(win, id);
+fn usable(cx: &mut VisualTestAppContext, viewport: Bounds<Pixels>, win: AnyWindowHandle, id: &str) {
+    let control = bounds(cx, win, id);
     assert!(
         control.size.width > px(0.) && control.size.height > px(0.),
         "{id}: {control:?}"
@@ -53,10 +53,9 @@ fn usable(viewport: Bounds<Pixels>, win: AnyWindowHandle, id: &str) {
 }
 
 fn reveal_zoom(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
-    // The existing native page scroll owner reveals the zoom row.
-    let zoom_control = format!("settings-control-{}", i18n::Msg::SettingsZoom.t());
-    let control = bounds(win, &zoom_control);
-    let page = bounds(win, "settings-window-scrollbar");
+    // Reveal the actual shared stepper inside the detail-only scroll owner.
+    let control = bounds(cx, win, "zoom-dec");
+    let page = bounds(cx, win, "settings-detail-scroll");
     cx.simulate_event(
         win,
         gpui::ScrollWheelEvent {
@@ -67,8 +66,8 @@ fn reveal_zoom(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
         },
     );
     draw(cx, win);
-    usable(page, win, "zoom-dec");
-    usable(page, win, "zoom-inc");
+    usable(cx, page, win, "zoom-dec");
+    usable(cx, page, win, "zoom-inc");
 }
 
 fn settings_window(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: AnyWindowHandle) {
@@ -88,20 +87,17 @@ fn settings_window(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: A
             Bounds::new(point(px(0.), px(0.)), window.viewport_size())
         })
         .unwrap();
-    for id in [
-        "settings-pane-0",
-        "settings-pane-1",
-        "settings-pane-2",
-        "settings-pane-3",
-    ] {
-        usable(viewport, win, id);
-        click(cx, win, id);
+    for pane in kagi_ui_settings::Pane::ALL {
+        let id = format!("settings-pane-{}", pane.id());
+        usable(cx, viewport, win, &id);
+        click(cx, win, &id);
+        assert_eq!(settings::read_setting("settings_pane").as_deref(), Some(pane.id()));
     }
-    click(cx, win, "settings-pane-0");
-    assert_eq!(e2e::settings_zoom_label().as_deref(), Some("200%"));
+    click(cx, win, "settings-pane-appearance");
+    assert_eq!(crate::settings_controls::probe(cx, win, "zoom-value").unwrap().value, "200%");
     reveal_zoom(cx, win);
     assert!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("zoom-inc")
+        crate::settings_controls::probe(cx, win, "zoom-inc")
             .unwrap()
             .disabled
     );
@@ -137,7 +133,7 @@ fn settings_window(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: A
         })
         .unwrap();
     draw(cx, reopened);
-    assert_eq!(e2e::settings_zoom_label().as_deref(), Some("200%"));
+    assert_eq!(crate::settings_controls::probe(cx, reopened, "zoom-value").unwrap().value, "200%");
     cx.update_window(reopened, |_, window, _| window.remove_window())
         .unwrap();
     cx.run_until_parked();
@@ -188,13 +184,13 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                 let viewport = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
                 assert_eq!(theme::rem_size_px(), theme::BASE_REM_PX * 2.);
                 for id in ["toolbar-row", "tb-graph-mode"] {
-                    usable(viewport, win, id);
+                    usable(cx, viewport, win, id);
                 }
                 if e2e::control_bounds(win.window_id(), "tb-overflow").is_some() {
-                    usable(viewport, win, "tb-overflow");
+                    usable(cx, viewport, win, "tb-overflow");
                     crate::toolbar_overflow::open_keyboard_overflow(cx, &app, win);
                     draw(cx, win);
-                    usable(viewport, win, "tb-overflow-item-11");
+                    usable(cx, viewport, win, "tb-overflow-item-11");
                     click(cx, win, "tb-overflow-item-11");
                     assert!(
                         cx.read(|cx| app.read(cx).ui().ecosystem.is_some()),
@@ -220,7 +216,7 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                     theme::rem_size_px(),
                     theme::compact_threshold_rem(),
                 ) {
-                    usable(viewport, win, "compact-rail");
+                    usable(cx, viewport, win, "compact-rail");
                     for id in [
                         "compact-rail-local",
                         "compact-rail-remote",
@@ -230,13 +226,13 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                         "compact-rail-prs",
                         "compact-rail-issues",
                     ] {
-                        usable(viewport, win, id);
+                        usable(cx, viewport, win, id);
                     }
                 }
                 root(cx, &app, win);
                 cx.simulate_keystrokes(win, "cmd-f");
                 draw(cx, win);
-                usable(viewport, win, "sidebar-filter");
+                usable(cx, viewport, win, "sidebar-filter");
                 let filter = cx.read(|cx| app.read(cx).sidebar.filter.clone()).unwrap();
                 assert!(cx
                     .update_window(win, |_, window, cx| filter
@@ -266,7 +262,7 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                     "cp-amend-btn-hit",
                     "cp-commit-action",
                 ] {
-                    usable(viewport, win, id);
+                    usable(cx, viewport, win, id);
                 }
                 let panel = cx
                     .read(|cx| app.read(cx).ui().commit_panel.clone())
@@ -285,7 +281,7 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                     "cp-coauthor-hit",
                     "cp-amend-btn-hit",
                 ] {
-                    contained(bounds(win, "cp-body"), bounds(win, id), id);
+                    contained(bounds(cx, win, "cp-body"), bounds(cx, win, id), id);
                 }
                 assert!(bounds(win, "cp-body").bottom() <= bounds(win, "cp-commit-action").top());
                 let template_on =

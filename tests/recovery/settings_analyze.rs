@@ -5,13 +5,7 @@ use kagi::ui::{e2e, i18n, settings, theme, KagiApp};
 
 use kagi::ui::i18n::Msg;
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
-    for id in [
-        "settings-analyze-reset-alert",
-        "settings-analyze-dirty",
-        "settings-analyze-saved",
-    ] {
-        e2e::clear_control_bounds(window.window_id(), id);
-    }
+    e2e::clear_control_bounds(window.window_id(), "settings-analyze-reset-alert");
     crate::settings_controls::draw(cx, window);
 }
 
@@ -186,6 +180,7 @@ fn restarted_value(cx: &mut VisualTestAppContext) {
 }
 fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     draft(cx, app, window, "unsaved-pattern\n");
+    let retained = cx.read(|cx| app.read(cx).settings_entity().unwrap());
     click(cx, window, "settings-analyze-reset");
     assert_eq!(
         settings::read_analyze_ignore_text(),
@@ -242,6 +237,19 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
     assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
     let window = reopen(cx, app, window);
     assert_eq!(
+        cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()),
+        retained.entity_id(),
+        "closing the native window retains the production Settings view"
+    );
+    assert_eq!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).analyze_reset_focus_for_e2e(window, cx)
+        })
+        .unwrap(),
+        None,
+        "reopening cannot resurrect an invoking-window reset prompt"
+    );
+    assert_eq!(
         cx.read(|cx| app
             .read(cx)
             .analyze_ignore_input
@@ -254,6 +262,15 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
         "reopen preserves cancelled draft"
     );
     assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    click(cx, window, "settings-analyze-reset");
+    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some());
+    let window = reopen(cx, app, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none(),
+        "closing the invoking window cancels its outstanding reset prompt"
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     click(cx, window, "settings-analyze-reset");
     for _ in 0..6 {
         cx.simulate_keystrokes(window, "tab");
@@ -308,10 +325,12 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
     restarted_value(cx);
 }
 fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
-    assert!(
-        e2e::control_bounds(window.window_id(), "settings-analyze-saved").is_some(),
-        "saved draft has explicit localized state"
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
+        Msg::SettingsAnalyzeIgnoreClean.t(),
+        "clean draft has explicit localized state"
     );
+    assert!(crate::settings_controls::probe(cx, window, "settings-analyze-save").unwrap().disabled);
     click(cx, window, "settings-analyze-save");
     assert!(
         cx.read(|cx| app
@@ -328,11 +347,13 @@ fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     draft(cx, app, window, "saved-pattern\n");
     assert!(!cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-saved").is_some());
+    assert_eq!(crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
+        Msg::SettingsAnalyzeIgnoreClean.t());
     draft(cx, app, window, "unsaved-pattern\n");
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-dirty").is_some());
-    click(cx, window, "settings-pane-0");
-    click(cx, window, "settings-pane-3");
+    assert_eq!(crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
+        Msg::SettingsAnalyzeIgnoreUnsaved.t());
+    click(cx, window, "settings-pane-appearance");
+    click(cx, window, "settings-pane-analyze");
     assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     assert_eq!(
         cx.read(|cx| app
@@ -347,65 +368,72 @@ fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     );
     click(cx, window, "settings-analyze-save");
     assert_eq!(settings::read_analyze_ignore_text(), "unsaved-pattern\n");
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-saved").is_some());
+    assert_eq!(crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
+        Msg::SettingsAnalyzeIgnoreSaved.t());
+    assert!(crate::settings_controls::probe(cx, window, "settings-analyze-save").unwrap().disabled);
+    stale_analyze_result(cx, app, window);
 }
-fn help_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
-    for id in [
-        "settings-avatar-help-text",
-        "settings-fetch-help-text",
-        "settings-copy-help-text",
-        "settings-motion-help-text",
-        "settings-terminal-lock-help-text",
-        "settings-custom-themes-help-text",
+
+fn stale_analyze_result(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    draft(cx, app, window, "captured-save\n");
+    let request = cx.read(|cx| view.read(cx).analyze_request(cx));
+    // Drive the production acknowledgement only after a genuine successful
+    // fixture write, while a newer editor revision is already present.
+    settings::write_analyze_ignore(request.text.as_ref()).unwrap();
+    draft(cx, app, window, "newer-draft\n");
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.seed_analyze_result(kagi_ui_settings::AnalyzeResult::Saved(request.clone()), window, cx);
+        });
+    }).unwrap();
+    draw(cx, window);
+    assert_eq!(cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()), "newer-draft\n");
+    assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), "captured-save\n");
+    assert!(cx.read(|cx| view.read(cx).analyze_dirty(cx)));
+    assert_eq!(settings::read_analyze_ignore_text(), "captured-save\n");
+    click(cx, window, "settings-analyze-save");
+    assert_eq!(settings::read_analyze_ignore_text(), "newer-draft\n");
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.seed_analyze_result(kagi_ui_settings::AnalyzeResult::Saved(request), window, cx);
+        });
+    }).unwrap();
+    assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), "newer-draft\n",
+        "an older acknowledgement cannot roll back the newer accepted baseline");
+    assert!(!cx.read(|cx| view.read(cx).analyze_dirty(cx)));
+}
+fn help_leg(cx: &mut VisualTestAppContext, _app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    for (pane, id, text) in [
+        ("graph", "settings-avatar-help", Msg::SettingsLaneCompactDesc),
+        ("graph", "settings-copy-help", Msg::SettingsGraphCopyDesc),
+        ("network", "settings-fetch-help", Msg::SettingsAutoFetchDesc),
+        ("appearance", "settings-motion-help", Msg::SettingsReduceMotionDesc),
+        ("terminal", "settings-terminal-lock-help", Msg::SettingsTerminalAutoLockDesc),
+        ("appearance", "settings-custom-themes-help", Msg::SettingsCustomThemesDesc),
+        ("smart_commit", "settings-smart-enable-help", Msg::SettingsSmartEnableDesc),
+        ("smart_commit", "settings-provider-help", Msg::SettingsSmartProviderDesc),
+        ("analyze", "settings-analyze-help", Msg::SettingsAnalyzeIgnoreDesc),
     ] {
-        let bounds =
-            e2e::control_bounds(window.window_id(), id).expect("visible help without hover");
-        assert!(bounds.size.height > gpui::px(0.), "{id} has laid-out text");
-        assert!(
-            bounds.left() >= gpui::px(0.) && bounds.right() <= gpui::px(715.),
-            "{id} wraps inside the host"
-        );
+        click(cx, window, &format!("settings-pane-{pane}"));
+        let help = crate::settings_controls::probe(cx, window, id).expect("full help rendered without hover");
+        let viewport = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
+        assert_eq!(help.value, text.t(), "the rendered help contains the full localized explanation");
+        assert!(help.bounds.size.height > gpui::px(0.));
+        assert!(help.bounds.left() >= viewport.left() && help.bounds.right() <= viewport.right(),
+            "{id} wraps inside the production detail column");
     }
-    for (slot, id, detail) in [
-        (2, "auto-fetch-toggle", Msg::SettingsAutoFetchDesc),
-        (
-            4,
-            "terminal-auto-lock-toggle",
-            Msg::SettingsTerminalAutoLockDesc,
-        ),
-    ] {
-        cx.update_window(window, |_, window, cx| {
-            app.update(cx, |app, cx| {
-                app.focus_settings_switch_for_e2e(slot, window, cx)
-            });
-        })
-        .unwrap();
-        draw(cx, window);
-        assert_eq!(
-            kagi::ui::settings_view::recorded_switch_help(id).as_deref(),
-            Some(detail.t())
-        );
-    }
-    click(cx, window, "settings-pane-2");
-    for id in [
-        "settings-smart-enable-help-text",
-        "settings-provider-help-text",
-    ] {
-        assert!(e2e::control_bounds(window.window_id(), id).is_some());
-    }
-    click(cx, window, "settings-pane-3");
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-help-text").is_some());
 }
 pub fn scenario_settings_analyze_reset_confirm(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", reset_leg);
+    matrix(cx, "analyze", reset_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_reset_confirm");
 }
 pub fn scenario_settings_analyze_save_state(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", save_leg);
+    matrix(cx, "analyze", save_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_save_state");
 }
 pub fn scenario_settings_help_text(cx: &mut VisualTestAppContext) {
-    matrix(cx, "0", help_leg);
+    matrix(cx, "appearance", help_leg);
     eprintln!("[gui-e2e] PASS settings_help_text");
 }
 
@@ -415,9 +443,9 @@ fn portable_reset_leg(
     window: AnyWindowHandle,
 ) {
     draft(cx, app, window, "portable-draft\n");
-    let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
+    let frame = crate::settings_controls::bounds(cx, window, "settings-frame").unwrap();
     for _ in 0..12 {
-        let bounds = e2e::control_bounds(window.window_id(), "settings-analyze-reset").unwrap();
+        let bounds = crate::settings_controls::bounds(cx, window, "settings-analyze-reset").unwrap();
         if frame.contains(&bounds.center()) {
             cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
             break;
@@ -532,11 +560,11 @@ fn preserve_plan_leg(
 }
 
 pub fn scenario_settings_analyze_portable_reset(cx: &mut VisualTestAppContext) {
-    matrix_host(cx, "3", false, portable_reset_leg);
+    matrix_host(cx, "analyze", false, portable_reset_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_portable_reset");
 }
 
 pub fn scenario_settings_analyze_reset_preserves_plan(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", preserve_plan_leg);
+    matrix(cx, "analyze", preserve_plan_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_reset_preserves_plan");
 }

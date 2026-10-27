@@ -24,6 +24,26 @@ pub(crate) fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     }
 }
 
+pub(crate) fn probe(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    id: &str,
+) -> Option<kagi_ui_settings::ControlProbe> {
+    cx.update_window(window, |_, window, cx| {
+        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+            .and_then(|view| view.read(cx).control_probe(id))
+    }).unwrap()
+}
+
+pub(crate) fn bounds(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    id: &str,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    probe(cx, window, id).map(|probe| probe.bounds)
+        .or_else(|| e2e::control_bounds(window.window_id(), id))
+}
+
 fn matrix(
     cx: &mut VisualTestAppContext,
     pane: &str,
@@ -83,9 +103,13 @@ fn focus(
     slot: usize,
 ) {
     cx.update_window(window, |_, w, cx| {
-        app.update(cx, |app, cx| {
-            app.focus_settings_choice_for_e2e(models, slot, w, cx)
-        })
+        let view = app.read(cx).settings_entity().unwrap();
+        let id = if models {
+            format!("sc-model-{}", app.read(cx).smart_commit.detected_models[slot])
+        } else {
+            format!("sc-provider-{}", ["ollama", "claude-code", "codex"][slot])
+        };
+        view.update(cx, |view, cx| assert!(view.focus_control(&id, w, cx)));
     })
     .unwrap();
 }
@@ -100,18 +124,25 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
                 .map(|n| format!("model-{n}-long-local-model-name-0123456789"))
                 .collect();
             app.smart_commit.model = app.smart_commit.detected_models.first().cloned();
-            cx.notify();
+            app.seed_settings(cx);
         });
         draw(cx, window);
-        let tabs = cx.read(|cx| app.read(cx).settings_choices_for_e2e(false));
-        assert_eq!(tabs.len(), 3, "provider chips expose named selectable tabs");
-        assert_eq!(tabs.iter().filter(|t| t.2).count(), 1);
-        assert!(tabs
-            .iter()
-            .all(|t| t.0 == gpui::Role::Tab && !t.1.is_empty()));
-        assert!(tabs[2].1.contains(&i18n::provider_not_found_hint("Codex")));
+        let tabs = cx.read(|cx| {
+            let view = app.read(cx).settings_entity().unwrap();
+            ["ollama", "claude-code", "codex"].map(|slug| {
+                view.read(cx).control_probe(&format!("sc-provider-{slug}")).unwrap()
+            })
+        });
+        assert_eq!(tabs.len(), 3, "all providers remain visible");
+        assert_eq!(tabs.iter().filter(|t| t.selected).count(), 1);
+        assert!(tabs.iter().all(|t| t.role == gpui::Role::RadioButton && !t.name.is_empty()));
+        assert!(tabs[2].name.contains(&i18n::provider_not_found_hint("Codex")));
+        assert!(tabs[2].disabled && !tabs[2].selected);
         focus(cx, app, window, false, 0);
-        keys(cx, window, "right enter");
+        keys(cx, window, "right");
+        assert_eq!(cx.read(|cx| app.read(cx).smart_commit.provider), SmartProvider::Ollama,
+            "roving focus does not select a provider");
+        keys(cx, window, "enter");
         assert_eq!(
             cx.read(|cx| app.read(cx).smart_commit.provider),
             if count > 0 {
@@ -121,7 +152,11 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             }
         );
         draw(cx, window);
-        keys(cx, window, "right space");
+        keys(cx, window, "right");
+        let unavailable = probe(cx, window, "sc-provider-codex").unwrap();
+        assert!(unavailable.focused && unavailable.disabled && !unavailable.selected,
+            "unavailable choices explain themselves without becoming selected");
+        keys(cx, window, "space");
         assert_ne!(
             settings::read_setting("smart_commit_provider").as_deref(),
             Some("codex")
@@ -137,12 +172,12 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             );
             draw(cx, window);
             assert_eq!(
-                cx.read(|cx| app
-                    .read(cx)
-                    .settings_choices_for_e2e(true)
-                    .iter()
-                    .filter(|t| t.2)
-                    .count()),
+                cx.read(|cx| {
+                    let view = app.read(cx).settings_entity().unwrap();
+                    view.read(cx).control_probes().iter()
+                        .filter(|probe| probe.id.starts_with("sc-model-") && probe.selected)
+                        .count()
+                }),
                 1
             );
         }
@@ -150,44 +185,73 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             cx.read(|cx| app.read(cx).smart_commit_modal().is_none()),
             "selection does not start generation"
         );
-        let bounds = e2e::control_bounds(window.window_id(), "sc-provider-ollama").unwrap();
+        let bounds = bounds(cx, window, "sc-provider-ollama").unwrap();
         let width = cx
             .update_window(window, |_, w, _| w.viewport_size().width)
             .unwrap();
         assert!(bounds.left() >= gpui::px(0.) && bounds.right() <= width);
         for model in cx.read(|cx| app.read(cx).smart_commit.detected_models.clone()) {
-            let bounds =
-                e2e::control_bounds(window.window_id(), &format!("sc-model-{model}")).unwrap();
+            let bounds = self::bounds(cx, window, &format!("sc-model-{model}")).unwrap();
             assert!(
                 bounds.left() >= gpui::px(0.) && bounds.right() <= width,
                 "long model fits Settings"
             );
         }
+        if count > 0 {
+            focus(cx, app, window, true, 0);
+            let selected_model = cx.read(|cx| app.read(cx).smart_commit.model.clone());
+            let persisted_model = settings::read_setting("smart_commit_model");
+            app.update(cx, |app, cx| {
+                app.smart_commit.provider = SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode);
+                app.seed_settings(cx);
+            });
+            draw(cx, window);
+            assert!(probe(cx, window, "sc-provider-claude-code").unwrap().focused,
+                "a hidden model group repairs focus to the effective provider");
+            assert!(!cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
+                .control_probes().iter().any(|probe| probe.id.starts_with("sc-model-"))));
+            assert_eq!(settings::read_setting("smart_commit_model"), persisted_model,
+                "focus repair cannot persist a different model");
+            app.update(cx, |app, cx| {
+                app.smart_commit.provider = SmartProvider::Ollama;
+                app.smart_commit.detected_models.clear();
+                app.seed_settings(cx);
+            });
+            draw(cx, window);
+            let unavailable = probe(cx, window, &format!("sc-model-{}", selected_model.unwrap())).unwrap();
+            assert!(unavailable.selected && unavailable.disabled,
+                "a saved unavailable model stays visible rather than silently selecting another");
+            assert_eq!(settings::read_setting("smart_commit_model"), persisted_model);
+        }
     }
 }
 
 pub fn scenario_settings_provider_keys(cx: &mut VisualTestAppContext) {
-    matrix(cx, "2", provider_leg);
+    matrix(cx, "smart_commit", provider_leg);
     eprintln!("[gui-e2e] PASS settings_provider_keys EN/JA Light/Dark 100/167%, 0/1/20 models");
 }
 
 pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
     draw(cx, window);
-    let mut bounds = e2e::control_bounds(window.window_id(), name).unwrap();
-    let viewport = cx
-        .update_window(window, |_, w, _| w.viewport_size())
-        .unwrap();
-    for _ in 0..4 {
-        if bounds.top() >= gpui::px(0.) && bounds.bottom() <= viewport.height {
+    let mut bounds = self::bounds(cx, window, name).unwrap();
+    let viewport = if name.starts_with("settings-pane-") || probe(cx, window, name).is_none() {
+        cx.update_window(window, |_, w, _| {
+            gpui::Bounds::new(gpui::point(gpui::px(0.), gpui::px(0.)), w.viewport_size())
+        }).unwrap()
+    } else {
+        self::bounds(cx, window, "settings-detail-scroll").expect("production detail viewport")
+    };
+    for _ in 0..20 {
+        if bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom() {
             break;
         }
         cx.simulate_event(
             window,
             gpui::ScrollWheelEvent {
-                position: gpui::point(viewport.width - gpui::px(20.), viewport.height / 2.),
+                position: viewport.center(),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(
                     gpui::px(0.),
-                    gpui::px(if bounds.top() < gpui::px(0.) {
+                    gpui::px(if bounds.top() < viewport.top() {
                         500.
                     } else {
                         -500.
@@ -198,10 +262,10 @@ pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name
             },
         );
         draw(cx, window);
-        bounds = e2e::control_bounds(window.window_id(), name).unwrap();
+        bounds = self::bounds(cx, window, name).unwrap();
     }
     assert!(
-        bounds.top() >= gpui::px(0.) && bounds.bottom() <= viewport.height,
+        bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom(),
         "{name} is visible: {bounds:?} in {viewport:?}, {:?}/{}",
         i18n::lang(),
         theme::zoom()
@@ -291,18 +355,14 @@ fn dismissal_keeps_settings_commands(
             .unwrap(),
         "retired close control releases Settings focus before further input"
     );
-    keys(cx, window, "tab");
-    keys(cx, window, "left");
-    assert_eq!(
-        settings::read_setting("settings_pane").as_deref(),
-        Some("2"),
-        "pane arrows work after toast removal"
-    );
-    keys(cx, window, "right");
-    assert_eq!(
-        settings::read_setting("settings_pane").as_deref(),
-        Some("3")
-    );
+    // The sidebar uses manual selection: arrows move focus, Enter selects.
+    click(cx, window, "settings-pane-analyze");
+    keys(cx, window, "up");
+    assert_eq!(settings::read_setting("settings_pane").as_deref(), Some("analyze"));
+    keys(cx, window, "enter");
+    assert_eq!(settings::read_setting("settings_pane").as_deref(), Some("smart_commit"));
+    keys(cx, window, "down enter");
+    assert_eq!(settings::read_setting("settings_pane").as_deref(), Some("analyze"));
     cx.simulate_keystrokes(window, "cmd-w");
     cx.run_until_parked();
     assert!(
@@ -328,6 +388,8 @@ fn unwritable_directory(
         }
     }
     std::fs::write(path, b"saved bytes").unwrap();
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    let baseline = cx.read(|cx| view.read(cx).analyze_baseline().to_string());
     for name in ["settings-analyze-save", "settings-analyze-reset"] {
         let parent = path.parent().unwrap();
         let restore = Restore(
@@ -354,6 +416,9 @@ fn unwritable_directory(
         assert_eq!(error.kind, ToastKind::Error);
         assert!(error.message.contains("Permission denied"));
         assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
+        assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), baseline);
+        assert_eq!(cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()), "draft-ignore\n");
+        assert!(probe(cx, window, "settings-analyze-error").unwrap().value.contains("Permission denied"));
         drop(restore);
         assert_eq!(std::fs::read(path).unwrap(), b"saved bytes");
         dismiss_feedback(cx, app, window);
@@ -362,6 +427,8 @@ fn unwritable_directory(
 
 fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     let input = cx.read(|cx| app.read(cx).analyze_ignore_input.clone().unwrap());
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    let baseline = cx.read(|cx| view.read(cx).analyze_baseline().to_string());
     cx.update_window(window, |_, w, cx| {
         input.update(cx, |s, cx| s.set_value("draft-ignore\n", w, cx))
     })
@@ -403,7 +470,12 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
         assert!(error.message.contains("directory") || error.message.contains("Directory"));
         assert!(error.message.chars().count() <= 241);
         assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
-        assert!(e2e::control_bounds(window.window_id(), "settings-analyze-dirty").is_some());
+        assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), baseline,
+            "failed Save and Reset cannot acknowledge a new baseline");
+        assert_eq!(probe(cx, window, "settings-analyze-status").unwrap().value,
+            Msg::SettingsAnalyzeIgnoreUnsaved.t());
+        assert!(probe(cx, window, "settings-analyze-error").unwrap().value.contains("analyze_ignore"),
+            "the authoritative OS failure is visible inline as well as in feedback");
         assert_eq!(
             cx.read(|cx| input.read(cx).value().to_string()),
             "draft-ignore\n",
@@ -451,6 +523,6 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
 }
 
 pub fn scenario_settings_analyze_ignore_feedback(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", analyze_leg);
+    matrix(cx, "analyze", analyze_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_ignore_feedback EN/JA Light/Dark 100/167% Save/Reset failure and recovery");
 }

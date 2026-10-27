@@ -370,6 +370,7 @@ impl KagiApp {
         self.smart_commit_probe_revision = self.smart_commit_probe_revision.wrapping_add(1).max(1);
         let revision = self.smart_commit_probe_revision;
         self.smart_commit.detecting = true;
+        self.seed_settings(cx);
         cx.notify();
 
         // Resolving the effective PATH may spawn the user's interactive login
@@ -410,11 +411,13 @@ impl KagiApp {
                 );
                 if offline {
                     klog!("smart-commit: offline (ollama detection skipped)");
+                    app.seed_settings(cx);
                     cx.notify();
                     return;
                 }
                 app.smart_commit.ollama_available = available;
                 app.smart_commit.detected_models = models;
+                app.seed_settings(cx);
                 eprintln!(
                     "[kagi] smart-commit: ollama_available={} models={} claude={} codex={}",
                     available,
@@ -609,6 +612,7 @@ impl KagiApp {
         }
         self.clear_smart_commit_modal();
         self.smart_commit.set_model(model.clone());
+        self.seed_settings(cx);
         klog!("smart-commit: model selected = {}", model);
         self.run_smart_generation(window, cx);
     }

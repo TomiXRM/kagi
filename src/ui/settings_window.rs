@@ -1,10 +1,10 @@
 //! macOS non-modal Settings host (ADR-0223). Preferences and controls stay on
 //! the existing KagiApp owner; this owns only window presentation and panes.
-use super::{commands, i18n::Msg, keyboard_nav, settings, settings_view, theme, KagiApp};
+use super::{commands, i18n::Msg, settings, theme, KagiApp};
 use gpui::prelude::*;
 use gpui::{
     div, point, px, size, App, AppContext, Bounds, Context, Entity, FocusHandle, Global,
-    MouseButton, Render, ScrollHandle, Subscription, WeakEntity, Window, WindowBounds,
+    MouseButton, Render, Subscription, WeakEntity, Window, WindowBounds,
     WindowHandle, WindowOptions,
 };
 use gpui_component::Root;
@@ -12,6 +12,13 @@ use gpui_component::Root;
 #[derive(Default)]
 struct SettingsWindowHandle(Option<WindowHandle<Root>>);
 impl Global for SettingsWindowHandle {}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn view_for_window(window: &Window, cx: &App) -> Option<Entity<kagi_ui_settings::SettingsView>> {
+    window.root::<Root>().flatten()
+        .and_then(|root| root.read(cx).view().clone().downcast::<SettingsWindow>().ok())
+        .map(|host| host.read(cx).view.clone())
+}
 
 pub(super) fn owns_window(id: gpui::WindowId, cx: &App) -> bool {
     cx.try_global::<SettingsWindowHandle>()
@@ -32,10 +39,6 @@ pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
         owner.update(cx, |app, cx| {
             app.ensure_analyze_ignore_input(window, cx);
             app.refresh_smart_commit_detection(cx);
-            if let Some(select) = &app.theme_select {
-                let slug = theme::theme().slug.clone().into();
-                select.update(cx, |state, cx| state.set_selected_value(&slug, window, cx));
-            }
         });
         let host = cx.new(|cx| SettingsWindow::new(owner, window, cx));
         cx.new(|cx| Root::new(host, window, cx).font(theme::ui_font()))
@@ -116,12 +119,10 @@ fn window_options(cx: &App) -> WindowOptions {
 
 struct SettingsWindow {
     owner: WeakEntity<KagiApp>,
-    pane: usize,
+    view: Entity<kagi_ui_settings::SettingsView>,
     focus: FocusHandle,
     input_escape_started_marked: bool,
-    tabs: keyboard_nav::TabFocus,
-    scroll: ScrollHandle,
-    last_fit: Option<(f32, usize, f32, u64)>,
+    last_fit: Option<(f32, kagi_ui_settings::Pane, f32, u64)>,
     _observe: Subscription,
     _release: Subscription,
     _toast_removed: Option<Subscription>,
@@ -129,10 +130,23 @@ struct SettingsWindow {
 
 impl SettingsWindow {
     fn new(owner: Entity<KagiApp>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let pane = settings::read_setting("settings_pane")
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|&pane| pane < 4)
-            .unwrap_or(0);
+        let view = owner.read(cx).settings_entity().expect("Settings initialized before native host");
+        cx.observe(&view, |_, _, cx| cx.notify()).detach();
+        let host = cx.entity().downgrade();
+        view.update(cx, |view, cx| view.set_content_measure(std::rc::Rc::new(move |bounds, window, cx| {
+            let _ = host.update(cx, |host, cx| {
+                let height = f32::from(bounds.size.height) + 46.;
+                let pane = host.view.read(cx).pane();
+                let zoom = theme::zoom();
+                let displays = display_configuration();
+                if host.last_fit.is_some_and(|previous| {
+                    (previous.0 - height).abs() < 0.5 && previous.1 == pane
+                        && previous.2 == zoom && previous.3 == displays
+                }) { return; }
+                host.last_fit = Some((height, pane, zoom, displays));
+                fit_content(window, height, cx);
+            });
+        }), cx));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         window.on_window_should_close(cx, |window, cx| {
@@ -183,11 +197,9 @@ impl SettingsWindow {
         .detach();
         Self {
             owner: owner.downgrade(),
-            pane,
+            view,
             focus,
             input_escape_started_marked: false,
-            tabs: Default::default(),
-            scroll: Default::default(),
             last_fit: None,
             _observe: observe,
             _release: release,
@@ -195,204 +207,18 @@ impl SettingsWindow {
         }
     }
 
-    fn pane_tabs(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let host = cx.entity().downgrade();
-        let tabs = keyboard_nav::TabList::new(
-            &self.tabs,
-            vec![0, 1, 2, 3],
-            vec![0, 1, 2, 3],
-            Some(self.pane),
-            keyboard_nav::Activation::Automatic,
-            Some(self.focus.clone()),
-            move |pane, _, _, cx| {
-                let _ = host.update(cx, |this, cx| {
-                    this.pane = pane;
-                    this.scroll.set_offset(Default::default());
-                    settings::write_setting("settings_pane", Some(&pane.to_string()));
-                    cx.notify();
-                });
-            },
-            cx,
-        );
-        let labels = [
-            Msg::SettingsGeneral,
-            Msg::SettingsLanguage,
-            Msg::SettingsSmartCommit,
-            Msg::SettingsAnalyze,
-        ];
-        tabs.list(
-            div()
-                .id("settings-panes")
-                .flex()
-                .flex_wrap()
-                .justify_center()
-                .gap_1()
-                .py_2(),
-        )
-        .children(labels.into_iter().enumerate().map(|(pane, msg)| {
-            let label = msg.t();
-            super::e2e::measure_control(
-                [
-                    "settings-pane-0",
-                    "settings-pane-1",
-                    "settings-pane-2",
-                    "settings-pane-3",
-                ][pane],
-                tabs.cell(
-                    pane,
-                    label,
-                    div()
-                        .id(("settings-pane", pane))
-                        .px_3()
-                        .py_1()
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .text_color(gpui::rgb(theme::theme().text_main))
-                        .hover(|el| el.bg(gpui::rgb(theme::theme().surface)))
-                        .when(self.pane == pane, |el| {
-                            el.bg(gpui::rgb(theme::theme().surface))
-                        })
-                        .child(label),
-                ),
-            )
-        }))
-    }
-
-    fn page(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::AnyElement {
-        let app = owner.read(cx);
-        match self.pane {
-            0 => settings_view::appearance_section(
-                owner,
-                app.theme_select.clone(),
-                &app.settings_switches,
-                &self.scroll,
-                cx,
-            )
-            .into_any_element(),
-            1 => settings_view::language_section(app.settings_controls.view.as_ref())
-                .into_any_element(),
-            2 => settings_view::smart_commit_section(
-                owner,
-                &app.smart_commit,
-                &app.settings_switches,
-                &app.settings_controls,
-                Some(self.focus.clone()),
-                &self.scroll,
-                cx,
-            )
-            .into_any_element(),
-            _ => settings_view::analyze_ignore_section(
-                owner,
-                app.analyze_ignore_input.clone(),
-                app.analyze_ignore_dirty(cx),
-                app.settings_controls.ignore_error.as_deref(),
-            )
-            .into_any_element(),
-        }
-    }
-
-    fn page_body(
-        &self,
-        owner: &Entity<KagiApp>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let chrome = 46. + f32::from(theme::scaled_px(48.));
-        let host = cx.entity().downgrade();
-        let pane = self.pane;
-        let zoom = theme::zoom();
-        let persistent_lane = owner.read(cx).toast_stack.as_ref().is_some_and(|stack| {
-            stack
-                .read(cx)
-                .persistent_lane_open(super::toast_stack::ToastAudience::Settings)
-        });
-        let notifications = persistent_lane
-            .then(|| {
-                owner.update(cx, |app, cx| {
-                    app.render_toasts(
-                        window,
-                        super::busy::ToastPlacement::PersistentLane,
-                        crate::ui::toast_stack::ToastAudience::Settings,
-                        cx,
-                    )
-                })
-            })
-            .flatten();
-        div()
-            .relative()
-            .flex()
-            .flex_col()
-            .flex_shrink_0()
-            .px_5()
-            .py_4()
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .justify_end()
-                    .flex_shrink_0()
-                    .child(super::e2e::measure_inside("toast-content-anchor"))
-                    .children(notifications),
-            )
-            .child(
-                div()
-                    .relative()
-                    .child(super::e2e::measure_inside("settings-page-controls"))
-                    .child(self.page(owner, cx)),
-            )
-            .child(
-                gpui::canvas(
-                    move |bounds, window, cx| {
-                        let height = f32::from(bounds.size.height) + chrome;
-                        let displays = display_configuration();
-                        let _ = host.update(cx, |this, cx| {
-                            if this.last_fit.is_some_and(|previous| {
-                                (previous.0 - height).abs() < 0.5
-                                    && previous.1 == pane
-                                    && previous.2 == zoom
-                                    && previous.3 == displays
-                            }) {
-                                return;
-                            }
-                            this.last_fit = Some((height, pane, zoom, displays));
-                            fit_content(window, height, cx);
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
-    }
 }
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         super::window_menu::publish_settings_edit_state(window, cx);
-        keyboard_nav::forget_roving_without_focus(window);
         let Some(owner) = self.owner.upgrade() else {
             close(window, cx);
             return div().into_any_element();
         };
-        window.set_window_title(Msg::SettingsTitle.t());
+        let pane = self.view.read(cx).pane();
+        window.set_window_title(&format!("{} — {}", Msg::SettingsTitle.t(), pane.title()));
         window.set_rem_size(theme::scaled_px(16.));
-        let tabs = self.pane_tabs(cx);
-        let body = self.page_body(&owner, window, cx);
-        owner.update(cx, |app, cx| {
-            let models_shown = self.pane == 2
-                && matches!(
-                    app.smart_commit.provider,
-                    super::smart_commit::SmartProvider::Ollama
-                )
-                && !app.smart_commit.detected_models.is_empty();
-            app.settings_controls.repair_focus(
-                self.pane == 2,
-                models_shown,
-                Some(&self.focus),
-                window,
-                cx,
-            );
-        });
         div()
             .size_full()
             .relative()
@@ -416,22 +242,6 @@ impl Render for SettingsWindow {
                     }
                 }),
             )
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.modifiers != gpui::Modifiers::none() {
-                    return;
-                }
-                let direction = match event.keystroke.key.as_str() {
-                    "pageup" => 1.,
-                    "pagedown" => -1.,
-                    _ => return,
-                };
-                let mut offset = this.scroll.offset();
-                offset.y = (offset.y + this.scroll.bounds().size.height * direction)
-                    .clamp(-this.scroll.max_offset().y, px(0.));
-                this.scroll.set_offset(offset);
-                window.refresh();
-                cx.stop_propagation();
-            }))
             .on_action(|_: &commands::CloseTab, window, cx| close(window, cx))
             .map(|el| commands::register_recent_clear(el, cx))
             .on_action(|_: &commands::OpenSettings, window, _| raise(window))
@@ -468,32 +278,10 @@ impl Render for SettingsWindow {
                     });
                 }
             }))
-            .child(titlebar())
-            .child(tabs)
-            .child(super::render_helpers::with_system_vertical_scrollbar(
-                "settings-window-scrollbar",
-                &self.scroll,
-                div()
-                    .id("settings-window-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .child(body),
-                cx,
-            ))
-            .map(|el| {
-                el.children(owner.update(cx, |app, cx| {
-                    app.render_toasts(
-                        window,
-                        super::busy::ToastPlacement::Transient,
-                        crate::ui::toast_stack::ToastAudience::Settings,
-                        cx,
-                    )
-                }))
-            })
+            .child(titlebar(pane))
+            .child(self.view.clone())
             .when_some(
-                owner.read(cx).analyze_reset_alert().cloned(),
+                owner.read(cx).analyze_reset_alert().filter(|alert| alert.window == window.window_handle().window_id()).cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),
             )
             .when_some(
@@ -640,7 +428,7 @@ fn close(window: &mut Window, cx: &App) {
     window.remove_window();
 }
 
-fn titlebar() -> gpui::Div {
+fn titlebar(pane: kagi_ui_settings::Pane) -> gpui::Div {
     div()
         .h(px(46.))
         .flex_shrink_0()
@@ -655,7 +443,8 @@ fn titlebar() -> gpui::Div {
                 .items_center()
                 .justify_center()
                 .pr(px(80.))
-                .child(Msg::SettingsTitle.t())
+                .child(format!("{} — {}", Msg::SettingsTitle.t(), pane.title()))
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move()),
         )
 }
+

@@ -3708,6 +3708,7 @@ dependencies = [
  "kagi-ui-core",
  "kagi-ui-settings",
  "log",
+ "serde_json",
  "wasm-bindgen",
 ]
 

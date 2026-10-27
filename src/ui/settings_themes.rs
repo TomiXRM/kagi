@@ -1,83 +1,13 @@
-//! Settings' appearance theme picker and the custom-theme reload (#922). The
-//! gpui-component `Select` is an entity that needs a `Window`, so it cannot be
-//! built in `KagiApp::new`; it is built with the rest of the window-bound
-//! entity state in `e2e::build_kagi_entity`, which the real window and the
-//! offscreen GUI E2E mount share (ADR-0166).
-//!
-//! Theme files are read only at startup (`theme::init_active`) and by the
-//! explicit "Reload Themes" command — never from render or a watcher.
+//! Native custom-theme discovery, reload and OS-folder effects.
 
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Window};
-use gpui_component::select::SelectEvent;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::external_editor::os_opener;
 use super::i18n;
-use super::settings_view::{self, ThemeOption, ThemeSelectState};
 use super::theme::{self, ThemeLoadError};
 
-/// Renderer-fed semantics, not a native VoiceOver snapshot.
-#[cfg(feature = "gui-e2e")]
-#[derive(Clone, Debug)]
-pub struct AppearanceAx {
-    pub role: gpui::Role,
-    pub name: String,
-    pub value: String,
-    pub expanded: Option<bool>,
-    pub disabled: bool,
-}
-
-#[cfg(feature = "gui-e2e")]
-thread_local! {
-    static APPEARANCE_AX: std::cell::RefCell<std::collections::HashMap<String, AppearanceAx>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-#[cfg(feature = "gui-e2e")]
-pub(crate) fn record_ax(
-    id: &str,
-    role: gpui::Role,
-    name: &str,
-    value: &str,
-    expanded: Option<bool>,
-    disabled: bool,
-) {
-    APPEARANCE_AX.with(|ax| {
-        ax.borrow_mut().insert(
-            id.into(),
-            AppearanceAx {
-                role,
-                name: name.into(),
-                value: value.into(),
-                expanded,
-                disabled,
-            },
-        )
-    });
-}
-
-#[cfg(feature = "gui-e2e")]
-pub fn appearance_ax_for_e2e(id: &str) -> Option<AppearanceAx> {
-    APPEARANCE_AX.with(|ax| ax.borrow().get(id).cloned())
-}
-
-#[cfg(feature = "gui-e2e")]
-pub fn take_theme_option_ax_for_e2e() -> Vec<AppearanceAx> {
-    APPEARANCE_AX.with(|ax| {
-        let mut ax = ax.borrow_mut();
-        let mut options = Vec::new();
-        ax.retain(|id, value| {
-            if id.starts_with("theme-option:") {
-                options.push(value.clone());
-                false
-            } else {
-                true
-            }
-        });
-        options
-    })
-}
 use super::{commands, KagiApp, ToastKind};
 
 /// A toast is a short preview; the log line keeps the whole reason.
@@ -87,33 +17,8 @@ const TOAST_DETAIL_CHARS: usize = 160;
 /// windows must share one generation rather than each window keeping its own.
 static THEME_RELOAD_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Build the picker and apply + persist a confirmed theme via `set_theme`,
-/// then report the theme files that failed to load at startup — the window
-/// exists now, so their toasts can be seen.
 pub(super) fn install(kagi: &Entity<KagiApp>, window: &mut Window, cx: &mut App) {
-    let theme_select = cx.new(|cx| {
-        ThemeSelectState::new(
-            settings_view::theme_options(),
-            Some(settings_view::current_theme_index()),
-            window,
-            cx,
-        )
-    });
-    kagi.update(cx, |_, cx| {
-        cx.observe(&theme_select, |_, _, cx| cx.notify()).detach();
-    });
     kagi.update(cx, |app, cx| {
-        cx.subscribe(
-            &theme_select,
-            |this, _state, event: &SelectEvent<Vec<ThemeOption>>, cx| {
-                if let SelectEvent::Confirm(Some(slug)) = event {
-                    this.set_theme(slug, cx);
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
-        app.theme_select = Some(theme_select);
         // Drained once per process: a second window does not repeat them.
         let subject = match app.toast_subject_for_window(window, cx) {
             crate::ui::toast_stack::ToastSubject::Settings => {
@@ -179,7 +84,7 @@ impl KagiApp {
         });
         cx.spawn_in(window, async move |this, cx| {
             let loaded = task.await;
-            let _ = this.update_in(cx, |app, window, cx| {
+            let _ = this.update_in(cx, |app, _window, cx| {
                 if THEME_RELOAD_GENERATION.load(Ordering::Relaxed) != generation {
                     return;
                 }
@@ -207,12 +112,7 @@ impl KagiApp {
                 theme::sync_gpui_component_theme(cx);
                 app.apply_terminal_config(cx);
                 commands::publish_menus(cx);
-                if let Some(select) = app.theme_select.clone() {
-                    select.update(cx, |state, cx| {
-                        state.set_items(settings_view::theme_options(), window, cx);
-                        state.set_selected_value(&active, window, cx);
-                    });
-                }
+                app.seed_settings(cx);
                 app.push_toast_for(
                     subject,
                     ToastKind::Success,

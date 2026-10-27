@@ -3975,11 +3975,11 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
         eprintln!("[gui-e2e] color_vision {line}");
     }
 
-    // Keep an option from the picker built at startup: its label must change
-    // when the app language changes, not just in a newly built options vec.
-    let option = kagi::ui::settings_view::theme_options()
+    // The same retained palette handle supplied to the shared cards resolves
+    // its display name live; changing language must not require a new catalog.
+    let option = cx.read(|cx| app.read(cx).settings_snapshot().themes)
         .into_iter()
-        .find(|o| o.slug == "color-vision")
+        .find(|palette| palette.slug == "color-vision")
         .unwrap();
     let previous = i18n::lang();
     for (lang, want) in [
@@ -3992,7 +3992,7 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
             window.draw(cx).clear();
         })
         .unwrap();
-        assert_eq!(option.title().as_ref(), want, "{lang:?}: cached option");
+        assert_eq!(option.display_name(), want, "{lang:?}: retained theme card palette");
     }
     app.update(cx, |app, cx| app.set_lang(previous, cx));
 

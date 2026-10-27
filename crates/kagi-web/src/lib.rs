@@ -1,11 +1,11 @@
 //! kagi-web — browser (WASM) harness for UI e2e tests.
 //!
-//! Renders a catalog of kagi UI pieces with gpui_web so Playwright can drive
-//! layout regressions (e.g. the pane-resize wrap jitter) in CI without a
-//! display server. git2 cannot compile to WASM, so only pure-domain-driven
-//! UI belongs here — never `kagi::git`.
+//! Mounts production portable views and focused pure-domain layout stories with
+//! gpui_web so Playwright drives their real input handlers without a native
+//! display server. Native effects are supplied only by explicit fixture adapters.
 
 use gpui::{div, prelude::*, px, rems, rgb, SharedString, Window};
+#[cfg(target_family = "wasm")]
 mod settings_fixture;
 
 /// Catalog root: one story per known layout-regression class.
@@ -157,5 +157,10 @@ mod web {
     #[wasm_bindgen]
     pub fn settings_observed() -> String {
         settings_fixture::observed()
+    }
+
+    #[wasm_bindgen]
+    pub fn settings_command(command: &str, value: Option<String>) -> Result<(), JsValue> {
+        settings_fixture::command(command, value.as_deref()).map_err(|error| JsValue::from_str(&error))
     }
 }

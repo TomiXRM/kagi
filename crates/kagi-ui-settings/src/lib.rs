@@ -1,108 +1,143 @@
-//! Production Settings input/rendering, shared by native and browser hosts.
-//! Effects remain in host adapters; seeding effective values never emits intent.
-use gpui::{div, prelude::*, Context, EventEmitter, SharedString, Window};
-use gpui_component::radio::RadioGroup;
-use kagi_ui_core::{
-    i18n::{Lang, Msg},
-    theme::{self, theme},
-};
+//! The single production Settings renderer for native and browser hosts.
+//! Hosts own effects; effective seeds never emit requests or overwrite drafts.
+mod model;
+mod controls;
+mod panes;
+mod analyze;
+pub use model::*;
+use gpui::{prelude::*, *};
+use gpui_component::input::{InputEvent, InputState};
+use kagi_ui_core::i18n::Msg;
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SettingsSnapshot {
-    pub language: Lang,
+pub type DetailSlot = Rc<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>;
+pub type ContentMeasure = Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>;
+#[derive(Clone, Debug)]
+pub struct ControlProbe {
+    pub id: String,
+    pub bounds: Bounds<Pixels>,
+    pub focused: bool,
+    pub selected: bool,
+    pub disabled: bool,
+    pub role: Role,
+    pub name: String,
+    pub value: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SettingsEvent {
-    LanguageRequested(Lang),
-}
-
-/// Retained by the application/fixture, not by a disposable native window.
 pub struct SettingsView {
     snapshot: SettingsSnapshot,
+    pane: Pane,
+    input: Entity<InputState>,
+    revision: u64,
+    analyze: analyze::AnalyzeState,
+    focus: BTreeMap<String, FocusHandle>,
+    revealed: BTreeMap<String, Rc<std::cell::Cell<bool>>>,
+    groups: BTreeMap<String, usize>,
+    scroll: ScrollHandle,
+    detail_slot: Option<DetailSlot>,
+    content_measure: Option<ContentMeasure>,
+    detail_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
+    chrome_heights: Rc<RefCell<(Pixels, Pixels)>>,
+    probes: Rc<RefCell<BTreeMap<String, ControlProbe>>>,
+    _input_subscription: Subscription,
 }
-
 impl EventEmitter<SettingsEvent> for SettingsView {}
-
 impl SettingsView {
-    pub fn new(snapshot: SettingsSnapshot) -> Self {
-        Self { snapshot }
+    pub fn new(snapshot: SettingsSnapshot, input: Entity<InputState>, pane: Pane, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.subscribe(&input, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.revision += 1;
+                this.analyze.saved_feedback = false;
+                cx.notify();
+            }
+        });
+        Self { analyze: analyze::AnalyzeState::new(snapshot.analyze_saved.clone()), snapshot, pane, input,
+            revision: 0,
+            focus: BTreeMap::new(), revealed: BTreeMap::new(), groups: BTreeMap::new(), scroll: ScrollHandle::new(),
+            detail_slot: None, content_measure: None, chrome_heights: Rc::new(RefCell::new((px(0.),px(0.)))), detail_bounds: Rc::default(), probes: Rc::default(), _input_subscription: subscription }
     }
-
+    pub fn snapshot(&self) -> &SettingsSnapshot { &self.snapshot }
+    pub fn pane(&self) -> Pane { self.pane }
+    pub fn seed_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        if self.pane != pane { self.pane = pane; self.scroll.set_offset(point(px(0.), px(0.))); cx.notify(); }
+    }
     pub fn seed_effective(&mut self, snapshot: SettingsSnapshot, cx: &mut Context<Self>) {
-        if self.snapshot != snapshot {
-            self.snapshot = snapshot;
-            cx.notify();
-        }
+        if !self.snapshot.same_effective(&snapshot) { self.snapshot = snapshot; cx.notify(); }
     }
-
-    pub fn snapshot(&self) -> SettingsSnapshot {
-        self.snapshot
+    pub fn set_detail_slot(&mut self, slot: DetailSlot, cx: &mut Context<Self>) { self.detail_slot = Some(slot); cx.notify(); }
+    pub fn detail_viewport_bounds(&self) -> Option<Bounds<Pixels>> { *self.detail_bounds.borrow() }
+    pub fn set_content_measure(&mut self, measure: ContentMeasure, cx: &mut Context<Self>) { self.content_measure = Some(measure); cx.notify(); }
+    pub fn scroll_handle(&self) -> ScrollHandle { self.scroll.clone() }
+    #[cfg(feature = "gui-e2e")]
+    pub fn control_probe(&self, id: &str) -> Option<ControlProbe> { self.probes.borrow().get(id).cloned() }
+    #[cfg(feature = "gui-e2e")]
+    pub fn focus_control(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(focus) = self.focus.get(id) else { return false; };
+        window.focus(focus, cx); cx.notify(); true
+    }
+    #[cfg(feature = "gui-e2e")]
+    pub fn control_probes(&self) -> Vec<ControlProbe> { self.probes.borrow().values().cloned().collect() }
+    pub fn analyze_request(&self, cx: &App) -> AnalyzeRequest { AnalyzeRequest { text: self.input.read(cx).value(), revision: self.revision } }
+    pub fn analyze_dirty(&self, cx: &App) -> bool { self.input.read(cx).value() != self.analyze.baseline }
+    pub fn analyze_error(&self) -> Option<&str> { self.analyze.error.as_deref() }
+    pub fn analyze_baseline(&self) -> &str { &self.analyze.baseline }
+    pub fn seed_analyze_result(&mut self, result: AnalyzeResult, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.analyze_request(cx);
+        if let Some(text) = self.analyze.acknowledge(result, &current) {
+            self.input.update(cx, |input, cx| input.set_value(text, window, cx));
+        }
+        cx.notify();
+    }
+    fn emit(&mut self, intent: SettingsIntent, window: &mut Window, cx: &mut Context<Self>) {
+        let intent = match intent {
+            SettingsIntent::SaveAnalyze(_) => SettingsIntent::SaveAnalyze(self.analyze_request(cx)),
+            SettingsIntent::ResetAnalyze(_) => SettingsIntent::ResetAnalyze(self.analyze_request(cx)),
+            other => other,
+        };
+        if let SettingsIntent::Pane(pane) = intent { self.seed_pane(pane, cx); }
+        cx.emit(SettingsEvent { window: window.window_handle(), intent });
     }
 }
-
-impl gpui::Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = usize::from(self.snapshot.language == Lang::Ja);
-        div()
-            .id("settings-language-production")
-            .w_full()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .text_size(theme::scaled_px(12.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(gpui::rgb(theme().text_sub))
-                    .pb_1()
-                    .border_b_1()
-                    .border_color(gpui::rgb(theme().elevated_border(theme().surface)))
-                    .child(Msg::SettingsLanguage.t()),
-            )
-            .child(
-                div()
-                    .id("settings-language-group")
-                    .w_full()
-                    .min_w_0()
-                    .px_3()
-                    .py_2()
-                    .rounded(gpui::px(8.))
-                    .bg(gpui::rgb(theme().bg_base))
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_4()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .text_color(gpui::rgb(theme().text_main))
-                            .child(Msg::SettingsInterfaceLang.t())
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(gpui::rgb(theme().text_sub))
-                                    .child(Msg::SettingsInterfaceLangDesc.t()),
-                            ),
-                    )
-                    .child(
-                        RadioGroup::horizontal("settings-language")
-                            .children([SharedString::from("English"), SharedString::from("日本語")])
-                            .selected_index(Some(selected))
-                            .on_click(cx.listener(|_, index: &usize, _, cx| {
-                                let language = match index {
-                                    0 => Lang::En,
-                                    1 => Lang::Ja,
-                                    _ => return,
-                                };
-                                cx.emit(SettingsEvent::LanguageRequested(language));
-                            })),
-                    ),
-            )
+impl Pane {
+    pub fn title(self) -> &'static str { match self {
+        Self::Appearance => Msg::SettingsAppearance, Self::Graph => Msg::SettingsPaneGraph,
+        Self::Editor => Msg::SettingsPaneEditor, Self::Terminal => Msg::SettingsPaneTerminal,
+        Self::Network => Msg::SettingsPaneNetwork, Self::SmartCommit => Msg::SettingsPaneSmartCommit,
+        Self::Analyze => Msg::SettingsPaneAnalyze, Self::General => Msg::SettingsGeneral,
+    }.t() }
+}
+impl Render for SettingsView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.probes.borrow_mut().clear();
+        self.repair_focus(window, cx);
+        let sidebar = self.sidebar(window, cx);
+        let content = self.render_pane(window, cx);
+        let measure = self.content_measure.clone();
+        let chrome = self.chrome_heights.clone();
+        let content = div().relative().min_w_0().w_full().child(content)
+            .child(canvas(move |mut bounds, window, cx| {
+                let (title, sidebar) = *chrome.borrow();
+                bounds.size.height = (bounds.size.height + title + controls::pt(36.)).max(sidebar);
+                if let Some(measure) = measure { measure(bounds, window, cx); }
+            }, |_, _, _, _| {}).absolute().size_full());
+        let bounds = self.detail_bounds.clone();
+        let slot = self.detail_slot.as_ref().and_then(|slot| slot(window, cx));
+        let title_heights = self.chrome_heights.clone();
+        let viewport = div().id("settings-detail-viewport").relative().flex_1().min_h_0().min_w_0().flex().flex_col()
+            .child(canvas(move |rect, _, _| { *bounds.borrow_mut() = Some(rect); }, |_, _, _, _| {}).absolute().size_full())
+            .child(div().id("settings-detail-scrollbar").relative().flex_1().min_h_0().min_w_0().flex().flex_col()
+                .child(div().id("settings-detail-scroll").relative().flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.scroll)
+                    .child(self.measured("settings-detail-scroll".into(),Role::Group,self.pane.title().into(),String::new(),false,false,false))
+                    .p(controls::pt(18.)).child(content))
+                .child(gpui_component::scroll::Scrollbar::vertical(&self.scroll).id("settings-detail-scrollbar")))
+            .children(slot);
+        div().id("settings-production").size_full().flex().bg(rgb(kagi_ui_core::theme::theme().panel))
+            .text_color(rgb(kagi_ui_core::theme::theme().text_main)).text_size(controls::pt(13.))
+            .font(kagi_ui_core::theme::ui_font()).child(sidebar)
+            .child(div().flex_1().min_w_0().flex().flex_col()
+                .child(div().id("settings-pane-title").relative().role(Role::Heading).flex_shrink_0().px(controls::pt(18.)).py(controls::pt(14.))
+                    .child(canvas(move |bounds, _, _| { title_heights.borrow_mut().0 = bounds.size.height; }, |_, _, _, _| {}).absolute().size_full())
+                    .font_weight(FontWeight::BOLD).child(self.pane.title()))
+                .child(viewport))
     }
 }

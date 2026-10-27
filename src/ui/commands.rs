@@ -2333,6 +2333,7 @@ impl KagiApp {
                 // The terminal is a pixel-sized PTY grid, not rem-scaled text,
                 // so it needs the new zoom pushed in explicitly.
                 self.apply_terminal_config(cx);
+                self.seed_settings(cx);
             }
             "view.zoomOut" => {
                 let z = theme::set_zoom(theme::step_zoom(theme::zoom(), false));
@@ -2340,6 +2341,7 @@ impl KagiApp {
                 // The terminal is a pixel-sized PTY grid, not rem-scaled text,
                 // so it needs the new zoom pushed in explicitly.
                 self.apply_terminal_config(cx);
+                self.seed_settings(cx);
             }
             "view.zoomReset" => {
                 let z = theme::set_zoom(1.0);
@@ -2347,6 +2349,7 @@ impl KagiApp {
                 // The terminal is a pixel-sized PTY grid, not rem-scaled text,
                 // so it needs the new zoom pushed in explicitly.
                 self.apply_terminal_config(cx);
+                self.seed_settings(cx);
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
@@ -2533,6 +2536,7 @@ impl KagiApp {
         // Rebuild the menu bar (active marker moved).
         publish_menus(cx);
         cx.refresh_windows();
+        self.seed_settings(cx);
         cx.notify();
     }
 
@@ -2540,21 +2544,13 @@ impl KagiApp {
     ///
     /// 1. Update + persist the active language (`i18n::set_lang`).
     /// 2. Rebuild the menu bar to publish the active language's checked state.
-    /// 3. Notify the persistent Settings picker as well as this view; its
-    ///    `SelectItem::title` resolves localized names at render time.
+    /// 3. Reseed the retained Settings view and refresh all windows.
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
-        if let Some(view) = &self.settings_controls.view {
-            view.update(cx, |view, cx| {
-                view.seed_effective(kagi_ui_settings::SettingsSnapshot { language: l }, cx);
-            });
-        }
+        self.seed_settings(cx);
         klog!("lang: {}", l.slug());
         publish_menus(cx);
         cx.refresh_windows();
-        if let Some(select) = self.theme_select.as_ref() {
-            select.update(cx, |_, cx| cx.notify());
-        }
         cx.notify();
     }
 
@@ -3228,39 +3224,12 @@ impl KagiApp {
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => {
-                let audience = super::toast_stack::ToastAudience::Settings;
-                let lane = self
-                    .toast_stack
-                    .as_ref()
-                    .is_some_and(|stack| stack.read(cx).persistent_lane_open(audience))
-                    .then(|| {
-                        self.render_toasts(
-                            window,
-                            super::busy::ToastPlacement::PersistentLane,
-                            audience,
-                            cx,
-                        )
-                    })
-                    .flatten();
-                let transient = self.render_toasts(
-                    window,
-                    super::busy::ToastPlacement::Transient,
-                    audience,
-                    cx,
-                );
                 Some(super::settings_view::render_settings_overlay(
                     cx.entity(),
-                    self.theme_select.clone(),
-                    self.settings_switches.clone(),
+                    self.settings_entity(),
                     self.settings_focus.clone(),
-                    self.smart_commit.clone(),
-                    self.analyze_ignore_input.clone(),
-                    &self.settings_controls,
-                    self.analyze_ignore_dirty(cx),
                     self.analyze_reset_alert().cloned(),
-                    self.settings_scroll.clone(),
-                    lane,
-                    transient,
+                    self.settings_smart_consent().cloned(),
                     window,
                     cx,
                 ))

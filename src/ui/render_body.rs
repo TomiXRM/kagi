@@ -558,6 +558,7 @@ impl KagiApp {
                     this.graph_compact = !this.graph_compact;
                     // T-SETTINGS-001: persist so the Settings window + restart agree.
                     theme::set_compact_graph(this.graph_compact);
+                    this.seed_settings(cx);
                     cx.notify();
                 });
                 div()

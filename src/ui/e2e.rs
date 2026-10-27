@@ -865,6 +865,7 @@ pub fn build_kagi_entity(
             }
             if window.is_window_active() && theme::refresh_system_accent() {
                 theme::sync_gpui_component_theme(cx);
+                app.seed_settings(cx);
                 cx.refresh_windows();
                 cx.notify();
             }
@@ -883,7 +884,7 @@ pub fn build_kagi_entity(
             })
             .unwrap_or(true)
     });
-    super::theme_select::install(&kagi, window, cx);
+    super::settings_themes::install(&kagi, window, cx);
     if let Some(fh) = kagi.read(cx).root_focus.clone() {
         window.focus(&fh, cx);
     }

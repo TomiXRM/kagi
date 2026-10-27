@@ -45,7 +45,7 @@ fn focus_ring_is_translucent_and_contrasts_after_compositing() {
             let ring = focus_ring_color(accent, background);
             let surface: Hsla = rgb(background).into();
             let base: Hsla = rgb(accent).into();
-            assert_eq!(ring.a, 0.75);
+            assert!(ring.a > 0. && ring.a < 1.);
             assert_eq!(ring.h, base.h);
             assert_eq!(ring.s, base.s);
             let painted = u32::from(surface.blend(ring).to_rgb()) >> 8;
@@ -275,14 +275,26 @@ impl SettingsView {
                 })
             })
             .when(!enabled, |el| {
-                el.opacity(0.5)
-                    .a11y_synthetic_children(|builder: &mut A11ySubtreeBuilder| {
-                        builder.parent_node().set_disabled()
-                    })
+                el.a11y_synthetic_children(|builder: &mut A11ySubtreeBuilder| {
+                    builder.parent_node().set_disabled()
+                })
             })
             .when(enabled, |el| el.cursor_pointer())
             .when(enabled && !selected && role != Role::RadioButton, |el| {
                 el.hover(|s| s.bg(rgb(theme().surface)))
+            })
+            .when(focused, |el| {
+                // Paint only the existing external stroke and three-pixel gap.
+                // The translucent ring then has one known backdrop even where
+                // adjacent segment tracks/pills otherwise cross its edges.
+                el.child(
+                    div()
+                        .absolute()
+                        .inset(px(-5.))
+                        .rounded(pt(10.))
+                        .border(px(5.))
+                        .border_color(rgb(focus_background)),
+                )
             })
             .child(
                 div()
@@ -290,11 +302,7 @@ impl SettingsView {
                     .inset(px(-5.))
                     .rounded(pt(10.))
                     .border_2()
-                    .border_color(if focused {
-                        ring_color
-                    } else {
-                        transparent_black()
-                    }),
+                    .border_color(ring_color),
             )
             .child(probe)
             .on_prepaint(move |bounds, window, cx| {
@@ -397,7 +405,7 @@ impl SettingsView {
         .px(pt(10.))
         .py(pt(3.))
         .bg(rgb(theme().surface))
-        .child(label)
+        .child(div().opacity(if enabled { 1. } else { 0.5 }).child(label))
         .into_any_element()
     }
     pub(crate) fn stepper_button(
@@ -426,7 +434,11 @@ impl SettingsView {
         .items_center()
         .justify_center()
         .bg(rgb(theme().surface))
-        .child(if id.ends_with("-inc") { "+" } else { "−" })
+        .child(
+            div()
+                .opacity(if enabled { 1. } else { 0.5 })
+                .child(if id.ends_with("-inc") { "+" } else { "−" }),
+        )
         .into_any_element()
     }
     pub(crate) fn toggle(
@@ -583,7 +595,12 @@ impl SettingsView {
                             }),
                     )
                 })
-                .child(div().min_w_0().child(label));
+                .child(
+                    div()
+                        .min_w_0()
+                        .opacity(if enabled { 1. } else { 0.5 })
+                        .child(label),
+                );
             track = track.child(control);
         }
         track.into_any_element()

@@ -148,7 +148,7 @@ test("pale accent focus paint contrasts on unselected themes and ON switches and
     await frames(page);
     const theme = (await observed(page)).controls.find(control => control.id.startsWith("settings-theme-") && control.focused)!;
     expect(theme.selected).toBe(false);
-    for (const kind of ["unselected-theme", "on-switch"]) {
+    for (const kind of ["unselected-theme", "on-switch", "disabled-provider", "segment"]) {
       let control = theme;
       if (kind === "on-switch") {
         await pane(page, "graph");
@@ -157,19 +157,50 @@ test("pale accent focus paint contrasts on unselected themes and ON switches and
         control = await probe(page, "compact-toggle");
         expect(control.selected).toBe(true);
       }
+      if (kind === "disabled-provider") {
+        await pane(page, "smart_commit");
+        await click(page, "sc-provider-ollama");
+        await page.keyboard.press("ArrowRight");
+        await frames(page);
+        control = await probe(page, "sc-provider-claude-code");
+        expect(control.disabled).toBe(true);
+        const requests = (await observed(page)).requests;
+        await page.keyboard.press("Space");
+        await frames(page);
+        expect((await observed(page)).requests).toBe(requests);
+        expect((await observed(page)).smartProvider).toBe("ollama");
+      }
+      if (kind === "segment") {
+        await pane(page, "general");
+        await click(page, "settings-language-en");
+        await page.keyboard.press("ArrowRight");
+        await frames(page);
+        control = await probe(page, "settings-language-ja");
+        expect(control.selected).toBe(false);
+      }
       expect(control.focused).toBe(true);
       expect(await page.evaluate(() => document.hasFocus())).toBe(true);
-      const background = await paintedRgb(page, control.x - 8, control.y + control.height / 2);
-      const ring = await paintedRgb(page, control.x - 4, control.y + control.height / 2);
-      const a = luminance(background), b = luminance(ring);
-      expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toBeGreaterThanOrEqual(3);
+      const midX = control.x + control.width / 2, midY = control.y + control.height / 2;
+      const edges = [
+        [control.x - 4, midY, control.x - 2, midY],
+        [control.x + control.width + 3, midY, control.x + control.width + 1, midY],
+        [midX, control.y - 4, midX, control.y - 2],
+        [midX, control.y + control.height + 3, midX, control.y + control.height + 1],
+      ];
+      for (const [x, y, gapX, gapY] of edges) {
+        const background = await paintedRgb(page, gapX, gapY);
+        const ring = await paintedRgb(page, x, y);
+        const a = luminance(background), b = luminance(ring);
+        expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), `${appearance} ${kind} ring at ${x},${y}`).toBeGreaterThanOrEqual(3);
+      }
+      const background = await paintedRgb(page, midX, control.y - 2);
       await info.attach(`${appearance}-${kind}-yellow-active.png`, { body: await page.screenshot(), contentType: "image/png" });
       const other = await page.context().newPage();
       try {
         await other.bringToFront();
         await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
         await frames(page);
-        const inactive = await paintedRgb(page, control.x - 4, control.y + control.height / 2);
+        const inactive = await paintedRgb(page, midX, control.y - 4);
         inactive.forEach((value, channel) => expect(Math.abs(value - background[channel])).toBeLessThanOrEqual(2));
         await info.attach(`${appearance}-${kind}-yellow-inactive.png`, { body: await page.screenshot(), contentType: "image/png" });
       } finally {

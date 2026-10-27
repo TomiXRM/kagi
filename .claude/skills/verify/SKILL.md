@@ -52,8 +52,11 @@ Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 Run the focused browser paint/geometry tests before heavy native gates.
 The pale-accent regression injects an effective Yellow snapshot, uses real
-keyboard focus on an unselected theme and an ON switch, and measures screenshot
-contrast against adjacent background pixels. A second actual browser tab tests
+keyboard focus on an unselected theme, ON switch, disabled provider and segment,
+and samples all four ring edges against their painted gaps. Disabled labels
+are dimmed without dimming the focus ring; an external-gap backplate makes
+the compositing surface explicit over segmented tracks/pills.
+A second actual browser tab tests
 inactive ring removal without clearing selection. This does not claim an OS
 Increase Contrast bridge: the shared ring always adjusts its composited contrast.
 

@@ -286,6 +286,9 @@ impl Render for SettingsView {
         div()
             .id("settings-production")
             .size_full()
+            // Hosts place fixed chrome above this view; use only the remainder.
+            .flex_1()
+            .min_h_0()
             .flex()
             .bg(rgb(kagi_ui_core::theme::theme().panel))
             .text_color(rgb(kagi_ui_core::theme::theme().text_main))

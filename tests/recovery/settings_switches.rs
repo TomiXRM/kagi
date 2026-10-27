@@ -244,6 +244,14 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                     scroll.bounds(),
                     "the probe measures the actual GPUI scroll-owner viewport"
                 );
+                let frame = bounds(cx, window, "settings-frame").unwrap();
+                assert!(
+                    viewport.left() >= frame.left()
+                        && viewport.right() <= frame.right()
+                        && viewport.top() >= frame.top()
+                        && viewport.bottom() <= frame.bottom(),
+                    "fixed detail {viewport:?} stays inside the actual overlay frame {frame:?}"
+                );
                 let sidebar = bounds(cx, window, "settings-sidebar").unwrap();
                 let probes = cx.read(|cx| view.read(cx).control_probes());
                 let controls: Vec<_> = probes

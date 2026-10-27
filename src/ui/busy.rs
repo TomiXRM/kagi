@@ -40,6 +40,10 @@ impl gpui::RenderOnce for BusyAction {
             .use_keyed_state(self.1, cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
+        #[cfg(feature = "gui-e2e")]
+        if self.1 == "clone-busy-show" {
+            super::e2e::record_clone_busy_focus(focus.is_focused(window));
+        }
         super::button_style::reveal_on_focus(self.0, self.1.into(), focus, self.2, window, cx)
             .render(window, cx)
     }
@@ -593,8 +597,6 @@ impl KagiApp {
                     this.focus_after_pick(window, cx);
                 }
             }));
-        #[cfg(feature = "gui-e2e")]
-        let button = super::e2e::probe_clone_busy_button(button);
         Some(
             super::e2e::measure_control(
                 "clone-busy-show",

@@ -397,6 +397,81 @@ test("short theme captions paint names and long names paint constrained ellipses
   }
 });
 
+for (const [language, appearance, zoom] of [
+  ["en", "apple-light", 1],
+  ["ja", "apple-dark", 1.67],
+] as const) {
+  test(`composite numeric controls own their complete rows at 715px: ${language} ${zoom}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 715, height: 1064 });
+    await boot(page);
+    await host(page, "language", language);
+    await host(page, "appearance", appearance);
+    await host(page, "zoom", String(zoom));
+    const navigation = (await observed(page)).controls.filter(control => panes.some(pane => control.id === `settings-pane-${pane}`));
+    const viewport = await probe(page, "settings-detail-scroll");
+    const initialZoom = await probe(page, "settings-zoom-row");
+    await page.mouse.move(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
+    await page.mouse.wheel(0, initialZoom.y - viewport.y - 20);
+    await frames(page);
+
+    const state = await observed(page);
+    const control = (id: string) => {
+      const result = state.controls.find(control => control.id === id);
+      expect(result, id).toBeDefined();
+      return result!;
+    };
+    const contains = (outer: Probe, inner: Probe) => {
+      expect(inner.x, `${inner.id} left inside ${outer.id}`).toBeGreaterThanOrEqual(outer.x);
+      expect(inner.y, `${inner.id} top inside ${outer.id}`).toBeGreaterThanOrEqual(outer.y);
+      expect(inner.x + inner.width, `${inner.id} right inside ${outer.id}`).toBeLessThanOrEqual(outer.x + outer.width);
+      expect(inner.y + inner.height, `${inner.id} bottom inside ${outer.id}`).toBeLessThanOrEqual(outer.y + outer.height);
+    };
+    const zoomRow = control("settings-zoom-row");
+    const thresholdRow = control("settings-threshold-row");
+    const motionRow = control("settings-motion-row");
+    for (const [row, ids] of [
+      [zoomRow, ["settings-zoom-help", "zoom-dec", "zoom-value", "zoom-inc"]],
+      [thresholdRow, ["settings-threshold-help", "compact-threshold-dec", "compact-threshold-value", "compact-threshold-inc", "compact-threshold-help"]],
+      [motionRow, ["settings-motion-help", "reduce-motion-toggle"]],
+    ] as const) {
+      expect(row.height, row.id).toBeGreaterThan(0);
+      for (const id of ids) contains(row, control(id));
+    }
+    expect(zoomRow.y + zoomRow.height).toBeLessThanOrEqual(thresholdRow.y);
+    expect(thresholdRow.y + thresholdRow.height).toBeLessThanOrEqual(motionRow.y);
+    for (const prefix of ["zoom", "compact-threshold"]) {
+      const decrease = control(`${prefix}-dec`);
+      const value = control(`${prefix}-value`);
+      const increase = control(`${prefix}-inc`);
+      expect(Math.abs(decrease.y - increase.y), `${prefix} is one horizontal unit`).toBeLessThanOrEqual(0.5);
+      expect(decrease.x + decrease.width).toBeLessThan(value.x);
+      expect(value.x + value.width).toBeLessThan(increase.x);
+      expect(value.y).toBeGreaterThanOrEqual(decrease.y);
+      expect(value.y + value.height).toBeLessThanOrEqual(decrease.y + decrease.height);
+    }
+    const thresholdHelp = control("compact-threshold-help");
+    expect(thresholdHelp.y).toBeGreaterThanOrEqual(control("compact-threshold-inc").y + control("compact-threshold-inc").height);
+    await info.attach(`${language}-${zoom}-numeric-rows.png`, { body: await page.screenshot(), contentType: "image/png" });
+    await info.attach(`${language}-${zoom}-row-geometry.json`, {
+      body: Buffer.from(JSON.stringify(state.controls.filter(control => /zoom|threshold|motion/.test(control.id)), null, 2)),
+      contentType: "application/json",
+    });
+
+    await page.mouse.wheel(0, 100000);
+    await frames(page);
+    await expect.poll(async () => {
+      const state = await observed(page);
+      return Math.abs(state.scrollY + state.scrollMax);
+    }).toBeLessThanOrEqual(1);
+    contains(viewport, await probe(page, "settings-theme-folder-open"));
+    const after = await observed(page);
+    expect(after.controls.filter(control => panes.some(pane => control.id === `settings-pane-${pane}`))).toEqual(navigation);
+    expect(after.zoom).toBe(state.zoom);
+    expect(after.compactThreshold).toBe(70);
+    await info.attach(`${language}-${zoom}-appearance-bottom.png`, { body: await page.screenshot(), contentType: "image/png" });
+  });
+}
+
 test("all ordinary preferences use real controls and unsupported native effects are explicit", async ({ page }) => {
   await boot(page);
   await click(page, "settings-accent-theme");

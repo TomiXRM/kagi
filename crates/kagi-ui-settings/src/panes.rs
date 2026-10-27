@@ -302,7 +302,7 @@ impl SettingsView {
         );
         div()
             .flex()
-            .flex_wrap()
+            .flex_nowrap()
             .items_center()
             .gap(pt(6.))
             .child(decrease)
@@ -355,7 +355,7 @@ impl SettingsView {
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
+                    .flex_nowrap()
                     .items_center()
                     .gap(pt(6.))
                     .child(decrease)
@@ -382,8 +382,20 @@ impl SettingsView {
             )
             .child(
                 div()
+                    .relative()
                     .text_size(pt(11.5))
                     .text_color(rgb(theme().text_sub))
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            "compact-threshold-help".into(),
+                            Role::Label,
+                            description.clone(),
+                            description.clone(),
+                            false,
+                            false,
+                            false,
+                        )
+                    }))
                     .child(description),
             )
             .into_any_element()

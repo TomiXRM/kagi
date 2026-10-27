@@ -68,6 +68,7 @@ impl SettingsView {
             _ => unreachable!("only Settings row titles are accepted"),
         };
         div()
+            .relative()
             .min_w_0()
             .w_full()
             .flex()
@@ -76,6 +77,17 @@ impl SettingsView {
             .gap(pt(10.))
             .px(pt(12.))
             .py(pt(10.))
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    format!("{}-row", id.trim_end_matches("-help")),
+                    Role::Group,
+                    title.t().into(),
+                    String::new(),
+                    false,
+                    false,
+                    false,
+                )
+            }))
             .child(
                 div()
                     .flex_1()
@@ -104,7 +116,8 @@ impl SettingsView {
                             .child(description),
                     ),
             )
-            .child(div().min_w_0().max_w_full().child(control))
+            // Wrap the whole composite below its label, not its internal controls.
+            .child(div().flex_shrink_0().min_w_0().max_w_full().child(control))
             .into_any_element()
     }
     fn handle(&mut self, id: &str, cx: &mut App) -> FocusHandle {

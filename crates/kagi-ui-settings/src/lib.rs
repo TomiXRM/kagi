@@ -269,7 +269,7 @@ impl Render for SettingsView {
                             .child(content),
                     )
                     // Measure the fixed viewport, not a child translated by scroll.
-                    .child(self.measured(
+                    .children(cfg!(feature = "gui-e2e").then(|| self.measured(
                         "settings-detail-scroll".into(),
                         Role::Group,
                         self.pane.title().into(),
@@ -277,7 +277,7 @@ impl Render for SettingsView {
                         false,
                         false,
                         false,
-                    ))
+                    )))
                     .child(
                         gpui_component::scroll::Scrollbar::vertical(&self.scroll)
                             .id("settings-detail-scrollbar"),
@@ -344,7 +344,7 @@ impl Render for SettingsView {
                             )
                             .font_weight(FontWeight::BOLD)
                             .child(self.pane.title())
-                            .child(self.measured(
+                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
                                 "settings-pane-title".into(),
                                 Role::Heading,
                                 self.pane.title().into(),
@@ -352,7 +352,7 @@ impl Render for SettingsView {
                                 false,
                                 false,
                                 false,
-                            )),
+                            ))),
                     )
                     .child(viewport),
             )

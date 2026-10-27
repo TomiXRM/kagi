@@ -21,6 +21,8 @@ The `?story=settings` verification host mounts `kagi-ui-settings::SettingsView`,
 the same entity used by native Settings; it does not copy its input handlers.
 Its deterministic adapter records typed requests and seeds effective values
 without native persistence. A request count proves dispatch, not native durability.
+Shared recorder calls construct their arguments/elements lazily under `gui-e2e`;
+default builds omit these probe-only strings and children, not empty Div stand-ins.
 Use pinned `nightly-2026-10-18` (`wasm_thread` requires nightly) and
 `wasm-bindgen-cli 0.2.123`; install the pinned Playwright Chromium runtime before
 testing. The host embeds the exact pinned component icon bytes using the

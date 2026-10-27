@@ -29,7 +29,7 @@ impl SettingsView {
             .bg(rgb(theme().bg_base))
             .flex()
             .flex_col()
-            .child(self.measured(
+            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
                 id.into(),
                 Role::Group,
                 id.into(),
@@ -37,7 +37,7 @@ impl SettingsView {
                 false,
                 false,
                 false,
-            ))
+            )))
     }
     pub(crate) fn row(
         &self,
@@ -88,8 +88,7 @@ impl SettingsView {
                             .relative()
                             .text_size(pt(11.5))
                             .text_color(rgb(theme().text_sub))
-                            .child(description.clone())
-                            .child(self.measured(
+                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
                                 id.into(),
                                 Role::Label,
                                 title.t().into(),
@@ -97,7 +96,8 @@ impl SettingsView {
                                 false,
                                 false,
                                 false,
-                            )),
+                            )))
+                            .child(description),
                     ),
             )
             .child(div().min_w_0().max_w_full().child(control))
@@ -234,7 +234,7 @@ impl SettingsView {
                 });
             (handle.clone(), ring)
         });
-        let probe = self.measured(
+        let probe = cfg!(feature = "gui-e2e").then(|| self.measured(
             id.clone(),
             role,
             label.to_string(),
@@ -242,7 +242,7 @@ impl SettingsView {
             focused,
             selected,
             !enabled,
-        );
+        ));
         div()
             .id(SharedString::from(id))
             .relative()
@@ -276,8 +276,7 @@ impl SettingsView {
                             if !focus.is_focused(window) || !window.is_window_active() {
                                 return;
                             }
-                            // Absolute children start inside a parent's border.
-                            // Recover its outer bounds before adding the 3px gap.
+                            // Expand the inner border box to the outer 3px gap.
                             let bounds = bounds.dilate(border_inset + px(5.));
                             let mut ring = ring
                                 .w(bounds.size.width)
@@ -288,8 +287,7 @@ impl SettingsView {
                                 window,
                                 cx,
                             );
-                            // Above later siblings, but retain the ancestor
-                            // scroll clip. Modal focus transfer suppresses it.
+                            // Above siblings, still clipped by the ancestors.
                             window.defer_draw(
                                 ring,
                                 bounds.origin,
@@ -305,7 +303,7 @@ impl SettingsView {
                     .size_full(),
                 )
             })
-            .child(probe)
+            .children(probe)
             .on_prepaint(move |bounds, window, cx| {
                 if !reveal_focus.is_focused(window) {
                     revealed.set(false);
@@ -698,7 +696,7 @@ impl SettingsView {
         let chrome = self.chrome_heights.clone();
         let sidebar = sidebar
             .relative()
-            .child(self.measured(
+            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
                 "settings-sidebar".into(),
                 Role::TabList,
                 Msg::SettingsTitle.t().into(),
@@ -706,7 +704,7 @@ impl SettingsView {
                 false,
                 false,
                 false,
-            ))
+            )))
             .child(
                 canvas(
                     move |bounds, _, _| {

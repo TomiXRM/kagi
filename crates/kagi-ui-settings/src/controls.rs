@@ -29,15 +29,17 @@ impl SettingsView {
             .bg(rgb(theme().bg_base))
             .flex()
             .flex_col()
-            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                id.into(),
-                Role::Group,
-                id.into(),
-                String::new(),
-                false,
-                false,
-                false,
-            )))
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    id.into(),
+                    Role::Group,
+                    id.into(),
+                    String::new(),
+                    false,
+                    false,
+                    false,
+                )
+            }))
     }
     pub(crate) fn row(
         &self,
@@ -88,15 +90,17 @@ impl SettingsView {
                             .relative()
                             .text_size(pt(11.5))
                             .text_color(rgb(theme().text_sub))
-                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                                id.into(),
-                                Role::Label,
-                                title.t().into(),
-                                description.to_string(),
-                                false,
-                                false,
-                                false,
-                            )))
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    id.into(),
+                                    Role::Label,
+                                    title.t().into(),
+                                    description.to_string(),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            }))
                             .child(description),
                     ),
             )
@@ -199,10 +203,8 @@ impl SettingsView {
         let scroll = self.scroll.clone();
         let in_detail = !id.starts_with("settings-pane-");
         let focus_overlay = focused.then(|| {
-            let ring_color = super::focus_ring::color(
-                self.snapshot.effective_accent,
-                focus_background,
-            );
+            let ring_color =
+                super::focus_ring::color(self.snapshot.effective_accent, focus_background);
             div()
                 .absolute()
                 .inset(-(border_inset + px(5.)))
@@ -234,15 +236,17 @@ impl SettingsView {
                     ))
                 })
         });
-        let probe = cfg!(feature = "gui-e2e").then(|| self.measured(
-            id.clone(),
-            role,
-            label.to_string(),
-            label.to_string(),
-            focused,
-            selected,
-            !enabled,
-        ));
+        let probe = cfg!(feature = "gui-e2e").then(|| {
+            self.measured(
+                id.clone(),
+                role,
+                label.to_string(),
+                label.to_string(),
+                focused,
+                selected,
+                !enabled,
+            )
+        });
         div()
             .id(SharedString::from(id))
             .relative()
@@ -663,15 +667,17 @@ impl SettingsView {
         let chrome = self.chrome_heights.clone();
         let sidebar = sidebar
             .relative()
-            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                "settings-sidebar".into(),
-                Role::TabList,
-                Msg::SettingsTitle.t().into(),
-                String::new(),
-                false,
-                false,
-                false,
-            )))
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    "settings-sidebar".into(),
+                    Role::TabList,
+                    Msg::SettingsTitle.t().into(),
+                    String::new(),
+                    false,
+                    false,
+                    false,
+                )
+            }))
             .child(
                 canvas(
                     move |bounds, _, _| {

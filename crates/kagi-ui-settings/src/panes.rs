@@ -264,15 +264,17 @@ impl SettingsView {
                             .text_size(pt(11.5))
                             .text_color(rgb(theme().text_sub))
                             .child(Msg::SettingsCustomThemesDesc.t())
-                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                                "settings-custom-themes-help".into(),
-                                Role::Label,
-                                Msg::SettingsCustomThemes.t().into(),
-                                Msg::SettingsCustomThemesDesc.t().into(),
-                                false,
-                                false,
-                                false,
-                            ))),
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    "settings-custom-themes-help".into(),
+                                    Role::Label,
+                                    Msg::SettingsCustomThemes.t().into(),
+                                    Msg::SettingsCustomThemesDesc.t().into(),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            })),
                     ),
             ))
             .into_any_element()
@@ -310,15 +312,17 @@ impl SettingsView {
                     .relative()
                     .role(Role::Status)
                     .aria_label(i18n::settings_zoom_value(&value))
-                    .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                        "zoom-value".into(),
-                        Role::Status,
-                        i18n::settings_zoom_value(&value),
-                        value.clone(),
-                        false,
-                        false,
-                        false,
-                    )))
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            "zoom-value".into(),
+                            Role::Status,
+                            i18n::settings_zoom_value(&value),
+                            value.clone(),
+                            false,
+                            false,
+                            false,
+                        )
+                    }))
                     .child(value),
             )
             .child(increase)
@@ -362,15 +366,17 @@ impl SettingsView {
                             .role(Role::Status)
                             .aria_label(description.clone())
                             .child(format!("{value}rem"))
-                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                                "compact-threshold-value".into(),
-                                Role::Status,
-                                description.clone(),
-                                format!("{value}rem"),
-                                false,
-                                false,
-                                false,
-                            ))),
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    "compact-threshold-value".into(),
+                                    Role::Status,
+                                    description.clone(),
+                                    format!("{value}rem"),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            })),
                     )
                     .child(increase),
             )
@@ -613,15 +619,17 @@ impl SettingsView {
                 .flex_col()
                 .gap(pt(12.))
                 .child(Msg::SettingsAnalyzeIgnore.t())
-                .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                    "settings-analyze-section".into(),
-                    Role::Group,
-                    Msg::SettingsExclusions.t().into(),
-                    String::new(),
-                    false,
-                    false,
-                    false,
-                )))
+                .children(cfg!(feature = "gui-e2e").then(|| {
+                    self.measured(
+                        "settings-analyze-section".into(),
+                        Role::Group,
+                        Msg::SettingsExclusions.t().into(),
+                        String::new(),
+                        false,
+                        false,
+                        false,
+                    )
+                }))
                 .child(
                     div()
                         .id("settings-analyze-help")
@@ -629,15 +637,17 @@ impl SettingsView {
                         .text_size(pt(11.5))
                         .text_color(rgb(theme().text_sub))
                         .child(Msg::SettingsAnalyzeIgnoreDesc.t())
-                        .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                            "settings-analyze-help".into(),
-                            Role::Label,
-                            Msg::SettingsAnalyzeIgnore.t().into(),
-                            Msg::SettingsAnalyzeIgnoreDesc.t().into(),
-                            false,
-                            false,
-                            false,
-                        ))),
+                        .children(cfg!(feature = "gui-e2e").then(|| {
+                            self.measured(
+                                "settings-analyze-help".into(),
+                                Role::Label,
+                                Msg::SettingsAnalyzeIgnore.t().into(),
+                                Msg::SettingsAnalyzeIgnoreDesc.t().into(),
+                                false,
+                                false,
+                                false,
+                            )
+                        })),
                 )
                 .child(
                     div()
@@ -651,15 +661,17 @@ impl SettingsView {
                                 .appearance(true)
                                 .bordered(true),
                         )
-                        .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                            "settings-analyze-input".into(),
-                            Role::TextInput,
-                            Msg::A11yAnalyzeIgnorePatterns.t().into(),
-                            self.input.read(cx).value().to_string(),
-                            false,
-                            false,
-                            false,
-                        ))),
+                        .children(cfg!(feature = "gui-e2e").then(|| {
+                            self.measured(
+                                "settings-analyze-input".into(),
+                                Role::TextInput,
+                                Msg::A11yAnalyzeIgnorePatterns.t().into(),
+                                self.input.read(cx).value().to_string(),
+                                false,
+                                false,
+                                false,
+                            )
+                        })),
                 )
                 .child(
                     div()
@@ -667,15 +679,17 @@ impl SettingsView {
                         .relative()
                         .role(Role::Status)
                         .child(status.t())
-                        .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                            "settings-analyze-status".into(),
-                            Role::Status,
-                            status.t().into(),
-                            status.t().into(),
-                            false,
-                            false,
-                            false,
-                        ))),
+                        .children(cfg!(feature = "gui-e2e").then(|| {
+                            self.measured(
+                                "settings-analyze-status".into(),
+                                Role::Status,
+                                status.t().into(),
+                                status.t().into(),
+                                false,
+                                false,
+                                false,
+                            )
+                        })),
                 )
                 .when_some(self.analyze.error.clone(), |el, error| {
                     el.child(
@@ -683,15 +697,17 @@ impl SettingsView {
                             .id("settings-analyze-error")
                             .relative()
                             .text_color(rgb(theme().color_blocker))
-                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                                "settings-analyze-error".into(),
-                                Role::Status,
-                                error.to_string(),
-                                error.to_string(),
-                                false,
-                                false,
-                                false,
-                            )))
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    "settings-analyze-error".into(),
+                                    Role::Status,
+                                    error.to_string(),
+                                    error.to_string(),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            }))
                             .child(error),
                     )
                 })

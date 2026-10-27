@@ -10,9 +10,8 @@ pub(super) fn color(accent: u32, background: u32) -> Hsla {
         a: 0.75,
         ..base
     };
-    let contrast = |ring| {
-        theme::contrast_ratio(u32::from(surface.blend(ring).to_rgb()) >> 8, background)
-    };
+    let contrast =
+        |ring| theme::contrast_ratio(u32::from(surface.blend(ring).to_rgb()) >> 8, background);
     let initial = candidate(base.l);
     // Leave rounding headroom for final composited native/browser pixels.
     if contrast(initial) >= 3.1 {

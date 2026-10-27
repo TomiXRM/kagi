@@ -269,15 +269,17 @@ impl Render for SettingsView {
                             .child(content),
                     )
                     // Measure the fixed viewport, not a child translated by scroll.
-                    .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                        "settings-detail-scroll".into(),
-                        Role::Group,
-                        self.pane.title().into(),
-                        String::new(),
-                        false,
-                        false,
-                        false,
-                    )))
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            "settings-detail-scroll".into(),
+                            Role::Group,
+                            self.pane.title().into(),
+                            String::new(),
+                            false,
+                            false,
+                            false,
+                        )
+                    }))
                     .child(
                         gpui_component::scroll::Scrollbar::vertical(&self.scroll)
                             .id("settings-detail-scrollbar"),
@@ -344,15 +346,17 @@ impl Render for SettingsView {
                             )
                             .font_weight(FontWeight::BOLD)
                             .child(self.pane.title())
-                            .children(cfg!(feature = "gui-e2e").then(|| self.measured(
-                                "settings-pane-title".into(),
-                                Role::Heading,
-                                self.pane.title().into(),
-                                String::new(),
-                                false,
-                                false,
-                                false,
-                            ))),
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    "settings-pane-title".into(),
+                                    Role::Heading,
+                                    self.pane.title().into(),
+                                    String::new(),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            })),
                     )
                     .child(viewport),
             )

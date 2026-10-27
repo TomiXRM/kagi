@@ -136,28 +136,27 @@ default focus or a root Return action.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.
-Repository cards occupy the center content's top-trailing safe area, outside
-sidebar/Inspector, with a 45%-column width cap (#1768). Every conflict layout
-reserves an in-flow lane for persistent cards and their summary between its
-column/side or saved header and the panes; hunk/whole-file choices must never
-be covered. Directory/file layouts without column headers place the lane before
-their choices. Persistent cards keep × / Escape dismissal. In Conflict Mode,
-routine Info/Success feedback uses the existing fixed-height footer text slot:
-newest message only, one truncated line, the shared four-second lifetime and
-Role::Status arrival announcement. Busy uses that footer's existing spinner;
-slow-read Skip and Hide sit at the trailing end (owner ruling, #1768).
+All notifications — persistent, transient and busy — share one bottom-left
+stack in the owning surface's centre content, above its status bar; Settings
+uses the bottom-left of its content pane (owner ruling, #1590 restored 2026-10-27).
+The actual content parent excludes sidebar, Inspector, toolbar and status bar.
+Conflict Mode uses the same stack, without a footer exception or in-flow lane.
+Grow expansion upward from the same inset, bounded by content height, 30% of
+viewport height and 45% of content width. Retain counted disclosure and × /
+Escape dismissal. This supersedes #1768 placement and #1806 conflict-footer
+routing, not their typed subject, audience or recovery ownership.
 Success footer text uses contrast-adjusted semantic ink, at least 4.5:1 against
 its actual chrome; the unadjusted success token alone is not text-safe.
-No transient or busy card may cover conflict content or change its geometry.
-Home/Settings/Graph retain their existing placement policies.
+Notifications never reflow content or acquire a second per-surface placement.
 House rule: notifications appear only in the window that owns their subject
 (owner, #1806). Settings shows its own typed theme/settings notices; repository
 results/rescued drafts/refresh stay with their repository root. Theme commands
 capture their invoking window, including repository/Home palette invocation;
 startup theme errors are app-level unless produced in Settings itself.
-Assemble subject, actions and recovery ownership before insertion, lane refresh
-or focus repair. Repair once on the final persistent/transient classification;
-a foreign or action-bearing arrival must not retire an unrelated control.
+Assemble subject, actions and recovery ownership before insertion or focus
+repair. Repair once on the completed notification; a foreign arrival must not
+retire an unrelated control. When the shared collapsed preview changes, repair
+focus from its now-hidden controls through the existing owner.
 A standalone Home root keeps app-level notices; a repository root's Home tab
 retains its repository notices/recovery. Escape considers only that window's
 audience, never dismissing an invisible foreign card or consuming its key.

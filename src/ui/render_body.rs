@@ -1006,7 +1006,6 @@ impl KagiApp {
                         })
                         .children(self.render_toasts(
                             window,
-                            super::busy::ToastPlacement::Repository,
                             crate::ui::toast_stack::ToastAudience::Repository,
                             cx,
                         )),
@@ -1132,14 +1131,7 @@ impl KagiApp {
                 _ => center_content.child(commit_list_col),
             },
         };
-        // Like Home and Settings, takeovers reserve space only for persistent
-        // cards. Transient feedback stays overlaid; a fallback commit list
-        // already owns its stack and must not acquire a second one here.
-        let persistent_lane = self.toast_stack.as_ref().is_some_and(|stack| {
-            stack
-                .read(cx)
-                .persistent_lane_open(crate::ui::toast_stack::ToastAudience::Repository)
-        });
+        // Takeover surfaces provide their actual centre-content parent.
         let center_content = div()
             .relative()
             .flex()
@@ -1147,32 +1139,16 @@ impl KagiApp {
             .flex_1()
             .min_w(px(0.))
             .min_h(px(0.))
-            .when(takeover_notifications && persistent_lane, |el| {
-                el.child(
-                    div()
-                        .relative()
-                        .flex()
-                        .justify_end()
-                        .flex_shrink_0()
-                        .child(e2e::measure_inside("toast-content-anchor"))
-                        .children(self.render_toasts(
-                            window,
-                            super::busy::ToastPlacement::PersistentLane,
-                            crate::ui::toast_stack::ToastAudience::Repository,
-                            cx,
-                        )),
-                )
-            })
             .child(center_content.when(takeover_notifications, |el| {
                 el.child(e2e::measure_inside("takeover-page-controls"))
             }))
             .when(takeover_notifications, |el| {
-                el.children(self.render_toasts(
-                    window,
-                    super::busy::ToastPlacement::Transient,
-                    crate::ui::toast_stack::ToastAudience::Repository,
-                    cx,
-                ))
+                el.child(e2e::measure_inside("toast-content-anchor"))
+                    .children(self.render_toasts(
+                        window,
+                        crate::ui::toast_stack::ToastAudience::Repository,
+                        cx,
+                    ))
             });
         let center_column = div()
             .flex()

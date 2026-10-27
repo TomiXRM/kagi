@@ -1,4 +1,4 @@
-//! #1768: bounded notifications use content-local top-trailing anchors.
+//! One bounded bottom-left notification stack in every surface's centre content.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{px, AnyWindowHandle, Bounds, Pixels, VisualTestAppContext};
 use kagi::ui::toast_stack::{ToastAudience, ToastSubject};
@@ -134,8 +134,8 @@ pub fn scenario_toast_stack_budget_compact_editor(cx: &mut VisualTestAppContext)
                 "Reload/Overwrite remain above notifications"
             );
             assert!(
-                expanded.bottom() >= collapsed.bottom(),
-                "disclosure expands downward within its cap"
+                expanded.top() <= collapsed.top(),
+                "disclosure expands upward within its cap"
             );
             assert_eq!(
                 crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]
@@ -143,8 +143,8 @@ pub fn scenario_toast_stack_budget_compact_editor(cx: &mut VisualTestAppContext)
                 true
             );
             assert!(
-                (expanded.top() - collapsed.top()).abs() <= px(1.),
-                "Editor expansion retains the content top anchor"
+                (expanded.bottom() - collapsed.bottom()).abs() <= px(1.),
+                "Editor expansion retains the content bottom anchor"
             );
             assert!(
                 expanded.bottom() <= editor_tabs.top(),
@@ -326,13 +326,10 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                     assert_eq!(disclosure["aria"]["expanded"], true);
                     let expanded = e2e::control_bounds(window.window_id(), "toast-stack").unwrap();
                     assert!(expanded.size.height <= px(dimensions.1 * 0.3 + 1.));
+                    assert!(expanded.top() <= stack.top(), "expansion grows upward");
                     assert!(
-                        expanded.bottom() >= stack.bottom(),
-                        "expansion grows downward"
-                    );
-                    assert!(
-                        (expanded.top() - stack.top()).abs() <= px(1.),
-                        "expansion keeps its content top anchor"
+                        (expanded.bottom() - stack.bottom()).abs() <= px(1.),
+                        "expansion keeps its content bottom anchor"
                     );
                     assert_content_anchor(cx, window, "toast-stack", dimensions, true);
                     if kagi_domain::compact::is_compact(
@@ -498,8 +495,8 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                     );
                     let controls =
                         e2e::control_bounds(settings.window_id(), "settings-page-controls")
-                            .expect("Settings controls painted below persistent lane");
-                    assert!(settings_stack.bottom() <= controls.top());
+                            .expect("Settings controls remain mounted");
+                    assert!(settings_stack.size.height > px(0.));
                     let settings_more = i18n::Msg::ToastMore.t().replace("{count}", "2");
                     assert!(crate::native_ax::press(cx, settings, &settings_more),
                             "Settings disclosure {dimensions:?}/{zoom}/{preset}/{lang:?}/{distinct}: {}",
@@ -513,10 +510,15 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         settings_dimensions,
                         false,
                     );
-                    assert!(settings_expanded.bottom() >= settings_stack.bottom());
+                    assert!(settings_expanded.top() <= settings_stack.top());
                     assert!(
-                        (settings_expanded.top() - settings_stack.top()).abs() <= px(1.),
-                        "Settings expansion grows downward from its in-flow lane"
+                        (settings_expanded.bottom() - settings_stack.bottom()).abs() <= px(1.),
+                        "Settings expansion grows upward from its content-bottom anchor"
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(settings.window_id(), "settings-page-controls")
+                            .unwrap(),
+                        controls
                     );
                     assert!(crate::native_ax::press(
                         cx,
@@ -902,7 +904,7 @@ fn assert_mixed_lane_stability(
                 ),
                 cx,
             );
-            assert!(stack.persistent_lane_open(audience));
+            assert!(stack.toasts().iter().any(|toast| toast.is_persistent()));
             id
         });
         stable(cx);
@@ -910,7 +912,7 @@ fn assert_mixed_lane_stability(
             origin: gpui::point(lane.left(), lane.top()),
             size: gpui::size(lane.size.width, controls.bottom() - lane.top()),
         });
-        assert_transient_overlay(cx, window, "toast-transient-stack", containing);
+        assert_transient_overlay(cx, window, "toast-stack", containing);
         stack.update(cx, |stack, cx| {
             stack.advance_age_for_e2e(Duration::from_secs(60));
             assert!(stack.expiring_ids().contains(&id));
@@ -949,7 +951,7 @@ fn assert_mixed_lane_stability(
 }
 
 fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
-    for mode in ["cleanup", "pr", "issues", "history"] {
+    for mode in ["cleanup", "pr", "issues", "history", "diff"] {
         let fixture = build_fixture();
         let (app, window) = mount(cx, fixture.path());
         app.update(cx, |app, cx| match mode {
@@ -957,6 +959,10 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
             "pr" => app.show_pr_mode(cx),
             "issues" => app.show_empty_issues_for_e2e(cx),
             "history" => app.open_file_history("README.md".into(), None, cx),
+            "diff" => {
+                app.select_headless(0);
+                app.open_main_diff_commit(0, cx);
+            }
             _ => unreachable!(),
         });
         cx.run_until_parked();
@@ -973,7 +979,9 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         assert!(e2e::control_bounds(window.window_id(), "busy-snackbar").is_some());
         assert!(!cx.read(|cx| stack
             .read(cx)
-            .persistent_lane_open(ToastAudience::Repository)));
+            .toasts()
+            .iter()
+            .any(|toast| toast.is_persistent())));
         assert_eq!(
             e2e::control_bounds(window.window_id(), "takeover-page-controls").unwrap(),
             original,
@@ -984,7 +992,7 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
             stack.update(cx, |stack, cx| {
                 stack.push_notify(kind, "Ephemeral takeover fixture", cx);
-                assert!(!stack.persistent_lane_open(ToastAudience::Repository));
+                assert!(!stack.toasts().iter().any(|toast| toast.is_persistent()));
             });
             cx.run_until_parked();
             draw(cx, window);
@@ -1008,7 +1016,7 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         draw(cx, window);
         let lane = e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap();
         let shifted = e2e::control_bounds(window.window_id(), "takeover-page-controls").unwrap();
-        assert!(shifted.top() > original.top() && shifted.top() >= lane.bottom());
+        assert_eq!(shifted, original, "persistent feedback never moves content");
         assert_mixed_lane_stability(cx, &app, window, "takeover-page-controls", shifted, lane);
         stack.update(cx, |stack, cx| stack.begin_exit(error, cx));
         cx.run_until_parked();
@@ -1031,10 +1039,10 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
     ]);
     let _host = crate::settings_window::SettingsHostGuard::native(cx);
     for settings in [false, true] {
-        let (audience, subject) = if settings {
-            (ToastAudience::Settings, ToastSubject::Settings)
+        let subject = if settings {
+            ToastSubject::Settings
         } else {
-            (ToastAudience::Repository, ToastSubject::App)
+            ToastSubject::App
         };
         let fixture = build_fixture();
         let (app, repository) = mount(cx, fixture.path());
@@ -1069,7 +1077,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
                 ),
                 cx,
             );
-            assert!(!stack.persistent_lane_open(audience));
+            assert!(!stack.toasts().iter().any(|toast| toast.is_persistent()));
         });
         cx.run_until_parked();
         draw(cx, window);
@@ -1081,7 +1089,8 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
             "Info cannot move first-row controls"
         );
         let transient = e2e::control_bounds(window.window_id(), "toast-stack").unwrap();
-        assert!((transient.left() - theme::scaled_px(12.)).abs() <= px(1.));
+        let anchor = e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap();
+        assert!((transient.left() - anchor.left() - theme::scaled_px(12.)).abs() <= px(1.));
         let error = stack.update(cx, |stack, cx| {
             stack.push_keyed_notify(
                 kagi::ui::toast_stack::ToastSpec::new(
@@ -1096,11 +1105,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         draw(cx, window);
         let lane = e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap();
         let shifted = e2e::control_bounds(window.window_id(), controls_id).unwrap();
-        assert!(shifted.top() > original.top());
-        assert!(
-            shifted.top() >= lane.bottom(),
-            "persistent lane precedes controls"
-        );
+        assert_eq!(shifted, original, "persistent feedback never moves content");
         assert_mixed_lane_stability(cx, &app, window, controls_id, shifted, lane);
         if settings {
             let tabs = e2e::control_bounds(window.window_id(), "settings-pane-0").unwrap();
@@ -1117,10 +1122,10 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
                 ),
                 cx,
             );
-            assert!(
-                stack.persistent_lane_open(audience),
-                "transients leave the persistent lane open"
-            );
+            assert!(stack
+                .toasts()
+                .iter()
+                .any(|toast| toast.id == error && toast.is_persistent()));
         });
         cx.run_until_parked();
         draw(cx, window);
@@ -1138,7 +1143,11 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         stack.update(cx, |stack, cx| stack.begin_exit(error, cx));
         cx.run_until_parked();
         draw(cx, window);
-        assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open(audience)));
+        assert!(cx.read(|cx| stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .all(|toast| toast.id != error || toast.dismissing.is_some())));
         assert_eq!(
             e2e::control_bounds(window.window_id(), controls_id)
                 .unwrap()
@@ -1233,25 +1242,23 @@ fn assert_transient_overlay(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
     control: &str,
-    containing: Option<Bounds<Pixels>>,
+    _containing: Option<Bounds<Pixels>>,
 ) {
     draw(cx, window);
     let viewport = cx
         .update_window(window, |_, window, _| window.viewport_size())
         .unwrap();
-    let containing = containing.unwrap_or(Bounds {
-        origin: gpui::point(px(0.), px(0.)),
-        size: viewport,
-    });
-    let overlay = e2e::control_bounds(window.window_id(), "toast-transient-overlay")
-        .expect("actual absolute transient overlay painted");
+    let containing = e2e::control_bounds(window.window_id(), "toast-content-anchor")
+        .expect("owning centre content is painted");
+    let overlay = e2e::control_bounds(window.window_id(), "toast-container")
+        .expect("shared notification container painted");
     assert!(
         (overlay.left() - containing.left() - theme::scaled_px(12.)).abs() <= px(2.),
         "transient overlay retains its leading inset"
     );
     assert!(
-        (containing.bottom() - overlay.bottom() - theme::scaled_px(22. + 12.)).abs() <= px(2.),
-        "transient overlay retains its status-bar-safe bottom inset"
+        (containing.bottom() - overlay.bottom() - theme::scaled_px(12.)).abs() <= px(2.),
+        "all feedback shares the content-bottom inset"
     );
     assert!(overlay.right() <= containing.right());
     assert!(
@@ -1284,8 +1291,8 @@ fn assert_content_anchor(
     let anchor = e2e::control_bounds(window.window_id(), "toast-content-anchor")
         .expect("actual content-column anchor painted");
     assert!(
-        (bounds.right() - anchor.right() + theme::scaled_px(12.) + border).abs() <= px(2.),
-        "{control} stays at the content trailing inset: {bounds:?}, {anchor:?}"
+        (bounds.left() - anchor.left() - theme::scaled_px(12.) - border).abs() <= px(2.),
+        "{control} stays at the content leading inset: {bounds:?}, {anchor:?}"
     );
     assert!(bounds.left() >= anchor.left());
     assert!(bounds.top() >= anchor.top());
@@ -1301,10 +1308,29 @@ fn assert_content_anchor(
         bounds.size.height <= viewport.height * 0.3 + px(1.),
         "{control} retains the current viewport budget"
     );
-    if !repository {
-        let controls = e2e::control_bounds(window.window_id(), "settings-page-controls")
-            .expect("Settings controls remain below lane");
-        assert!(bounds.bottom() <= controls.top());
+    let container = e2e::control_bounds(window.window_id(), "toast-container")
+        .expect("one shared stack container");
+    assert!((anchor.bottom() - container.bottom() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!(
+        container.top() >= anchor.top(),
+        "stack fits actual content height"
+    );
+    for id in [
+        "sidebar-clip",
+        "conflict-sidebar-clip",
+        "settings-titlebar",
+        "right-pane-clip",
+        "toolbar-row",
+    ] {
+        if let Some(chrome) = e2e::control_bounds(window.window_id(), id) {
+            assert!(
+                container.right() <= chrome.left()
+                    || container.left() >= chrome.right()
+                    || container.bottom() <= chrome.top()
+                    || container.top() >= chrome.bottom(),
+                "notification stack never intersects {id}"
+            );
+        }
     }
     if repository {
         let footer = e2e::control_bounds(window.window_id(), "pr-menu-footer")

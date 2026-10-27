@@ -7,11 +7,13 @@ pub(super) fn run(cx: &mut VisualTestAppContext) {
     let old_zoom = theme::zoom();
     let old_lang = i18n::lang();
     let old_theme = theme::theme().slug.to_string();
-    theme::set_zoom(1.);
-    for preset in ["apple-light", "apple-dark"] {
-        for lang in [i18n::Lang::En, i18n::Lang::Ja] {
-            for layout in ["text", "raw", "directory-file", "saved"] {
-                run_case(cx, layout, lang, preset);
+    for zoom in [1., 1.67] {
+        theme::set_zoom(zoom);
+        for preset in ["apple-light", "apple-dark"] {
+            for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+                for layout in ["text", "raw", "directory-file", "saved"] {
+                    run_case(cx, layout, lang, preset);
+                }
             }
         }
     }
@@ -167,6 +169,19 @@ fn exercise_lane(
     cx.run_until_parked();
     draw(cx, window);
     let lane = assert_safe_lane(window, layout);
+    let collapsed = bounds(window, "toast-container");
+    crate::native_ax::activate(cx);
+    let more = i18n::Msg::ToastMore.t().replace("{count}", "2");
+    assert!(
+        crate::native_ax::press(cx, window, &more),
+        "Conflict disclosure remains reachable"
+    );
+    cx.run_until_parked();
+    draw(cx, window);
+    let expanded = bounds(window, "toast-container");
+    assert!((expanded.bottom() - collapsed.bottom()).abs() <= px(1.));
+    assert!(expanded.top() <= collapsed.top());
+    assert_eq!(assert_safe_lane(window, layout), lane);
     let shifted = control_bounds(window, layout);
     assert_eq!(
         shifted, original,
@@ -189,7 +204,9 @@ fn exercise_lane(
             original_text,
             "transient feedback no longer routes through the footer"
         );
-        let status = kagi::ui::toast_stack::status_for_e2e().expect("actual arrival status");
+        let status =
+            kagi::ui::toast_stack::status_for_e2e(window.window_id(), ToastAudience::Repository)
+                .expect("actual arrival status");
         assert_eq!(status.role, Some(gpui::Role::Status));
         assert_eq!(status.newest_id, Some(transient));
         assert!(status
@@ -216,7 +233,9 @@ fn exercise_lane(
                 .all(|toast| toast.id != transient));
         });
         assert_eq!(
-            kagi::ui::toast_stack::status_for_e2e().unwrap().newest_id,
+            kagi::ui::toast_stack::status_for_e2e(window.window_id(), ToastAudience::Repository)
+                .unwrap()
+                .newest_id,
             None,
             "expiry never re-announces an older persistent error"
         );

@@ -264,27 +264,35 @@ pub struct ToastStatusPresentation {
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
-    static STATUS: std::cell::RefCell<Option<ToastStatusPresentation>> = const { std::cell::RefCell::new(None) };
+    static STATUS: std::cell::RefCell<std::collections::HashMap<(gpui::WindowId, ToastAudience), ToastStatusPresentation>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_status(
+    window: gpui::WindowId,
+    audience: ToastAudience,
     role: Option<gpui::Role>,
     label: Option<SharedString>,
     newest_id: Option<u64>,
 ) {
     STATUS.with(|slot| {
-        *slot.borrow_mut() = Some(ToastStatusPresentation {
-            role,
-            label,
-            newest_id,
-        })
+        slot.borrow_mut().insert(
+            (window, audience),
+            ToastStatusPresentation {
+                role,
+                label,
+                newest_id,
+            },
+        );
     });
 }
 
 #[cfg(feature = "gui-e2e")]
-pub fn status_for_e2e() -> Option<ToastStatusPresentation> {
-    STATUS.with(|slot| slot.borrow().clone())
+pub fn status_for_e2e(
+    window: gpui::WindowId,
+    audience: ToastAudience,
+) -> Option<ToastStatusPresentation> {
+    STATUS.with(|slot| slot.borrow().get(&(window, audience)).cloned())
 }
 
 /// Captured subject ownership, never inferred from notification text. A stack
@@ -297,7 +305,7 @@ pub enum ToastSubject {
     App,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToastAudience {
     Repository,
     Settings,
@@ -484,6 +492,8 @@ impl ToastStack {
 
     /// Release a retired host's controls without dismissing its shared feedback.
     pub(super) fn forget_window(&mut self, id: gpui::WindowId) {
+        #[cfg(feature = "gui-e2e")]
+        STATUS.with(|slot| slot.borrow_mut().retain(|(host, _), _| *host != id));
         self.host_audiences.retain(|(host, _)| *host != id);
         for focus in &self.summary_focus {
             focus.borrow_mut().retain(|(host, _)| *host != id);
@@ -758,6 +768,56 @@ impl Default for ToastStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "gui-e2e")]
+    #[test]
+    fn status_recorder_clears_arrivals_without_crossing_hosts() {
+        let first = gpui::WindowId::from(101);
+        let second = gpui::WindowId::from(102);
+        record_status(
+            first,
+            ToastAudience::Repository,
+            Some(gpui::Role::Status),
+            Some("arrival".into()),
+            Some(7),
+        );
+        record_status(
+            first,
+            ToastAudience::Settings,
+            Some(gpui::Role::Status),
+            Some("settings".into()),
+            Some(8),
+        );
+        record_status(
+            second,
+            ToastAudience::Repository,
+            Some(gpui::Role::Status),
+            Some("other".into()),
+            Some(9),
+        );
+        record_status(
+            first,
+            ToastAudience::Repository,
+            Some(gpui::Role::Status),
+            Some("".into()),
+            None,
+        );
+        let cleared = status_for_e2e(first, ToastAudience::Repository).unwrap();
+        assert_eq!(cleared.newest_id, None);
+        assert_eq!(cleared.label.as_deref(), Some(""));
+        assert_eq!(
+            status_for_e2e(first, ToastAudience::Settings)
+                .unwrap()
+                .newest_id,
+            Some(8)
+        );
+        assert_eq!(
+            status_for_e2e(second, ToastAudience::Repository)
+                .unwrap()
+                .newest_id,
+            Some(9)
+        );
+    }
 
     #[test]
     fn shared_host_preserves_card_identity_and_persistence() {

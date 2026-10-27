@@ -138,9 +138,13 @@ impl toast_stack::ToastStack {
             .max_h(budget)
             .when(count > 0, |el| el.child(e2e::measure_inside("toast-stack")));
         #[cfg(feature = "gui-e2e")]
-        if arrival.is_some() || !self.toasts().iter().any(|toast| audience.includes(toast)) {
-            toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
-        }
+        toast_stack::record_status(
+            _window.window_handle().window_id(),
+            audience,
+            Some(role),
+            Some(label),
+            arrival.map(|(id, _)| id),
+        );
         if count > 1 {
             use gpui_component::button::{Button, ButtonVariants as _};
             let owner = cx.entity().downgrade();

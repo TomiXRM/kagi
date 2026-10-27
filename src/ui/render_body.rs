@@ -1101,7 +1101,10 @@ impl KagiApp {
             .overflow_hidden();
         let mut takeover_notifications = !matches!(
             layout.center,
-            workspace::CenterPane::CommitList | workspace::CenterPane::Editor
+            workspace::CenterPane::CommitList
+                | workspace::CenterPane::Editor
+                | workspace::CenterPane::PrMode
+                | workspace::CenterPane::IssuesMode
         );
         let center_content = match workspace::center_item(layout.center) {
             Some(item) => match item.render(

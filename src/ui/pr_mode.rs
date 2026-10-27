@@ -1187,7 +1187,23 @@ pub fn render_pr_mode(
         .when(has_tab, |el| {
             el.child(super::pr_layout::toolbar(app, window, cx))
         })
-        .child(render_center(app, window, cx))
+        .child(
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.))
+                .min_h(px(0.))
+                .child(super::e2e::measure_inside("toast-content-anchor"))
+                .child(super::e2e::measure_inside("takeover-page-controls"))
+                .child(render_center(app, window, cx))
+                .children(app.render_toasts(
+                    window,
+                    super::toast_stack::ToastAudience::Repository,
+                    cx,
+                )),
+        )
         .children(drawer)
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {

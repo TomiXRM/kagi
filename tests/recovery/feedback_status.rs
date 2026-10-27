@@ -230,7 +230,11 @@ fn check_arrivals(
             };
             stack.update(cx, |stack, cx| stack.push_notify(kind, text.clone(), cx));
             paint(cx, win, dimensions);
-            let status = toast_stack::status_for_e2e().unwrap();
+            let status = toast_stack::status_for_e2e(
+                win.window_id(),
+                toast_stack::ToastAudience::Repository,
+            )
+            .unwrap();
             assert_eq!(
                 status.role,
                 Some(gpui::Role::Status),
@@ -281,7 +285,8 @@ fn check_stable_arrival(
     cx.advance_clock(Duration::from_millis(300));
     paint(cx, win, dimensions);
     assert_eq!(
-        toast_stack::status_for_e2e().unwrap(),
+        toast_stack::status_for_e2e(win.window_id(), toast_stack::ToastAudience::Repository)
+            .unwrap(),
         status,
         "hover/tick/animation do not change arrival metadata"
     );

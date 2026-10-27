@@ -268,7 +268,7 @@ pub fn scenario_toast_dismiss(cx: &mut VisualTestAppContext) {
         let _ = kagi::ui::toast_stack::take_close_focus_for_e2e();
         drop(stack);
     }
-    actionable_info_preserves_transient_focus(cx, &app, window);
+    actionable_info_repairs_collapsed_focus(cx, &app, window);
     theme::set_zoom(old_zoom);
     kagi::ui::i18n::set_lang(old_lang);
     unmount(cx, app, window);
@@ -785,7 +785,7 @@ fn settings_reload_preserves_repository_focus(
     settle_removal(cx, window);
 }
 
-fn actionable_info_preserves_transient_focus(
+fn actionable_info_repairs_collapsed_focus(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<kagi::ui::KagiApp>,
     window: gpui::AnyWindowHandle,

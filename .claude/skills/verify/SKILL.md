@@ -604,25 +604,24 @@ ready unsaved Result has exactly one, Save. Danger-sheet root Return preserves
 the same sheet/arm without executing or cancelling; Escape / ⌘. still cancel,
 and focused buttons retain Space / Return. Quiet adoption captions must meet
 4.5:1 and outlines 3:1 against the real conflict band and rest/hover/pressed fills.
-Measure persistent notification bounds against each actual center content, not
-the window: top-trailing below file/graph/editor controls, outside sidebar/
-Inspector, at most 45% of that column. Every conflict layout places persistent
-cards AND the N-more summary in an in-flow lane after its column/side/saved
-header and before the panes and choice controls. Measure nonintersection with
-the actual current/incoming Use/Both controls in text, the raw choose row plus
-both side headers, directory/file choices and saved previews.
-In Conflict Mode only, newest routine Info/Success uses the existing fixed-height
-footer's single truncated text line, not a pane card (owner ruling, #1768).
-Assert the actual rendered footer text and Role::Status arrival, unchanged full
-lane/control/footer bounds, no transient/busy card probes, and no intersection
-with hunk/whole-file controls. Exercise automatic four-second expiry and verify
-the prior footer returns without re-announcing an older persistent error. Busy
-uses the existing footer spinner; held slow-read Skip/Hide remain inside the
-trailing end of that line. Include `slow_write_conflict_continue`.
-Read the actual Success footer paint and require at least 4.5:1 against its
-chrome background, not merely a semantic colour token.
-Home/Settings/Graph retain their current placement; their lanes still contain
-only persistent cards. Scope all hosts by typed subject (owner, #1806): with a
+For the restored #1590 ruling (2026-10-27), measure the one persistent/transient/
+busy stack against each actual centre content: bottom-left inset, outside
+sidebar, Inspector, toolbar and status bar, at most 45% of that column and 30%
+of the viewport height. Expansion grows upward without shifting controls.
+Conflict uses this same content stack at 100% and 167%, including text, raw,
+directory/file and saved layouts; it never routes routine feedback to the footer.
+Exercise collapsed/expanded mixed cards, four-second transient expiry, held busy
+Skip/Hide and unchanged content/footer geometry. Keep errors and action-bearing
+cards persistent. The actual Status node clears its arrival rather than
+re-announcing an old card. `toast_stack::status_for_e2e(window_id, audience)`
+records each rendered host, including empty Status labels; another window or
+audience cannot overwrite its evidence.
+Include `toast_`, `slow_read_explained`, `slow_write_conflict_continue`,
+`bottom_panel_nested` and `pr_detail_adaptive`. PR/Issues nested-panel coverage
+compares independent `pr-mode-center-pane` / `issue-mode-center-pane` probes
+and excludes `bottom-panel`; loaded PR coverage also excludes its real
+`pr-mode-lane-pane`, not just the notification's own parent.
+Scope all hosts by typed subject (owner, #1806): with a
 real repository draft-rescue card live, native Settings must show no repository
 card, its repository window must still show it, and a real theme JSON error
 invoked in Settings must appear only there. Include

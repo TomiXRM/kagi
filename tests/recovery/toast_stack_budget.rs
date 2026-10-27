@@ -886,12 +886,12 @@ fn assert_mixed_lane_stability(
         assert_eq!(
             e2e::control_bounds(window.window_id(), controls_id).unwrap(),
             controls,
-            "transient and busy feedback must not move controls in an open lane"
+            "transient and busy feedback must not move content controls"
         );
         assert_eq!(
             e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap(),
             lane,
-            "only persistent cards determine lane height"
+            "notification arrivals do not change the owning content bounds"
         );
     };
     for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
@@ -957,7 +957,10 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| match mode {
             "cleanup" => app.open_branch_cleanup_view(cx),
             "pr" => app.show_pr_mode(cx),
-            "issues" => app.show_empty_issues_for_e2e(cx),
+            "issues" => {
+                app.show_issues_mode(cx);
+                app.show_empty_issues_for_e2e(cx);
+            }
             "history" => app.open_file_history("README.md".into(), None, cx),
             "diff" => {
                 app.select_headless(0);
@@ -1026,6 +1029,19 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
             original,
             "{mode}: dismissing the persistent card leaves no empty lane"
         );
+        if matches!(mode, "pr" | "issues") {
+            assert_nested_feedback_host(
+                cx,
+                &app,
+                window,
+                if mode == "pr" {
+                    "pr-mode-center-pane"
+                } else {
+                    "issue-mode-center-pane"
+                },
+                false,
+            );
+        }
         unmount(cx, app, window);
     }
 }
@@ -1132,7 +1148,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         assert_eq!(
             e2e::control_bounds(window.window_id(), controls_id).unwrap(),
             shifted,
-            "a later Success never changes the persistent lane's control positions"
+            "a later Success never changes content control positions"
         );
         assert_eq!(
             e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap(),
@@ -1358,4 +1374,68 @@ fn assert_content_anchor(
         }
     }
     bounds
+}
+
+/// Compare with independent workspace probes, not the notification's own parent.
+pub(crate) fn assert_nested_feedback_host(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    window: AnyWindowHandle,
+    center_id: &str,
+    require_lane: bool,
+) {
+    let (was_open, tab) = cx.read(|cx| (app.read(cx).bottom_panel_open, app.read(cx).bottom_tab));
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        cx.notify();
+    });
+    let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    let ids = stack.update(cx, |stack, cx| {
+        [kagi::ui::ToastKind::Error, kagi::ui::ToastKind::Info].map(|kind| {
+            stack.push_keyed_notify(
+                kagi::ui::toast_stack::ToastSpec::new(
+                    ToastSubject::Repository,
+                    kind,
+                    "Nested host geometry",
+                ),
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+    draw(cx, window);
+    let content =
+        e2e::control_bounds(window.window_id(), center_id).expect("independent centre pane");
+    let panel =
+        e2e::control_bounds(window.window_id(), "bottom-panel").expect("reopened bottom panel");
+    let toast = e2e::control_bounds(window.window_id(), "toast-container").expect("mixed stack");
+    assert!(toast.left() >= content.left() && toast.right() <= content.right());
+    assert!(toast.top() >= content.top() && toast.bottom() <= content.bottom());
+    assert!((toast.left() - content.left() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!((content.bottom() - toast.bottom() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!(
+        toast.bottom() <= panel.top(),
+        "notifications never occupy Terminal/Operation Log"
+    );
+    if require_lane {
+        let lane = e2e::control_bounds(window.window_id(), "pr-mode-lane-pane")
+            .expect("actual PR swimlane");
+        assert!(
+            toast.left() >= lane.right(),
+            "notifications never occupy the swimlane"
+        );
+    }
+    stack.update(cx, |stack, cx| {
+        for id in ids {
+            stack.begin_exit(id, cx);
+        }
+    });
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = was_open;
+        app.bottom_tab = tab;
+        cx.notify();
+    });
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
 }

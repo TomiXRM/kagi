@@ -651,6 +651,12 @@ Fetch detail action, traverse the real keyboard focus tree, toggle disclosure
 with Enter and open that exact durable receipt. Require every error to remain
 until that explicit action, then wheel back and dispatch real Skip/Hide with
 both axes contained. Focus reveal must not pin subsequent manual scrolling.
+Also wheel away while disclosure retains focus, then Shift-Tab back to Skip or
+clone progress and require the actual Button to be visible before activation.
+Portable Settings and its underlying repository must retain independent scroll
+offsets in the same window; repeated background prepaint must not reset Settings.
+`clone_hidden_status` retains the real task/latch/dispatch and owner-window
+checks while requiring foreign clone status/cards to stay absent from Settings.
 Opt into
 `KAGI_GUI_E2E_ONSCREEN=1` to save JA167% text/saved Conflict mixed-stack native
 frames through the existing success screenshot helper. Label those held-read

@@ -1588,23 +1588,10 @@ pub fn take_clone_busy_status() -> Option<(gpui::Role, String)> {
 
 /// Observe the pinned Button's existing keyed focus owner, not a second handle.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn probe_clone_busy_button(button: gpui_component::button::Button) -> gpui::AnyElement {
-    use gpui::IntoElement as _;
-    #[derive(gpui::IntoElement)]
-    struct Probe(gpui_component::button::Button);
-    impl gpui::RenderOnce for Probe {
-        fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
-            let focus = window
-                .use_keyed_state("clone-busy-show", cx, |_, cx| cx.focus_handle())
-                .read(cx)
-                .clone();
-            if focus.is_focused(window) {
-                CLONE_BUSY_FOCUS.with(|slot| slot.set(true));
-            }
-            self.0.render(window, cx)
-        }
+pub(crate) fn record_clone_busy_focus(focused: bool) {
+    if focused {
+        CLONE_BUSY_FOCUS.with(|slot| slot.set(true));
     }
-    Probe(button).into_any_element()
 }
 
 #[cfg(feature = "gui-e2e")]

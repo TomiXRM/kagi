@@ -30,6 +30,25 @@ impl BusyIdentity {
     }
 }
 
+/// Keep the kit's existing Skip/clone focus target visible in the shared flow.
+#[derive(gpui::IntoElement)]
+struct BusyAction(Button, &'static str, gpui::ScrollHandle);
+
+impl gpui::RenderOnce for BusyAction {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let focus = window
+            .use_keyed_state(self.1, cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        #[cfg(feature = "gui-e2e")]
+        if self.1 == "clone-busy-show" {
+            super::e2e::record_clone_busy_focus(focus.is_focused(window));
+        }
+        super::button_style::reveal_on_focus(self.0, self.1.into(), focus, self.2, window, cx)
+            .render(window, cx)
+    }
+}
+
 impl KagiApp {
     pub(crate) fn mark_write_busy(&mut self, name: &'static str, cx: &mut Context<Self>) {
         self.write_busy_op = Some(name);
@@ -405,9 +424,9 @@ impl KagiApp {
         }
         let skip = slow
             .filter(|read| read.skippable())
-            .map(|_| self.render_busy_skip(cx));
+            .map(|_| self.render_busy_skip(scroll, cx));
         let clone_action = if show_clone_action && !self.busy_progress_hidden() {
-            self.render_clone_progress_action(cx)
+            self.render_clone_progress_action(scroll, cx)
         } else {
             None
         };
@@ -497,14 +516,22 @@ impl KagiApp {
         }
     }
 
-    pub(super) fn render_busy_skip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_busy_skip(
+        &self,
+        scroll: &gpui::ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         super::e2e::measure_control(
             "busy-snackbar-skip",
-            Button::new("busy-snackbar-skip")
-                .label(i18n::slow_read_skip())
-                .small()
-                .ghost()
-                .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
+            BusyAction(
+                Button::new("busy-snackbar-skip")
+                    .label(i18n::slow_read_skip())
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
+                "busy-snackbar-skip",
+                scroll.clone(),
+            ),
         )
         .into_any()
     }
@@ -548,6 +575,7 @@ impl KagiApp {
 
     pub(super) fn render_clone_progress_action(
         &self,
+        scroll: &gpui::ScrollHandle,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         if !self.clone_progress_available() {
@@ -569,9 +597,13 @@ impl KagiApp {
                     this.focus_after_pick(window, cx);
                 }
             }));
-        #[cfg(feature = "gui-e2e")]
-        let button = super::e2e::probe_clone_busy_button(button);
-        Some(super::e2e::measure_control("clone-busy-show", button).into_any())
+        Some(
+            super::e2e::measure_control(
+                "clone-busy-show",
+                BusyAction(button, "clone-busy-show", scroll.clone()),
+            )
+            .into_any(),
+        )
     }
 }
 

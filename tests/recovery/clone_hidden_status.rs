@@ -133,7 +133,7 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
     let owner = cx.read(|cx| app.read(cx).home_github.cloning.clone().unwrap());
     assert_eq!(e2e::take_clone_dispatches(), 1, "one clone dispatched");
     matrix(cx, &app, window);
-    settings_busy_feedback(cx, &app, window);
+    settings_excludes_foreign_feedback(cx, &app, window);
     reopen_same(cx, &app, window, &owner);
     home_hidden(cx, &app, window);
     crate::busy_dismiss::close_by_pointer(cx, &app, window);
@@ -202,7 +202,7 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
     unmount(cx, app, window);
 }
 
-fn settings_busy_feedback(
+fn settings_excludes_foreign_feedback(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     repository: AnyWindowHandle,
@@ -226,12 +226,12 @@ fn settings_busy_feedback(
         e2e::clear_control_bounds(settings.window_id(), "toast-stack");
         draw(cx, app, settings);
         assert!(
-            e2e::control_bounds(settings.window_id(), "clone-busy-status").is_some(),
-            "Settings retains the running clone's busy feedback"
+            e2e::control_bounds(settings.window_id(), "clone-busy-status").is_none(),
+            "Settings must not project its repository/Home owner's running clone"
         );
         assert!(
-            e2e::control_bounds(settings.window_id(), "toast-stack").is_some(),
-            "Settings retains toast feedback"
+            e2e::control_bounds(settings.window_id(), "toast-stack").is_none(),
+            "Settings must not project unrelated App/Repository cards"
         );
         assert!(
             e2e::control_bounds(settings.window_id(), "clone-busy-show").is_none(),
@@ -248,6 +248,84 @@ fn settings_busy_feedback(
     cx.run_until_parked();
 }
 
+fn backward_clone_action(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    let errors: Vec<_> = stack.update(cx, |stack, cx| {
+        (0..3)
+            .map(|index| {
+                stack.push_notify(
+                    kagi::ui::ToastKind::Error,
+                    format!("Durable clone neighbor {index}\nSecond line\nThird line"),
+                    cx,
+                );
+                stack.toasts().last().unwrap().id
+            })
+            .collect()
+    });
+    crate::native_ax::activate(cx);
+    draw(cx, app, window);
+    let count = cx.read(|cx| stack.read(cx).toasts().len() - 1);
+    assert!(crate::native_ax::press(
+        cx,
+        window,
+        &kagi::ui::i18n::Msg::ToastMore
+            .t()
+            .replace("{count}", &count.to_string()),
+    ));
+    cx.run_until_parked();
+    draw(cx, app, window);
+    crate::native_ax::focus_named(cx, window, "Button", kagi::ui::i18n::Msg::ToastCollapse.t());
+    draw(cx, app, window);
+    cx.run_until_parked();
+    draw(cx, app, window);
+    let viewport = e2e::control_bounds(window.window_id(), "toast-container").unwrap();
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-10_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    draw(cx, app, window);
+    let hidden = e2e::control_bounds(window.window_id(), "clone-busy-show").unwrap();
+    assert!(
+        !viewport.contains(&hidden.center()),
+        "fixture scrolls progress action out of view"
+    );
+    e2e::take_clone_busy_focus();
+    crate::keyboard_nav::keys(cx, window, "shift-tab");
+    draw(cx, app, window);
+    cx.run_until_parked();
+    draw(cx, app, window);
+    assert!(
+        e2e::take_clone_busy_focus(),
+        "Shift-Tab returns to the real clone progress Button"
+    );
+    let visible = e2e::control_bounds(window.window_id(), "clone-busy-show").unwrap();
+    assert!(visible.top() >= viewport.top() && visible.bottom() <= viewport.bottom());
+    assert!(visible.left() >= viewport.left() && visible.right() <= viewport.right());
+    assert!(cx.read(|cx| e2e::op_latched(app.read(cx))));
+    assert_eq!(
+        e2e::take_clone_dispatches(),
+        0,
+        "focus never redispatches clone"
+    );
+    stack.update(cx, |stack, cx| {
+        for id in errors {
+            stack.begin_exit(id, cx);
+        }
+    });
+    cx.advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    draw(cx, app, window);
+}
+
 fn matrix(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     for dimensions in [(940., 660.), (1392., 883.)] {
         crate::pr_detail_adaptive::resize(cx, window, dimensions);
@@ -258,6 +336,9 @@ fn matrix(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindo
                 for zoom in [1., 1.67] {
                     theme::set_zoom(zoom);
                     check_status(cx, &app, window);
+                    if dimensions == (940., 660.) && lang == Lang::Ja && zoom == 1.67 {
+                        backward_clone_action(cx, app, window);
+                    }
                 }
             }
         }

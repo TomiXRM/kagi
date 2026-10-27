@@ -11,11 +11,110 @@ pub(crate) mod conflict_lane;
 pub fn scenario_toast_stack_budget(cx: &mut VisualTestAppContext) {
     non_repository_lane_policy(cx);
     takeover_lane_policy(cx);
+    portable_settings_scroll(cx);
     conflict_content_anchor(cx);
     conflict_lane::run(cx);
     repeated_noop_push(cx);
     operation_result_details(cx);
     run_budget_matrix(cx, 1.);
+}
+
+fn portable_settings_scroll(cx: &mut VisualTestAppContext) {
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom", "settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    crate::pr_detail_adaptive::resize(cx, window, (940., 660.));
+    theme::set_zoom(1.67);
+    app.update(cx, |app, cx| app.set_lang(i18n::Lang::Ja, cx));
+    cx.simulate_keystrokes(window, "cmd-,");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| cx.windows().len()),
+        1,
+        "portable Settings shares its repository window"
+    );
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    let oldest = stack.update(cx, |stack, cx| {
+        let mut oldest = 0;
+        for index in 0..3 {
+            let id = stack.push_keyed_notify(
+                kagi::ui::toast_stack::ToastSpec::new(
+                    ToastSubject::Settings,
+                    kagi::ui::ToastKind::Error,
+                    format!("Settings error {index}\nDurable second line\nDurable third line"),
+                ),
+                cx,
+            );
+            if index == 0 {
+                oldest = id;
+            }
+        }
+        oldest
+    });
+    crate::native_ax::activate(cx);
+    draw(cx, window);
+    assert!(crate::native_ax::press(
+        cx,
+        window,
+        &i18n::Msg::ToastMore.t().replace("{count}", "2"),
+    ));
+    cx.run_until_parked();
+    draw(cx, window);
+    let viewport = e2e::control_bounds(window.window_id(), "toast-container").unwrap();
+    let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
+    assert!(viewport.left() >= frame.left() && viewport.right() <= frame.right());
+    assert!(viewport.top() >= frame.top() && viewport.bottom() <= frame.bottom());
+    assert!(viewport.size.height <= px(660. * 0.3 + 1.));
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-10_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    let close = format!("toast-dismiss-{oldest}");
+    // Every redraw also prepaints the underlying empty repository host. It
+    // must not clamp the Settings offset back to zero in the same window.
+    for _ in 0..3 {
+        e2e::clear_control_bounds(window.window_id(), &close);
+        draw(cx, window);
+        let control = e2e::control_bounds(window.window_id(), &close).unwrap();
+        assert!(
+            viewport.contains(&control.center()),
+            "Settings oldest card stays reachable across repository prepaint"
+        );
+    }
+    stack.update(cx, |stack, cx| {
+        stack.push_keyed_notify(
+            kagi::ui::toast_stack::ToastSpec::new(
+                ToastSubject::Repository,
+                kagi::ui::ToastKind::Error,
+                "Independent repository feedback",
+            ),
+            cx,
+        );
+    });
+    e2e::clear_control_bounds(window.window_id(), &close);
+    draw(cx, window);
+    let control = e2e::control_bounds(window.window_id(), &close).unwrap();
+    assert!(
+        viewport.contains(&control.center()),
+        "foreign arrival does not reset Settings scroll"
+    );
+    let close_settings = e2e::control_bounds(window.window_id(), "settings-close").unwrap();
+    cx.simulate_click(window, close_settings.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    e2e::clear_control_bounds(window.window_id(), &close);
+    draw(cx, window);
+    assert!(e2e::control_bounds(window.window_id(), &close).is_none());
+    drop(stack);
+    unmount(cx, app, window);
 }
 
 pub fn scenario_toast_stack_budget_large_zoom(cx: &mut VisualTestAppContext) {

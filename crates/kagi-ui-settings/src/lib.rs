@@ -2,6 +2,7 @@
 //! Hosts own effects; effective seeds never emit requests or overwrite drafts.
 mod analyze;
 mod controls;
+mod focus_ring;
 mod model;
 mod panes;
 mod theme_cards;

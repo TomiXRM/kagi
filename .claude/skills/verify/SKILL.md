@@ -52,10 +52,14 @@ Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 Run the focused browser paint/geometry tests before heavy native gates.
 The pale-accent regression injects an effective Yellow snapshot, uses real
-keyboard focus on an unselected theme, ON switch, disabled provider and segment,
-and samples all four ring edges against their painted gaps. Disabled labels
-are dimmed without dimming the focus ring; an external-gap backplate makes
-the compositing surface explicit over segmented tracks/pills.
+keyboard focus on an unselected theme, ON switch, disabled provider and segment.
+It measures the actual outer decoration and samples both pixels of every edge
+against all three gap pixels, accounting for the theme card's existing border.
+Reverse segment and sidebar navigation put focus immediately before a selected
+sibling, so a later sibling cannot silently cover half the stroke. Disabled
+labels are dimmed without dimming the ring; its external-gap backplate gives
+one compositing surface. Deferred decoration retains the ancestor scroll mask
+and rechecks active focus, rather than escaping clips or painting over dialogs.
 A second actual browser tab tests
 inactive ring removal without clearing selection. This does not claim an OS
 Increase Contrast bridge: the shared ring always adjusts its composited contrast.

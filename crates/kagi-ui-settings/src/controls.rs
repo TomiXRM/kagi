@@ -8,52 +8,6 @@ pub(crate) fn pt(n: f32) -> Pixels {
     theme::scaled_px(n * 16. / theme::BASE_REM_PX)
 }
 
-fn focus_ring_color(accent: u32, background: u32) -> Hsla {
-    let base: Hsla = rgb(accent).into();
-    let surface: Hsla = rgb(background).into();
-    let candidate = |lightness| Hsla {
-        l: lightness,
-        a: 0.75,
-        ..base
-    };
-    let contrast =
-        |ring| theme::contrast_ratio(u32::from(surface.blend(ring).to_rgb()) >> 8, background);
-    let initial = candidate(base.l);
-    // Leave rounding headroom for the final composited native/browser pixels.
-    if contrast(initial) >= 3.1 {
-        return initial;
-    }
-    let endpoint = if contrast(candidate(0.)) >= contrast(candidate(1.)) {
-        0.
-    } else {
-        1.
-    };
-    for step in 1..=32 {
-        let ring = candidate(base.l + (endpoint - base.l) * step as f32 / 32.);
-        if contrast(ring) >= 3.1 {
-            return ring;
-        }
-    }
-    candidate(endpoint)
-}
-
-#[cfg(test)]
-#[test]
-fn focus_ring_is_translucent_and_contrasts_after_compositing() {
-    for background in [0xf7f7f7, 0xffffff, 0xe5e5e5, 0x1e1e1e, 0x29292c, 0x444444] {
-        for accent in [0xffcc00, 0x007aff, 0x0a84ff, 0xaf52de, 0xffffff, 0x000000] {
-            let ring = focus_ring_color(accent, background);
-            let surface: Hsla = rgb(background).into();
-            let base: Hsla = rgb(accent).into();
-            assert!(ring.a > 0. && ring.a < 1.);
-            assert_eq!(ring.h, base.h);
-            assert_eq!(ring.s, base.s);
-            let painted = u32::from(surface.blend(ring).to_rgb()) >> 8;
-            assert!(theme::contrast_ratio(painted, background) >= 3.0);
-        }
-    }
-}
-
 pub(crate) fn section(title: Msg, content: impl IntoElement) -> AnyElement {
     div()
         .min_w_0()
@@ -226,6 +180,7 @@ impl SettingsView {
         enabled: bool,
         role: Role,
         focus_background: u32,
+        border_inset: Pixels,
         intent: SettingsIntent,
         roving: Option<(String, usize, Vec<String>)>,
         window: &Window,
@@ -243,11 +198,42 @@ impl SettingsView {
         let revealed = self.revealed.entry(id.clone()).or_default().clone();
         let scroll = self.scroll.clone();
         let in_detail = !id.starts_with("settings-pane-");
-        let ring_color = if focused {
-            focus_ring_color(self.snapshot.effective_accent, focus_background)
-        } else {
-            transparent_black()
-        };
+        let focus_overlay = focused.then(|| {
+            let ring_color = super::focus_ring::color(
+                self.snapshot.effective_accent,
+                focus_background,
+            );
+            let ring = div()
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(pt(10.))
+                        .border(px(5.))
+                        .border_color(rgb(focus_background)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(pt(10.))
+                        .border_2()
+                        .border_color(ring_color),
+                )
+                .when(cfg!(feature = "gui-e2e"), |ring| {
+                    ring.child(self.measured(
+                        format!("{id}-focus-ring"),
+                        Role::Image,
+                        String::new(),
+                        String::new(),
+                        false,
+                        false,
+                        false,
+                    ))
+                });
+            (handle.clone(), ring)
+        });
         let probe = self.measured(
             id.clone(),
             role,
@@ -283,27 +269,42 @@ impl SettingsView {
             .when(enabled && !selected && role != Role::RadioButton, |el| {
                 el.hover(|s| s.bg(rgb(theme().surface)))
             })
-            .when(focused, |el| {
-                // Paint only the existing external stroke and three-pixel gap.
-                // The translucent ring then has one known backdrop even where
-                // adjacent segment tracks/pills otherwise cross its edges.
+            .when_some(focus_overlay, |el, (focus, ring)| {
                 el.child(
-                    div()
-                        .absolute()
-                        .inset(px(-5.))
-                        .rounded(pt(10.))
-                        .border(px(5.))
-                        .border_color(rgb(focus_background)),
+                    canvas(
+                        move |bounds, window, cx| {
+                            if !focus.is_focused(window) || !window.is_window_active() {
+                                return;
+                            }
+                            // Absolute children start inside a parent's border.
+                            // Recover its outer bounds before adding the 3px gap.
+                            let bounds = bounds.dilate(border_inset + px(5.));
+                            let mut ring = ring
+                                .w(bounds.size.width)
+                                .h(bounds.size.height)
+                                .into_any_element();
+                            ring.layout_as_root(
+                                bounds.size.map(gpui::AvailableSpace::Definite),
+                                window,
+                                cx,
+                            );
+                            // Above later siblings, but retain the ancestor
+                            // scroll clip. Modal focus transfer suppresses it.
+                            window.defer_draw(
+                                ring,
+                                bounds.origin,
+                                0,
+                                Some(window.content_mask()),
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
                 )
             })
-            .child(
-                div()
-                    .absolute()
-                    .inset(px(-5.))
-                    .rounded(pt(10.))
-                    .border_2()
-                    .border_color(ring_color),
-            )
             .child(probe)
             .on_prepaint(move |bounds, window, cx| {
                 if !reveal_focus.is_focused(window) {
@@ -392,6 +393,7 @@ impl SettingsView {
             enabled,
             Role::Button,
             focus_background,
+            px(0.),
             intent,
             None,
             window,
@@ -424,6 +426,7 @@ impl SettingsView {
             enabled,
             Role::Button,
             theme().bg_base,
+            px(0.),
             intent,
             None,
             window,
@@ -457,6 +460,7 @@ impl SettingsView {
             true,
             Role::Switch,
             theme().bg_base,
+            px(0.),
             intent,
             None,
             window,
@@ -552,6 +556,7 @@ impl SettingsView {
                     enabled,
                     Role::RadioButton,
                     theme().bg_base,
+                    px(0.),
                     intent,
                     Some((group.into(), index, ids.clone())),
                     window,
@@ -561,6 +566,7 @@ impl SettingsView {
                 .min_w(pt(64.))
                 .px(pt(8.))
                 .py(pt(4.))
+                .line_height(pt(20.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -650,6 +656,7 @@ impl SettingsView {
                     true,
                     Role::Tab,
                     theme().surface,
+                    px(0.),
                     SettingsIntent::Pane(pane),
                     Some(("sidebar".into(), index, ids.clone())),
                     window,

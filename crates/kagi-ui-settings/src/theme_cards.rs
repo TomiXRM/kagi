@@ -125,6 +125,7 @@ impl SettingsView {
                     true,
                     Role::RadioButton,
                     theme().panel,
+                    px(2.),
                     SettingsIntent::Theme(palette.slug.to_string().into()),
                     Some(("themes".into(), index, ids.clone())),
                     window,

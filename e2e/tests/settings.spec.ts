@@ -148,7 +148,7 @@ test("pale accent focus paint contrasts on unselected themes and ON switches and
     await frames(page);
     const theme = (await observed(page)).controls.find(control => control.id.startsWith("settings-theme-") && control.focused)!;
     expect(theme.selected).toBe(false);
-    for (const kind of ["unselected-theme", "on-switch", "disabled-provider", "segment"]) {
+    for (const kind of ["unselected-theme", "on-switch", "disabled-provider", "segment", "segment-reverse", "sidebar-reverse"]) {
       let control = theme;
       if (kind === "on-switch") {
         await pane(page, "graph");
@@ -170,37 +170,60 @@ test("pale accent focus paint contrasts on unselected themes and ON switches and
         expect((await observed(page)).requests).toBe(requests);
         expect((await observed(page)).smartProvider).toBe("ollama");
       }
-      if (kind === "segment") {
+      if (kind === "segment" || kind === "segment-reverse") {
+        const reverse = kind === "segment-reverse";
         await pane(page, "general");
-        await click(page, "settings-language-en");
-        await page.keyboard.press("ArrowRight");
+        await click(page, reverse ? "settings-language-ja" : "settings-language-en");
+        await page.keyboard.press(reverse ? "ArrowLeft" : "ArrowRight");
         await frames(page);
-        control = await probe(page, "settings-language-ja");
+        control = await probe(page, reverse ? "settings-language-en" : "settings-language-ja");
         expect(control.selected).toBe(false);
+      }
+      if (kind === "sidebar-reverse") {
+        await pane(page, "terminal");
+        await page.keyboard.press("ArrowUp");
+        await frames(page);
+        control = await probe(page, "settings-pane-editor");
+        expect(control.selected).toBe(false);
+        expect((await probe(page, "settings-pane-terminal")).selected).toBe(true);
       }
       expect(control.focused).toBe(true);
       expect(await page.evaluate(() => document.hasFocus())).toBe(true);
-      const midX = control.x + control.width / 2, midY = control.y + control.height / 2;
-      const edges = [
-        [control.x - 4, midY, control.x - 2, midY],
-        [control.x + control.width + 3, midY, control.x + control.width + 1, midY],
-        [midX, control.y - 4, midX, control.y - 2],
-        [midX, control.y + control.height + 3, midX, control.y + control.height + 1],
+      const ring = await probe(page, `${control.id}-focus-ring`);
+      const borderInset = kind === "unselected-theme" ? 2 : 0;
+      expect(ring.x).toBeCloseTo(control.x - borderInset - 5);
+      expect(ring.y).toBeCloseTo(control.y - borderInset - 5);
+      expect(ring.width).toBeCloseTo(control.width + 2 * (borderInset + 5));
+      expect(ring.height).toBeCloseTo(control.height + 2 * (borderInset + 5));
+      const midX = ring.x + ring.width / 2, midY = ring.y + ring.height / 2;
+      const edges = (depth: number) => [
+        [ring.x + depth, midY], [ring.x + ring.width - depth, midY],
+        [midX, ring.y + depth], [midX, ring.y + ring.height - depth],
       ];
-      for (const [x, y, gapX, gapY] of edges) {
-        const background = await paintedRgb(page, gapX, gapY);
-        const ring = await paintedRgb(page, x, y);
-        const a = luminance(background), b = luminance(ring);
-        expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), `${appearance} ${kind} ring at ${x},${y}`).toBeGreaterThanOrEqual(3);
+      for (let edge = 0; edge < 4; edge++) {
+        const gap = edges(3.5)[edge];
+        const background = await paintedRgb(page, gap[0], gap[1]);
+        for (const depth of [2.5, 4.5]) {
+          const point = edges(depth)[edge];
+          const color = await paintedRgb(page, point[0], point[1]);
+          color.forEach((value, channel) => expect(Math.abs(value - background[channel]), `${kind} three-pixel gap`).toBeLessThanOrEqual(2));
+        }
+        for (const depth of [0.5, 1.5]) {
+          const point = edges(depth)[edge];
+          const color = await paintedRgb(page, point[0], point[1]);
+          const a = luminance(background), b = luminance(color);
+          expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+            JSON.stringify({ appearance, kind, edge, depth, color, background, control, ring })).toBeGreaterThanOrEqual(3);
+        }
       }
-      const background = await paintedRgb(page, midX, control.y - 2);
+      const background = await paintedRgb(page, midX, ring.y + 3.5);
       await info.attach(`${appearance}-${kind}-yellow-active.png`, { body: await page.screenshot(), contentType: "image/png" });
       const other = await page.context().newPage();
       try {
         await other.bringToFront();
         await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
         await frames(page);
-        const inactive = await paintedRgb(page, midX, control.y - 4);
+        const inactive = await paintedRgb(page, midX, ring.y + 0.5);
         inactive.forEach((value, channel) => expect(Math.abs(value - background[channel])).toBeLessThanOrEqual(2));
         await info.attach(`${appearance}-${kind}-yellow-inactive.png`, { body: await page.screenshot(), contentType: "image/png" });
       } finally {

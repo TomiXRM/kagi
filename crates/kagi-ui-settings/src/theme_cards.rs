@@ -22,25 +22,28 @@ impl SettingsView {
         if focused_index.is_none() {
             self.groups.insert("themes".into(), selected_index);
         }
-        let selection_changed = self.theme_reveal.as_ref().is_none_or(
-            |(slug, selected, _, _, _)| {
-                slug != &self.snapshot.theme_slug || *selected != selected_index
-            },
-        );
+        let selection_changed =
+            self.theme_reveal
+                .as_ref()
+                .is_none_or(|(slug, selected, _, _, _)| {
+                    slug != &self.snapshot.theme_slug || *selected != selected_index
+                });
         let target = if selection_changed {
             selected_index
         } else {
             focused_index.unwrap_or(selected_index)
         };
-        if self.theme_reveal.as_ref().is_none_or(
-            |(slug, selected, focused, zoom, count)| {
+        if self
+            .theme_reveal
+            .as_ref()
+            .is_none_or(|(slug, selected, focused, zoom, count)| {
                 slug != &self.snapshot.theme_slug
                     || *selected != selected_index
                     || (focused_index.is_some() && *focused != focused_index)
                     || *zoom != self.snapshot.zoom
                     || *count != themes.len()
-            },
-        ) {
+            })
+        {
             self.theme_scroll.scroll_to_item(target);
         }
         self.theme_reveal = Some((

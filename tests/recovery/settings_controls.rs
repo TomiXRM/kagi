@@ -343,8 +343,7 @@ pub(crate) fn reveal(
             bounds = self::bounds(cx, window, name).unwrap();
         }
         assert!(
-            bounds.left() >= strip.left() + margin
-                && bounds.right() <= strip.right() - margin,
+            bounds.left() >= strip.left() + margin && bounds.right() <= strip.right() - margin,
             "{name} and its focus clearance are horizontally reachable: {bounds:?} in {strip:?}"
         );
     }

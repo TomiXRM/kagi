@@ -281,15 +281,15 @@ test("host detail overlay occludes focused control paint", async ({ page }, info
   expect(restored.colors).toEqual(before.colors);
 });
 
-test("selected hover paint and segmented visible geometry remain distinct from hit targets", async ({ page }, info) => {
-  test.setTimeout(120_000);
-  await page.setViewportSize({ width: 900, height: 740 });
-  await boot(page);
-  for (const appearance of ["apple-light", "apple-dark"]) {
-    await host(page, "appearance", appearance);
-    for (const language of ["en", "ja"]) {
-      await host(page, "language", language);
-      for (const zoom of [1, 1.67]) {
+for (const appearance of ["apple-light", "apple-dark"]) {
+  for (const language of ["en", "ja"]) {
+    for (const zoom of [1, 1.67]) {
+      test(`selected hover paint and segmented geometry: ${appearance} ${language} ${zoom}`, async ({ page }, info) => {
+        test.setTimeout(120_000);
+        await page.setViewportSize({ width: 900, height: 740 });
+        await boot(page);
+        await host(page, "appearance", appearance);
+        await host(page, "language", language);
         await host(page, "zoom", String(zoom));
         for (const destination of panes) {
           await pane(page, destination);
@@ -334,10 +334,10 @@ test("selected hover paint and segmented visible geometry remain distinct from h
         const expected = appearance === "apple-light" ? [255, 255, 255] : [102, 102, 108];
         color.forEach((value, channel) => expect(Math.abs(value - expected[channel])).toBeLessThanOrEqual(2));
         await info.attach(`${appearance}-${language}-${zoom}-segments.png`, { body: segmentPaint.png, contentType: "image/png" });
-      }
+      });
     }
   }
-});
+}
 
 async function captionInk(page: Page, caption: Probe) {
   const png = await page.screenshot({

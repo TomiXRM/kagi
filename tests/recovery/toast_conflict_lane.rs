@@ -280,13 +280,29 @@ fn exercise_lane(
     assert_eq!(control_bounds(window, layout), shifted);
     assert_eq!(assert_safe_footer(window, layout), original_footer);
     assert!(bounds(window, "busy-snackbar").size.height > px(0.));
+    let read = kagi_ui_core::slow_read::SlowRead::AheadBehind;
+    assert_eq!(
+        crate::native_ax::node(cx, window, "busy-snackbar-caption".into())["aria"]["label"],
+        i18n::slow_read_label(read),
+        "bounded paint preserves the complete accessible busy caption"
+    );
+    assert_eq!(
+        crate::native_ax::node(cx, window, "busy-snackbar-advice-text".into())["aria"]["label"],
+        i18n::slow_read_advice(read),
+        "bounded paint preserves the complete accessible advice"
+    );
     for id in ["busy-snackbar-skip", "busy-snackbar-dismiss"] {
         let control = bounds(window, id);
         assert!(control.size.width > px(0.) && control.size.height > px(0.));
         let container = bounds(window, "toast-container");
         assert!(
-            control.top() >= container.top() && control.bottom() <= container.bottom(),
-            "{id} fits the shared content stack"
+            control.top() >= container.top()
+                && control.bottom() <= container.bottom()
+                && control.left() >= container.left()
+                && control.right() <= container.right(),
+            "{layout}/{:?}/{:.2}x: {id} fits the shared content stack: control {control:?}, container {container:?}",
+            i18n::lang(),
+            theme::zoom()
         );
     }
     let control = if matches!(layout, "text" | "raw") {

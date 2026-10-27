@@ -17,6 +17,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Restore one bottom-left notification stack in the owning surface's centre content, including Conflict Mode and Settings' content pane. Persistent, transient and busy feedback share the same bounded anchor without shifting content or covering the sidebar, Inspector, toolbar or status bar. Remove conflict-footer routing while preserving typed notification ownership, audience-scoped Escape, actions, lifetimes and Operation Log detail. (Owner ruling, #1590 restored 2026-10-27.)
   - Keep busy cards from shrinking their Skip/Hide controls when durable notifications are expanded; bound caption/advice paint while retaining full text in accessibility names and hover help.
+  - Keep busy feedback, disclosure and durable cards in one scroll viewport; keyboard focus reveals their existing controls without pinning manual scrolling. Narrow, enlarged Conflict views retain access to the oldest error and its real Operation Log detail while work is still running.
 
 ## [0.48.0] - 2026-10-27
 

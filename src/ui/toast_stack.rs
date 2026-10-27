@@ -202,6 +202,7 @@ pub(super) struct ToastButton(
     pub u64,
     pub super::types::ToastCloseFocus,
     pub &'static str,
+    pub gpui::ScrollHandle,
 );
 
 impl gpui::InteractiveElement for ToastButton {
@@ -225,12 +226,20 @@ impl gpui::RenderOnce for ToastButton {
         let id = window.window_handle().window_id();
         let mut hosts = self.2.borrow_mut();
         if let Some((_, previous)) = hosts.iter_mut().find(|(host, _)| *host == id) {
-            *previous = focus;
+            *previous = focus.clone();
         } else {
-            hosts.push((id, focus));
+            hosts.push((id, focus.clone()));
         }
         drop(hosts);
-        self.0.render(window, cx)
+        super::button_style::reveal_on_focus(
+            self.0,
+            (self.3, self.1).into(),
+            focus,
+            self.4,
+            window,
+            cx,
+        )
+        .render(window, cx)
     }
 }
 
@@ -338,7 +347,7 @@ pub struct ToastStack {
     removed_focus: Vec<(gpui::WindowId, gpui::FocusHandle)>,
     pub(super) expanded: [bool; 2],
     pub(super) summary_focus: [super::types::ToastCloseFocus; 2],
-    host_audiences: Vec<(gpui::WindowId, ToastAudience)>,
+    host_audiences: Vec<(gpui::WindowId, ToastAudience, gpui::ScrollHandle)>,
 }
 
 impl ToastStack {
@@ -359,11 +368,22 @@ impl ToastStack {
         &self.toasts
     }
 
-    pub(super) fn set_host_audience(&mut self, window: gpui::WindowId, audience: ToastAudience) {
-        if let Some((_, scope)) = self.host_audiences.iter_mut().find(|(id, _)| *id == window) {
+    pub(super) fn set_host_audience(
+        &mut self,
+        window: gpui::WindowId,
+        audience: ToastAudience,
+    ) -> gpui::ScrollHandle {
+        if let Some((_, scope, scroll)) = self
+            .host_audiences
+            .iter_mut()
+            .find(|(id, _, _)| *id == window)
+        {
             *scope = audience;
+            scroll.clone()
         } else {
-            self.host_audiences.push((window, audience));
+            let scroll = gpui::ScrollHandle::default();
+            self.host_audiences.push((window, audience, scroll.clone()));
+            scroll
         }
     }
 
@@ -494,7 +514,7 @@ impl ToastStack {
     pub(super) fn forget_window(&mut self, id: gpui::WindowId) {
         #[cfg(feature = "gui-e2e")]
         STATUS.with(|slot| slot.borrow_mut().retain(|(host, _), _| *host != id));
-        self.host_audiences.retain(|(host, _)| *host != id);
+        self.host_audiences.retain(|(host, _, _)| *host != id);
         for focus in &self.summary_focus {
             focus.borrow_mut().retain(|(host, _)| *host != id);
         }
@@ -606,7 +626,7 @@ impl ToastStack {
             let visible_in = |window| {
                 self.host_audiences
                     .iter()
-                    .any(|(host, audience)| *host == window && visible[*audience as usize])
+                    .any(|(host, audience, _)| *host == window && visible[*audience as usize])
             };
             for controls in std::iter::once(&toast.close_focus)
                 .chain(toast.action_focus.iter())
@@ -624,7 +644,7 @@ impl ToastStack {
             if !self
                 .host_audiences
                 .iter()
-                .any(|(_, audience)| visible[*audience as usize])
+                .any(|(_, audience, _)| visible[*audience as usize])
             {
                 if let Some(start) = toast.paused_at.take() {
                     toast.born += start.elapsed();
@@ -857,7 +877,9 @@ mod tests {
         let window = gpui::WindowId::from(1);
         stack.set_host_audience(window, ToastAudience::Repository);
         stack.set_host_audience(window, ToastAudience::Settings);
-        assert_eq!(stack.host_audiences, [(window, ToastAudience::Settings)]);
+        assert_eq!(stack.host_audiences.len(), 1);
+        assert_eq!(stack.host_audiences[0].0, window);
+        assert_eq!(stack.host_audiences[0].1, ToastAudience::Settings);
         stack.forget_window(window);
         assert!(stack.host_audiences.is_empty());
     }

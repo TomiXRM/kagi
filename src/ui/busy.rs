@@ -296,9 +296,15 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
-        toast_stack.update(cx, |stack, _| {
-            stack.set_host_audience(window.window_handle().window_id(), audience);
+        let scroll = toast_stack.update(cx, |stack, _| {
+            stack.set_host_audience(window.window_handle().window_id(), audience)
         });
+        #[cfg(feature = "gui-e2e")]
+        let has_cards = toast_stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| audience.includes(toast));
         let mut stack = div()
             .id("notification-content")
             .relative()
@@ -308,7 +314,7 @@ impl KagiApp {
             .max_h(gpui::px(f32::from(window.viewport_size().height) * 0.30))
             .min_h(gpui::px(0.))
             .overflow_y_scroll()
-            .child(super::e2e::measure_inside("toast-container"));
+            .track_scroll(&scroll);
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
         // (user request) — a lighter alternative to a blocking popup. A slow
@@ -326,6 +332,7 @@ impl KagiApp {
                 write,
                 audience != ToastAudience::Settings,
                 cx,
+                &scroll,
             ));
         }
 
@@ -334,6 +341,13 @@ impl KagiApp {
             stack: toast_stack,
             audience,
         });
+        let stack = super::e2e::measure_leaf("toast-container", stack);
+        #[cfg(feature = "gui-e2e")]
+        let stack = if has_cards {
+            super::e2e::measure_leaf("toast-stack", stack)
+        } else {
+            stack
+        };
         Some(toast_container().child(stack).into_any())
     }
 
@@ -349,6 +363,7 @@ impl KagiApp {
         write: Option<(&'static str, u64)>,
         show_clone_action: bool,
         cx: &mut Context<Self>,
+        scroll: &gpui::ScrollHandle,
     ) -> gpui::AnyElement {
         let accent = theme().ui_accent();
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
@@ -421,7 +436,7 @@ impl KagiApp {
                     .gap_3()
                     .child(div().flex_shrink_0().child(icon))
                     .child(text)
-                    .child(self.render_busy_dismiss(cx)),
+                    .child(self.render_busy_dismiss(scroll, cx)),
             )
             .when(has_actions, |card| {
                 card.child(
@@ -494,7 +509,11 @@ impl KagiApp {
         .into_any()
     }
 
-    pub(super) fn render_busy_dismiss(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_busy_dismiss(
+        &self,
+        scroll: &gpui::ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let owner = self.active_session();
         let identity = self.busy_identity();
         let app = cx.entity().downgrade();
@@ -510,6 +529,7 @@ impl KagiApp {
             0,
             self.busy_close_focus.clone(),
             "busy-snackbar-dismiss",
+            scroll.clone(),
         )
         .aria_label(SharedString::from(Msg::BusyHideProgress.t()))
         .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {

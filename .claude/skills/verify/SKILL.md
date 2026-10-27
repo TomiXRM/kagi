@@ -640,7 +640,14 @@ AX before painting its tree, then press the actual disclosure. Busy cards keep
 their natural height inside the bounded stack: caption/advice paint is one line
 each with full AX names and hover help. Skip/clone actions wrap on an optional
 second row, never competing horizontally with the primary Hide control.
-Assert both axes of every control and dispatch real Skip/Hide. Opt into
+Busy, disclosure and cards share one scroll viewport; measure that viewport with
+`measure_leaf`, not a probe that scrolls with its contents. While the held read
+is still busy at JA167%/940px, wheel to the disclosure and oldest real failed
+Fetch detail action, traverse the real keyboard focus tree, toggle disclosure
+with Enter and open that exact durable receipt. Require every error to remain
+until that explicit action, then wheel back and dispatch real Skip/Hide with
+both axes contained. Focus reveal must not pin subsequent manual scrolling.
+Opt into
 `KAGI_GUI_E2E_ONSCREEN=1` to save JA167% text/saved Conflict mixed-stack native
 frames through the existing success screenshot helper. Label those held-read
 fixtures Tier A; they do not replace plain-application Tier B evidence.

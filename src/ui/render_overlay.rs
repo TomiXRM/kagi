@@ -112,9 +112,7 @@ impl toast_stack::ToastStack {
             .rev()
             .find(|toast| audience.includes(toast))
             .map(|toast| toast.id);
-        // Keep the foreground workspace usable even at accessibility zoom.
-        // Expansion scrolls within the same budget; durable detail stays in OpLog.
-        let budget = _window.viewport_size().height * 0.3;
+        let scroll = self.set_host_audience(_window.window_handle().window_id(), audience);
         let slide_sign = -1.0;
         // Pinned GPUI has no live/priority setter. A stable Status node exposes
         // arrival text without stealing focus or promoting dismissed old cards.
@@ -134,9 +132,10 @@ impl toast_stack::ToastStack {
             .flex()
             .flex_col()
             .gap_2()
-            .min_h_0()
-            .max_h(budget)
-            .when(count > 0, |el| el.child(e2e::measure_inside("toast-stack")));
+            // The shared outer viewport owns the only vertical scroll range.
+            // Keep all cards at intrinsic height, including while busy is present.
+            .flex_shrink_0()
+            .when(count == 0, |stack| stack.absolute().size_0());
         #[cfg(feature = "gui-e2e")]
         toast_stack::record_status(
             _window.window_handle().window_id(),
@@ -163,7 +162,8 @@ impl toast_stack::ToastStack {
                     .flex_shrink_0()
                     .rounded(theme::scaled_px(8.))
                     .bg(rgb(theme().elevated_surface(theme().panel)))
-                    .child(
+                    .child(e2e::measure_control(
+                        "toast-summary",
                         toast_stack::ToastButton(
                             Button::new(("toast-summary", slot as u64))
                                 .small()
@@ -176,6 +176,7 @@ impl toast_stack::ToastStack {
                             slot as u64,
                             self.summary_focus[slot].clone(),
                             "toast-summary",
+                            scroll.clone(),
                         )
                         .aria_label(SharedString::from(caption))
                         .aria_expanded(self.expanded[slot])
@@ -184,27 +185,15 @@ impl toast_stack::ToastStack {
                                 owner.update(cx, |stack, cx| stack.toggle_expanded(audience, cx));
                         })
                         .on_key_down(super::keyboard_nav::stop_activation_keys),
-                    ),
+                    )),
             );
         }
-        let mut cards = div()
-            .id(("toast-cards", slot as u64))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .min_h_0()
-            .max_h(if count > 1 {
-                (budget - theme::scaled_px(40.)).max(gpui::px(0.))
-            } else {
-                budget
-            })
-            .overflow_y_scroll();
         for toast in self.toasts().iter().rev().filter(|toast| {
             audience.includes(toast) && (self.expanded[slot] || newest == Some(toast.id))
         }) {
             let id = toast.id;
             let leaving = toast.dismissing.is_some();
-            let card = toast_card(toast, error_line_height, cx);
+            let card = toast_card(toast, error_line_height, &scroll, cx);
 
             // Every card enters from the shared content stack's leading edge.
             // Reduce motion: skip the horizontal slide (a vestibular trigger) and
@@ -240,15 +229,16 @@ impl toast_stack::ToastStack {
                 )
                 .into_any_element()
             };
-            cards = cards.child(animated);
+            stack = stack.child(animated);
         }
-        stack.child(cards).into_any_element()
+        stack.into_any_element()
     }
 }
 
 fn toast_card(
     toast: &Toast,
     error_line_height: gpui::Pixels,
+    scroll: &gpui::ScrollHandle,
     cx: &mut Context<toast_stack::ToastStack>,
 ) -> gpui::Stateful<gpui::Div> {
     let (accent, glyph) = match toast.kind {
@@ -354,6 +344,7 @@ fn toast_card(
                                     id,
                                     focus,
                                     "toast-open-repository",
+                                    scroll.clone(),
                                 )
                                 .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
                                     let _ =
@@ -384,6 +375,7 @@ fn toast_card(
                                     id,
                                     focus,
                                     "toast-refresh-repository",
+                                    scroll.clone(),
                                 )
                                 .aria_label(SharedString::from(label))
                                 .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
@@ -395,11 +387,12 @@ fn toast_card(
                         }),
                 ),
         )
-        .child(toast_close_control(toast, cx))
+        .child(toast_close_control(toast, scroll, cx))
 }
 
 fn toast_close_control(
     toast: &Toast,
+    scroll: &gpui::ScrollHandle,
     cx: &mut Context<toast_stack::ToastStack>,
 ) -> gpui::AnyElement {
     use gpui_component::button::{Button, ButtonVariants as _};
@@ -418,6 +411,7 @@ fn toast_close_control(
         id,
         toast.close_focus.clone(),
         "toast-dismiss",
+        scroll.clone(),
     )
     .aria_label(SharedString::from(Msg::ToastDismiss.t()))
     .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {

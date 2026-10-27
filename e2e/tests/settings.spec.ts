@@ -117,6 +117,70 @@ test("theme focus is separate from selection and switch focus is separate from O
   expect((await observed(page)).graphLaneCompact).toBe(true);
 });
 
+async function paintedRgb(page: Page, x: number, y: number) {
+  const png = await page.screenshot({ type: "png", clip: { x: Math.floor(x), y: Math.floor(y), width: 1, height: 1 } });
+  return page.evaluate(async encoded => {
+    const bytes = Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0));
+    const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d")!;
+    context.drawImage(image, 0, 0);
+    image.close();
+    return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+  }, png.toString("base64"));
+}
+
+test("selected hover paint and segmented visible geometry remain distinct from hit targets", async ({ page }, info) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 900, height: 740 });
+  await boot(page);
+  for (const appearance of ["apple-light", "apple-dark"]) {
+    await host(page, "appearance", appearance);
+    for (const language of ["en", "ja"]) {
+      await host(page, "language", language);
+      for (const zoom of [1, 1.67]) {
+        await host(page, "zoom", String(zoom));
+        for (const destination of panes) {
+          await pane(page, destination);
+          const row = await probe(page, `settings-pane-${destination}`);
+          expect(row.selected).toBe(true);
+          await page.mouse.move(899, 4);
+          await frames(page);
+          const selected = await paintedRgb(page, row.x + 3 * zoom, row.y + row.height / 2);
+          const background = await paintedRgb(page, 2, row.y + row.height / 2);
+          expect(selected.reduce((sum, value, channel) => sum + Math.abs(value - background[channel]), 0)).toBeGreaterThan(20);
+          await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2);
+          await frames(page);
+          const hovered = await paintedRgb(page, row.x + 3 * zoom, row.y + row.height / 2);
+          hovered.forEach((value, channel) => expect(Math.abs(value - selected[channel])).toBeLessThanOrEqual(2));
+          if (["graph", "terminal", "network", "smart_commit"].includes(destination)
+            && ((appearance === "apple-light" && language === "en" && zoom === 1)
+              || (appearance === "apple-dark" && language === "ja" && zoom === 1.67))) {
+            await info.attach(`${appearance}-${language}-${zoom}-${destination}-hover.png`, { body: await page.screenshot(), contentType: "image/png" });
+          }
+        }
+        const hit = await probe(page, `settings-language-${language}`);
+        const track = await probe(page, "settings-language-visual");
+        const pill = await probe(page, `settings-language-${language}-visual`);
+        expect(hit.height).toBeGreaterThanOrEqual(28 * zoom - 0.5);
+        expect(Math.abs(track.height - 24 * zoom)).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(pill.height - 20 * zoom)).toBeLessThanOrEqual(0.5);
+        for (const visual of [track, pill]) {
+          expect(visual.y).toBeGreaterThanOrEqual(hit.y);
+          expect(visual.y + visual.height).toBeLessThanOrEqual(hit.y + hit.height + 0.5);
+        }
+        await page.mouse.move(hit.x + hit.width / 2, hit.y + hit.height / 2);
+        await frames(page);
+        const color = await paintedRgb(page, hit.x + 3 * zoom, hit.y + hit.height / 2);
+        const expected = appearance === "apple-light" ? [255, 255, 255] : [102, 102, 108];
+        color.forEach((value, channel) => expect(Math.abs(value - expected[channel])).toBeLessThanOrEqual(2));
+        await info.attach(`${appearance}-${language}-${zoom}-segments.png`, { body: await page.screenshot(), contentType: "image/png" });
+      }
+    }
+  }
+});
+
 async function captionInk(page: Page, caption: Probe) {
   const png = await page.screenshot({
     type: "png",

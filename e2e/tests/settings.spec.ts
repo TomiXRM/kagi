@@ -117,18 +117,29 @@ test("theme focus is separate from selection and switch focus is separate from O
   expect((await observed(page)).graphLaneCompact).toBe(true);
 });
 
-async function paintedRgb(page: Page, x: number, y: number) {
-  const png = await page.screenshot({ type: "png", clip: { x: Math.floor(x), y: Math.floor(y), width: 1, height: 1 } });
-  return page.evaluate(async encoded => {
+async function paintedPixels(page: Page, points: number[][]) {
+  // One real frame per state: recapturing the GPU for each pixel is both slow
+  // and less coherent than sampling all assertions from the attached image.
+  const png = await page.screenshot({ type: "png" });
+  const colors = await page.evaluate(async ({ encoded, points }) => {
     const bytes = Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0));
     const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
     const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 1;
+    canvas.width = image.width;
+    canvas.height = image.height;
     const context = canvas.getContext("2d")!;
     context.drawImage(image, 0, 0);
     image.close();
-    return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
-  }, png.toString("base64"));
+    return points.map(([x, y]) => {
+      const pixelX = Math.floor(Math.floor(x) * canvas.width / innerWidth);
+      const pixelY = Math.floor(Math.floor(y) * canvas.height / innerHeight);
+      if (pixelX < 0 || pixelY < 0 || pixelX >= canvas.width || pixelY >= canvas.height) {
+        throw new Error(`Paint sample is outside the actual screenshot: ${x},${y}`);
+      }
+      return Array.from(context.getImageData(pixelX, pixelY, 1, 1).data).slice(0, 3);
+    });
+  }, { encoded: png.toString("base64"), points });
+  return { png, colors };
 }
 
 test("pale accent active focus paint contrasts on unselected themes, ON switches and adjacent selections", async ({ page }, info) => {
@@ -200,23 +211,23 @@ test("pale accent active focus paint contrasts on unselected themes, ON switches
         [ring.x + depth, midY], [ring.x + ring.width - depth, midY],
         [midX, ring.y + depth], [midX, ring.y + ring.height - depth],
       ];
+      const depths = [3.5, 2.5, 4.5, 0.5, 1.5];
+      const paint = await paintedPixels(page, depths.flatMap(edges));
       for (let edge = 0; edge < 4; edge++) {
-        const gap = edges(3.5)[edge];
-        const background = await paintedRgb(page, gap[0], gap[1]);
-        for (const depth of [2.5, 4.5]) {
-          const point = edges(depth)[edge];
-          const color = await paintedRgb(page, point[0], point[1]);
+        const background = paint.colors[edge];
+        for (const index of [1, 2]) {
+          const color = paint.colors[index * 4 + edge];
           color.forEach((value, channel) => expect(Math.abs(value - background[channel]), `${kind} three-pixel gap`).toBeLessThanOrEqual(2));
         }
-        for (const depth of [0.5, 1.5]) {
-          const point = edges(depth)[edge];
-          const color = await paintedRgb(page, point[0], point[1]);
+        for (const index of [3, 4]) {
+          const depth = depths[index];
+          const color = paint.colors[index * 4 + edge];
           const a = luminance(background), b = luminance(color);
           expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
             JSON.stringify({ appearance, kind, edge, depth, color, background, control, ring })).toBeGreaterThanOrEqual(3);
         }
       }
-      await info.attach(`${appearance}-${kind}-yellow-active.png`, { body: await page.screenshot(), contentType: "image/png" });
+      await info.attach(`${appearance}-${kind}-yellow-active.png`, { body: paint.png, contentType: "image/png" });
       expect((await probe(page, control.id)).selected).toBe(control.selected);
     }
   }
@@ -234,21 +245,19 @@ test("host detail overlay occludes focused control paint", async ({ page }, info
     [ring.x + 0.5, midY], [ring.x + ring.width - 0.5, midY],
     [midX, ring.y + 0.5], [midX, ring.y + ring.height - 0.5],
   ];
-  const before = await Promise.all(points.map(([x, y]) => paintedRgb(page, x, y)));
-  before.forEach(color => expect(color).not.toEqual([18, 52, 86]));
+  const before = await paintedPixels(page, points);
+  before.colors.forEach(color => expect(color).not.toEqual([18, 52, 86]));
   await host(page, "detail-overlay", "on");
   await frames(page);
   expect((await probe(page, control.id)).focused).toBe(true);
-  for (const [x, y] of [...points, [midX, midY]]) {
-    expect(await paintedRgb(page, x, y)).toEqual([18, 52, 86]);
-  }
-  await info.attach("host-detail-slot-over-focused-control.png", { body: await page.screenshot(), contentType: "image/png" });
+  const covered = await paintedPixels(page, [...points, [midX, midY]]);
+  covered.colors.forEach(color => expect(color).toEqual([18, 52, 86]));
+  await info.attach("host-detail-slot-over-focused-control.png", { body: covered.png, contentType: "image/png" });
   await host(page, "detail-overlay", "off");
   await frames(page);
   expect((await probe(page, control.id)).focused).toBe(true);
-  for (let index = 0; index < points.length; index++) {
-    expect(await paintedRgb(page, points[index][0], points[index][1])).toEqual(before[index]);
-  }
+  const restored = await paintedPixels(page, points);
+  expect(restored.colors).toEqual(before.colors);
 });
 
 test("selected hover paint and segmented visible geometry remain distinct from hit targets", async ({ page }, info) => {
@@ -267,17 +276,19 @@ test("selected hover paint and segmented visible geometry remain distinct from h
           expect(row.selected).toBe(true);
           await page.mouse.move(899, 4);
           await frames(page);
-          const selected = await paintedRgb(page, row.x + 3 * zoom, row.y + row.height / 2);
-          const background = await paintedRgb(page, 2, row.y + row.height / 2);
+          const sample = [row.x + 3 * zoom, row.y + row.height / 2];
+          const unhovered = await paintedPixels(page, [sample, [2, sample[1]]]);
+          const [selected, background] = unhovered.colors;
           expect(selected.reduce((sum, value, channel) => sum + Math.abs(value - background[channel]), 0)).toBeGreaterThan(20);
           await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2);
           await frames(page);
-          const hovered = await paintedRgb(page, row.x + 3 * zoom, row.y + row.height / 2);
+          const hoverPaint = await paintedPixels(page, [sample]);
+          const [hovered] = hoverPaint.colors;
           hovered.forEach((value, channel) => expect(Math.abs(value - selected[channel])).toBeLessThanOrEqual(2));
           if (["graph", "terminal", "network", "smart_commit"].includes(destination)
             && ((appearance === "apple-light" && language === "en" && zoom === 1)
               || (appearance === "apple-dark" && language === "ja" && zoom === 1.67))) {
-            await info.attach(`${appearance}-${language}-${zoom}-${destination}-hover.png`, { body: await page.screenshot(), contentType: "image/png" });
+            await info.attach(`${appearance}-${language}-${zoom}-${destination}-hover.png`, { body: hoverPaint.png, contentType: "image/png" });
           }
         }
         const hit = await probe(page, `settings-language-${language}`);
@@ -297,10 +308,11 @@ test("selected hover paint and segmented visible geometry remain distinct from h
         }
         await page.mouse.move(hit.x + hit.width / 2, hit.y + hit.height / 2);
         await frames(page);
-        const color = await paintedRgb(page, hit.x + 3 * zoom, hit.y + hit.height / 2);
+        const segmentPaint = await paintedPixels(page, [[hit.x + 3 * zoom, hit.y + hit.height / 2]]);
+        const [color] = segmentPaint.colors;
         const expected = appearance === "apple-light" ? [255, 255, 255] : [102, 102, 108];
         color.forEach((value, channel) => expect(Math.abs(value - expected[channel])).toBeLessThanOrEqual(2));
-        await info.attach(`${appearance}-${language}-${zoom}-segments.png`, { body: await page.screenshot(), contentType: "image/png" });
+        await info.attach(`${appearance}-${language}-${zoom}-segments.png`, { body: segmentPaint.png, contentType: "image/png" });
       }
     }
   }

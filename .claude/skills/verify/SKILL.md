@@ -57,6 +57,9 @@ labels may grow; the 18-point mini switch is separate and unchanged.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 Run the focused browser paint/geometry tests before heavy native gates.
+Capture one actual PNG per unchanged state, sample all its pixels and attach that
+same image. Hover or state changes require a fresh capture; do not raise test
+deadlines to accommodate a separate GPU screenshot for every sampled pixel.
 The pale-accent regression injects an effective Yellow snapshot, uses real
 keyboard focus on an unselected theme, ON switch, disabled provider and segment.
 It measures the actual outer decoration and samples both pixels of every edge

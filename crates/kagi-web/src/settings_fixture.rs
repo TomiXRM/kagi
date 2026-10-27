@@ -15,7 +15,7 @@ use kagi_ui_settings::{
     SettingsSnapshot, SettingsView, SmartProvider,
 };
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
     static HOST: RefCell<Option<(WeakEntity<SettingsFixture>, AsyncApp, AnyWindowHandle)>> = const { RefCell::new(None) };
@@ -343,6 +343,27 @@ impl SettingsFixture {
                     Some("default") => None,
                     _ => return Err("Unknown fixture accent".into()),
                 };
+            }
+            "detail-overlay" => {
+                let visible = match value {
+                    Some("on") => true,
+                    Some("off") => false,
+                    _ => return Err("Unknown detail overlay state".into()),
+                };
+                self.view.update(cx, |view, cx| {
+                    view.set_detail_slot(
+                        Rc::new(move |_, _| {
+                            visible.then(|| {
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .bg(gpui::rgb(0x123456))
+                                    .into_any_element()
+                            })
+                        }),
+                        cx,
+                    )
+                });
             }
             "language" => {
                 self.snapshot.language = match value {

@@ -236,6 +236,35 @@ test("pale accent focus paint contrasts on unselected themes and ON switches and
   }
 });
 
+test("host detail overlay occludes focused control paint", async ({ page }, info) => {
+  await boot(page);
+  await pane(page, "graph");
+  await click(page, "compact-toggle");
+  const control = await probe(page, "compact-toggle");
+  expect(control.focused).toBe(true);
+  const ring = await probe(page, `${control.id}-focus-ring`);
+  const midX = ring.x + ring.width / 2, midY = ring.y + ring.height / 2;
+  const points = [
+    [ring.x + 0.5, midY], [ring.x + ring.width - 0.5, midY],
+    [midX, ring.y + 0.5], [midX, ring.y + ring.height - 0.5],
+  ];
+  const before = await Promise.all(points.map(([x, y]) => paintedRgb(page, x, y)));
+  before.forEach(color => expect(color).not.toEqual([18, 52, 86]));
+  await host(page, "detail-overlay", "on");
+  await frames(page);
+  expect((await probe(page, control.id)).focused).toBe(true);
+  for (const [x, y] of [...points, [midX, midY]]) {
+    expect(await paintedRgb(page, x, y)).toEqual([18, 52, 86]);
+  }
+  await info.attach("host-detail-slot-over-focused-control.png", { body: await page.screenshot(), contentType: "image/png" });
+  await host(page, "detail-overlay", "off");
+  await frames(page);
+  expect((await probe(page, control.id)).focused).toBe(true);
+  for (let index = 0; index < points.length; index++) {
+    expect(await paintedRgb(page, points[index][0], points[index][1])).toEqual(before[index]);
+  }
+});
+
 test("selected hover paint and segmented visible geometry remain distinct from hit targets", async ({ page }, info) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 900, height: 740 });

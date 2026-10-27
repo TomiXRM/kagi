@@ -62,6 +62,9 @@ sibling, so a later sibling cannot silently cover half the stroke. Disabled
 labels are dimmed without dimming the ring; its external-gap backplate gives
 one compositing surface. Ordinary local decoration stays below host overlays;
 at least 6px sibling spacing preserves its stroke without escaping ancestor clips.
+The browser host also mounts an opaque GPUI overlay through `set_detail_slot`:
+it must cover all four ring edges while keyboard focus stays on the real control,
+then reveal identical ring pixels when removed. This is not a DOM overlay.
 A second actual browser tab tests
 inactive ring removal without clearing selection. This does not claim an OS
 Increase Contrast bridge: the shared ring always adjusts its composited contrast.

@@ -251,29 +251,19 @@ impl KagiApp {
             report.result.is_ok()
         );
         self.notice_recording_failure("clone", &report.recording, &request.dest, None);
-        let toast_id = self.present_recorded(&report.recording, current, cx);
-        if let (Some(id), Some(stack)) = (toast_id, self.toast_stack.as_ref()) {
-            stack.update(cx, |stack, cx| {
-                stack.set_subject(id, super::toast_stack::ToastSubject::App, cx);
-            });
-        }
-        if report.result.is_ok() {
-            if current {
+        if current {
+            self.present_recorded(&report.recording, true, None, cx);
+            if report.result.is_ok() {
                 self.open_repository(request.dest, cx);
-            } else if matches!(
-                report.recording.entry().outcome,
-                kagi_git::oplog::OpOutcome::Success { .. }
-            ) {
-                if let (Some(id), Some(stack)) = (toast_id, self.toast_stack.as_ref()) {
-                    stack.update(cx, |stack, cx| {
-                        stack.set_action(
-                            id,
-                            super::types::ToastAction::OpenRepository(request.dest),
-                            cx,
-                        );
-                    });
-                }
             }
+        } else {
+            let action = (report.result.is_ok()
+                && matches!(
+                    report.recording.entry().outcome,
+                    kagi_git::oplog::OpOutcome::Success { .. }
+                ))
+            .then_some(super::types::ToastAction::OpenRepository(request.dest));
+            self.present_recorded(&report.recording, false, action, cx);
         }
         cx.notify();
     }

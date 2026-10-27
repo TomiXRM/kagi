@@ -308,10 +308,12 @@ impl KagiApp {
                 );
                 stack.update(cx, |stack, cx| {
                     stack.push_keyed_notify(
-                        crate::ui::toast_stack::ToastSubject::Repository,
-                        ToastKind::Sync,
-                        text,
-                        Some(key),
+                        crate::ui::toast_stack::ToastSpec::new(
+                            crate::ui::toast_stack::ToastSubject::Repository,
+                            ToastKind::Sync,
+                            text,
+                        )
+                        .with_key(Some(key)),
                         cx,
                     );
                 });

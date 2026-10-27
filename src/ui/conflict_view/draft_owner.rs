@@ -381,6 +381,8 @@ impl ConflictView {
                     false,
                     None,
                     None,
+                    None,
+                    None,
                 );
             });
         })

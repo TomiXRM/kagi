@@ -383,32 +383,14 @@ impl KagiApp {
                         )
                         .with_ref_moves(Some(Vec::new())),
                     );
-                    let recording_failed = self.present_operation_completion(
+                    self.present_operation_completion(
                         &recording,
                         active_owner && exact_visit,
                         false,
                         Some(Msg::conflict_draft_restore_failed()),
+                        Some(owner.clone()),
                         cx,
                     );
-                    if !recording_failed {
-                        if let Some(stack) = self.toast_stack.clone() {
-                            let key = Self::operation_result_key(
-                                &owner.path,
-                                "conflict-draft-restore",
-                                "failed",
-                            );
-                            stack.update(cx, |stack, cx| {
-                                let id = stack
-                                    .toasts()
-                                    .iter()
-                                    .find(|toast| toast.result_key.as_ref() == Some(&key))
-                                    .map(|toast| toast.id);
-                                if let Some(id) = id {
-                                    stack.set_refresh_owner(id, owner.clone(), cx);
-                                }
-                            });
-                        }
-                    }
                 }
                 if active_owner && exact_visit {
                     // A prior approval cannot outlive the failed checked read.

@@ -1046,7 +1046,7 @@ impl KagiApp {
                         std::path::Path::new(&recording.entry().repo),
                         None,
                     );
-                    self.present_recorded(recording, true, cx);
+                    self.present_recorded(recording, true, None, cx);
                     self.present_app_notice();
                     cx.notify();
                     return;

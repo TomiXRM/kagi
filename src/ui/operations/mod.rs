@@ -692,6 +692,8 @@ impl KagiApp {
                                 matches!(report.recording, Recording::Failed { .. }),
                                 None,
                                 None,
+                                None,
+                                None,
                             );
                         }
                         Some(app.status_footer.clone())
@@ -717,6 +719,8 @@ impl KagiApp {
                             true,
                             None,
                             matches!(report.recording, Recording::Failed { .. }),
+                            None,
+                            None,
                             None,
                             None,
                         );
@@ -973,7 +977,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         self.notice_recording_failure(op_name, &report.recording, repo_path, None);
-        let _ = self.present_recorded(&report.recording, true, cx);
+        let _ = self.present_recorded(&report.recording, true, None, cx);
     }
 
     /// Owner-named notice for a record the execution boundary could not append
@@ -1008,6 +1012,7 @@ impl KagiApp {
         &mut self,
         recording: &Recording,
         current: bool,
+        result_action: Option<crate::ui::types::ToastAction>,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         // Presentation consumes the attempted receipt, never reconstructs its
@@ -1026,6 +1031,8 @@ impl KagiApp {
             matches!(recording, Recording::Failed { .. }),
             None,
             None,
+            None,
+            result_action,
         )
         .toast_id
     }

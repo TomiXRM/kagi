@@ -2078,6 +2078,8 @@ impl FetchFailure {
             false,
             None,
             None,
+            None,
+            None,
         );
     }
 
@@ -2884,8 +2886,8 @@ impl KagiApp {
                             )
                             .with_ref_moves(ref_moves.take()),
                         );
-                        recording_failed =
-                            app.present_operation_completion(&recording, false, false, None, cx);
+                        recording_failed = app
+                            .present_operation_completion(&recording, false, false, None, None, cx);
                     }
                 }
                 // A visit is a stay in the same tab, not merely its session.
@@ -2962,12 +2964,15 @@ impl KagiApp {
                                     let _ = app.push_operation_result(
                                         entry,
                                         requested_op,
-                                        ToastKind::Error,
-                                        crate::ui::operations::outcome_text(
-                                            requested_op,
-                                            &entry.outcome,
-                                        )
-                                        .into(),
+                                        crate::ui::toast_stack::ToastSpec::operation(
+                                            entry,
+                                            ToastKind::Error,
+                                            crate::ui::operations::outcome_text(
+                                                requested_op,
+                                                &entry.outcome,
+                                            )
+                                            .into(),
+                                        ),
                                         cx,
                                     );
                                 }
@@ -3034,10 +3039,12 @@ impl KagiApp {
                                         format!("{}\0fetch\0success", repo_path_guard.display());
                                     stack.update(cx, |stack, cx| {
                                         stack.push_keyed_notify(
-                                            super::toast_stack::ToastSubject::Repository,
-                                            ToastKind::Success,
-                                            text,
-                                            Some(key),
+                                            crate::ui::toast_stack::ToastSpec::new(
+                                                super::toast_stack::ToastSubject::Repository,
+                                                ToastKind::Success,
+                                                text,
+                                            )
+                                            .with_key(Some(key)),
                                             cx,
                                         );
                                     });

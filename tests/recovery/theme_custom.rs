@@ -357,7 +357,18 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     unmount(cx, kagi, window);
     theme::set_active(&before);
     settings::write_setting("theme", Some(STANDALONE));
-    theme::init_active();
+    // A matrix launch preset intentionally outranks saved settings. Suspend
+    // only that override while restoring the saved theme, then put it back.
+    let launch_theme = std::env::var_os("KAGI_THEME");
+    {
+        let _launch_theme = crate::home_github::EnvCleared::new(&["KAGI_THEME"]);
+        theme::init_active();
+    }
+    assert_eq!(
+        std::env::var_os("KAGI_THEME"),
+        launch_theme,
+        "saved-theme restoration preserves the matrix launch override"
+    );
     let (kagi, window) = mount(cx, fixture.path());
     assert_eq!(theme::theme().slug, STANDALONE, "restored after restart");
     assert_eq!(select_shows(cx, &kagi).as_deref(), Some(STANDALONE));

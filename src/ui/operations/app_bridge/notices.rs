@@ -66,7 +66,7 @@ impl KagiApp {
             recording,
             kagi_git::backend::recording::Recording::Failed { .. }
         ) {
-            self.present_recorded(&recording, true, cx);
+            self.present_recorded(&recording, true, None, cx);
             self.present_app_notice();
             cx.notify();
             return;
@@ -79,8 +79,11 @@ impl KagiApp {
             self.push_operation_result(
                 recording.entry(),
                 operation,
-                ToastKind::Error,
-                i18n::op::user_text::operations::failure_preview(operation, reason).into(),
+                crate::ui::toast_stack::ToastSpec::operation(
+                    recording.entry(),
+                    ToastKind::Error,
+                    i18n::op::user_text::operations::failure_preview(operation, reason).into(),
+                ),
                 cx,
             );
             cx.notify();

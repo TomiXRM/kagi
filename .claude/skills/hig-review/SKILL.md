@@ -155,8 +155,9 @@ House rule: notifications appear only in the window that owns their subject
 results/rescued drafts/refresh stay with their repository root. Theme commands
 capture their invoking window, including repository/Home palette invocation;
 startup theme errors are app-level unless produced in Settings itself.
-Assign the subject at insertion, before lane refresh or focus repair; a Settings
-arrival must never retire a Repository control or steal its focus.
+Assemble subject, actions and recovery ownership before insertion, lane refresh
+or focus repair. Repair once on the final persistent/transient classification;
+a foreign or action-bearing arrival must not retire an unrelated control.
 A standalone Home root keeps app-level notices; a repository root's Home tab
 retains its repository notices/recovery. Escape considers only that window's
 audience, never dismissing an invisible foreign card or consuming its key.

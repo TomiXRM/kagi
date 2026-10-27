@@ -170,12 +170,15 @@ impl KagiApp {
             let _ = self.push_operation_result(
                 entry,
                 name,
-                if success {
-                    ToastKind::Success
-                } else {
-                    ToastKind::Error
-                },
-                footer.clone().into(),
+                crate::ui::toast_stack::ToastSpec::operation(
+                    entry,
+                    if success {
+                        ToastKind::Success
+                    } else {
+                        ToastKind::Error
+                    },
+                    footer.clone().into(),
+                ),
                 cx,
             );
         }
@@ -669,12 +672,15 @@ impl KagiApp {
             let _ = self.push_operation_result(
                 entry,
                 "stash-drop",
-                if success {
-                    ToastKind::Success
-                } else {
-                    ToastKind::Error
-                },
-                shown.into(),
+                crate::ui::toast_stack::ToastSpec::operation(
+                    entry,
+                    if success {
+                        ToastKind::Success
+                    } else {
+                        ToastKind::Error
+                    },
+                    shown.into(),
+                ),
                 cx,
             );
         }
@@ -776,6 +782,8 @@ impl KagiApp {
             active,
             None,
             recording_failed,
+            None,
+            None,
             None,
             None,
         );

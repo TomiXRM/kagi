@@ -1752,7 +1752,10 @@ impl KagiApp {
                 std::borrow::Cow::Owned(display) => display.into(),
             };
             stack.update(cx, |stack, cx| {
-                stack.push_keyed_notify(subject, kind, message, None, cx);
+                stack.push_keyed_notify(
+                    crate::ui::toast_stack::ToastSpec::new(subject, kind, message),
+                    cx,
+                );
             });
         }
     }
@@ -1793,13 +1796,12 @@ impl KagiApp {
         format!("{}\0{op}\0{result}", repo.components().as_path().display())
     }
 
-    /// One transient result per repository / requested operation / outcome.
+    /// One complete result per repository / requested operation / outcome.
     pub(crate) fn push_operation_result(
         &mut self,
         entry: &OpLogEntry,
         op: &str,
-        kind: ToastKind,
-        message: SharedString,
+        mut spec: toast_stack::ToastSpec,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         let result = match entry.outcome {
@@ -1813,7 +1815,8 @@ impl KagiApp {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        let message = if repository.is_empty() {
+        let message = spec.message;
+        spec.message = if repository.is_empty() {
             message
         } else if op == "conflict-draft-restore" {
             SharedString::from(format!(
@@ -1824,24 +1827,12 @@ impl KagiApp {
             SharedString::from(format!("{message} — {repository}"))
         };
         self.toast_stack.clone().map(|stack| {
-            let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
-            stack.update(cx, |stack, cx| {
-                let id = stack.push_keyed_notify(
-                    toast_stack::ToastSubject::Repository,
-                    kind,
-                    message,
-                    Some(key),
-                    cx,
-                );
-                if matches!(kind, ToastKind::Error | ToastKind::Info) {
-                    stack.set_action(
-                        id,
-                        types::ToastAction::OpenOperationLog(oplog_panel::EntryKey::of(entry)),
-                        cx,
-                    );
-                }
-                id
-            })
+            spec.result_key = Some(Self::operation_result_key(
+                Path::new(&entry.repo),
+                op,
+                result,
+            ));
+            stack.update(cx, |stack, cx| stack.push_keyed_notify(spec, cx))
         })
     }
 
@@ -2013,6 +2004,8 @@ impl KagiApp {
             recording_failed,
             None,
             None,
+            None,
+            None,
         )
         .recording_failed
     }
@@ -2036,6 +2029,8 @@ impl KagiApp {
         mut recording_failed: bool,
         stopped_notice: Option<SharedString>,
         footer_only_contract: Option<(SharedString, bool)>,
+        refresh_owner: Option<crate::app::Attachment>,
+        result_action: Option<types::ToastAction>,
     ) -> operations::RecordedPresentation {
         let op = entry.op.as_str();
         let before = &entry.before;
@@ -2102,13 +2097,17 @@ impl KagiApp {
         };
         let toast_id = if announce && !recording_failed {
             let receipt = shown.as_ref().unwrap_or(&entry);
-            self.push_operation_result(
-                receipt,
-                requested_op.unwrap_or(&receipt.op),
-                toast_kind,
-                display_footer_msg.clone(),
-                cx,
-            )
+            let op = requested_op.unwrap_or(&receipt.op);
+            let mut spec =
+                toast_stack::ToastSpec::operation(receipt, toast_kind, display_footer_msg.clone());
+            spec.refresh_owner = refresh_owner;
+            if op == "clone" {
+                spec.subject = toast_stack::ToastSubject::App;
+            }
+            if let Some(action) = result_action {
+                spec.action = Some(action);
+            }
+            self.push_operation_result(receipt, op, spec, cx)
         } else {
             None
         };

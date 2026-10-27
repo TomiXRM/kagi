@@ -920,6 +920,40 @@ pub fn record_persisted_op(
     app.record_op_persist("e2e-record", state("unchanged"), outcome, repo, cx);
 }
 
+/// Present a recorded stopped-operation fixture through the production completion owner.
+/// The receipt append is real; the fixture supplies the already-observed outcome.
+pub fn present_recorded_info_result(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) -> u64 {
+    let repo = app
+        .repo_path
+        .as_ref()
+        .or_else(|| app.tabs.first().map(|tab| &tab.path))
+        .expect("recorded-result fixture requires an opened repository");
+    let state = kagi_git::ops::StateSummary {
+        head: "branch: main".into(),
+        dirty: "unchanged".into(),
+    };
+    let entry = kagi_git::oplog::OpLogEntry::new(
+        "merge",
+        repo.display().to_string(),
+        state.clone(),
+        kagi_git::oplog::OpOutcome::Success { after: state },
+    );
+    let recording = kagi_git::backend::recording::finalize(entry);
+    assert!(matches!(
+        recording,
+        kagi_git::backend::recording::Recording::Appended { .. }
+    ));
+    assert!(!app.present_operation_completion(&recording, false, true, None, None, cx));
+    app.toast_stack
+        .as_ref()
+        .expect("mounted toast stack")
+        .read(cx)
+        .toasts()
+        .last()
+        .expect("stopped completion produces a result")
+        .id
+}
+
 /// Issue #468: push a synthetic `Failed` op-log entry onto the panel, through
 /// the same `OpLogPanel::push` the real `record_op` path uses. Part of the seam
 /// because `kagi_git::oplog::OpLogEntry` is a normal dep the runner cannot name.

@@ -477,14 +477,25 @@ fn native_external_generate_sync(cx: &mut VisualTestAppContext) {
     fresh_settings();
     let server = Ollama::new(&[MODEL_NAME.to_string()]);
     let fixture = build_fixture();
-    std::fs::write(fixture.path().join("consent.txt"), "staged external Generate fixture\n").unwrap();
+    std::fs::write(
+        fixture.path().join("consent.txt"),
+        "staged external Generate fixture\n",
+    )
+    .unwrap();
     git(fixture.path(), &["add", "consent.txt"]);
     let (app, root) = mount(cx, fixture.path());
     open_panel(cx, &app, root);
     let host = open_settings(cx, root, true);
     let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
-    assert!(cx.read(|cx| app.read(cx).smart_commit.detected_models.iter()
-        .any(|model| model == MODEL_NAME)), "real fixture discovery supplies the model picker");
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .smart_commit
+            .detected_models
+            .iter()
+            .any(|model| model == MODEL_NAME)),
+        "real fixture discovery supplies the model picker"
+    );
     let request = |cx: &mut VisualTestAppContext| {
         // This is the existing external Generate entry point, not an enable
         // setter or a Settings event injected by the test.
@@ -492,15 +503,18 @@ fn native_external_generate_sync(cx: &mut VisualTestAppContext) {
             app.update(cx, |app, cx| {
                 app.smart_generate(app.active_session().unwrap(), window, cx);
             });
-        }).unwrap();
+        })
+        .unwrap();
         settle(cx, root);
         settle(cx, host);
     };
     assert_switch(cx, host, false);
     assert!(!cx.read(|cx| view.read(cx).snapshot().smart_enabled));
     request(cx);
-    assert!(cx.read(|cx| matches!(app.read(cx).smart_commit_modal(),
-        Some(smart_commit::SmartCommitModal::Consent))));
+    assert!(cx.read(|cx| matches!(
+        app.read(cx).smart_commit_modal(),
+        Some(smart_commit::SmartCommitModal::Consent)
+    )));
     assert_lines(cx, root);
     assert_switch(cx, host, false);
     assert!(!cx.read(|cx| view.read(cx).snapshot().smart_enabled));
@@ -522,10 +536,15 @@ fn native_external_generate_sync(cx: &mut VisualTestAppContext) {
     assert!(cx.read(|cx| view.read(cx).snapshot().smart_consent_accepted));
     assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("1"));
     assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("1"));
-    assert_eq!(settings::read_setting(MODEL), None,
-        "external consent cannot auto-select the only available model");
-    assert!(cx.read(|cx| matches!(app.read(cx).smart_commit_modal(),
-        Some(smart_commit::SmartCommitModal::ModelPicker { .. }))));
+    assert_eq!(
+        settings::read_setting(MODEL),
+        None,
+        "external consent cannot auto-select the only available model"
+    );
+    assert!(cx.read(|cx| matches!(
+        app.read(cx).smart_commit_modal(),
+        Some(smart_commit::SmartCommitModal::ModelPicker { .. })
+    )));
     assert_no_post(&server);
     keys(cx, root, "escape");
     settle(cx, root);
@@ -537,17 +556,31 @@ fn native_external_generate_sync(cx: &mut VisualTestAppContext) {
     assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("1"));
     request(cx);
     assert_switch(cx, host, true);
-    assert!(cx.read(|cx| view.read(cx).snapshot().smart_enabled),
-        "external Generate reseeds the retained Settings snapshot after OFF");
+    assert!(
+        cx.read(|cx| view.read(cx).snapshot().smart_enabled),
+        "external Generate reseeds the retained Settings snapshot after OFF"
+    );
     assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("1"));
-    assert!(cx.read(|cx| matches!(app.read(cx).smart_commit_modal(),
-        Some(smart_commit::SmartCommitModal::ModelPicker { .. }))),
-        "accepted re-enable reaches model selection without a second consent");
+    assert!(
+        cx.read(|cx| matches!(
+            app.read(cx).smart_commit_modal(),
+            Some(smart_commit::SmartCommitModal::ModelPicker { .. })
+        )),
+        "accepted re-enable reaches model selection without a second consent"
+    );
     assert_eq!(settings::read_setting(MODEL), None);
     assert_no_post(&server);
-    assert_eq!(cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()), view.entity_id());
-    assert!(cx.read(|cx| cx.windows().iter().any(|window| window.window_id() == host.window_id())),
-        "the same nonmodal Settings window remains open throughout external effects");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()),
+        view.entity_id()
+    );
+    assert!(
+        cx.read(|cx| cx
+            .windows()
+            .iter()
+            .any(|window| window.window_id() == host.window_id())),
+        "the same nonmodal Settings window remains open throughout external effects"
+    );
     keys(cx, root, "escape");
     settle(cx, root);
     close_settings(cx, &app, root, host, true);

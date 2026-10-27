@@ -19,6 +19,18 @@ Kit: `https://github.com/longbridge/gpui-component/blob/1188c11003b5cb5b83bc07d3
 
 - Upstream API candidate (#1606): let `SearchPanel` forward a host-supplied context-menu builder or locale to its internal Find/Replace `Input`s; until a public API exists, those fields retain gpui-kit’s default English menu while Kagi-rendered fields use the shared localized builder (no fork/pin changes).
 
+- Current transitional patch (#1816, 2026-10-27): the complete Zed family shares
+  [`1cc8a69d2e904cddbbf0bda880d0180bad99bb65`](https://github.com/TomiXRM/zed/commit/1cc8a69d2e904cddbbf0bda880d0180bad99bb65).
+  This descends from `caf5007` without changing its list estimate/scroll fixes,
+  and adds Unicode line-break/grapheme candidates to shaped-label wrapping.
+  The emergency fallback protects punctuation and grapheme boundaries while
+  still breaking overlong Latin tokens; the editor `LineWrapper` is unchanged.
+  This is not a claim of all-Unicode conformance. No app-side prebroken strings
+  or joiner insertion substitutes for the shared renderer fix. Removal in
+  #1479-S6 requires preserving both the existing list geometry oracles and the
+  shaped-text punctuation/grapheme regressions on the official family.
+  The `caf5007` source links below remain historical investigation evidence.
+
 ### 全 slice 共通の merge 規則
 
 1. regression は **同じ PR 内で先に書く**（必要なら手元で red→green）。失敗するテストだけを dev に merge しない。挙動変更・テスト oracle・ADR/changelog を一つの green merge unit にする。

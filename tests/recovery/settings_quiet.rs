@@ -21,7 +21,11 @@ pub(crate) fn luminance(color: u32) -> f64 {
 
 pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&[
-        "theme", "ui_zoom", "lang", "settings_pane", "accent_source",
+        "theme",
+        "ui_zoom",
+        "lang",
+        "settings_pane",
+        "accent_source",
     ]);
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _host = crate::settings_window::SettingsHostGuard::portable(cx);
@@ -46,18 +50,29 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         app.update(cx, |app, cx| {
                             app.handle_menu_command("app.settings", window, cx)
                         });
-                    }).unwrap();
+                    })
+                    .unwrap();
                     crate::settings_controls::draw(cx, window);
                     crate::settings_controls::click(cx, window, "settings-pane-general");
                     let palette = theme::theme();
-                    let heading = crate::settings_controls::probe(cx, window, "settings-pane-title")
-                        .expect("actual shared pane title is painted");
+                    let heading =
+                        crate::settings_controls::probe(cx, window, "settings-pane-title")
+                            .expect("actual shared pane title is painted");
                     assert_eq!(heading.role, gpui::Role::Heading);
                     assert_eq!(heading.name, kagi_ui_settings::Pane::General.title());
-                    let paint = heading.paint.expect("title records its resolved text style");
-                    assert_eq!(paint.text_color, rgb(palette.text_main).into(), "neutral primary title");
+                    let paint = heading
+                        .paint
+                        .expect("title records its resolved text style");
+                    assert_eq!(
+                        paint.text_color,
+                        rgb(palette.text_main).into(),
+                        "neutral primary title"
+                    );
                     assert_eq!(paint.font_weight, FontWeight::BOLD);
-                    assert_eq!(paint.font_size, theme::scaled_px(13. * 16. / theme::BASE_REM_PX));
+                    assert_eq!(
+                        paint.font_size,
+                        theme::scaled_px(13. * 16. / theme::BASE_REM_PX)
+                    );
                     let (title, panel) = (luminance(palette.text_main), luminance(palette.panel));
                     assert!((title.max(panel) + 0.05) / (title.min(panel) + 0.05) >= 4.5);
                     // Descriptions sit on the group fill; section content sits
@@ -69,14 +84,30 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                             "secondary Settings text remains readable on {background:06x}"
                         );
                     }
-                    let sidebar = crate::settings_controls::bounds(cx, window, "settings-sidebar").unwrap();
-                    let detail = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
-                    let group = crate::settings_controls::bounds(cx, window, "settings-language-group").unwrap();
-                    crate::recovery_layout::contained(detail, group, "language row group fits detail pane");
-                    assert!(sidebar.right() <= detail.left(), "navigation and detail have distinct columns");
+                    let sidebar =
+                        crate::settings_controls::bounds(cx, window, "settings-sidebar").unwrap();
+                    let detail =
+                        crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
+                            .unwrap();
+                    let group =
+                        crate::settings_controls::bounds(cx, window, "settings-language-group")
+                            .unwrap();
+                    crate::recovery_layout::contained(
+                        detail,
+                        group,
+                        "language row group fits detail pane",
+                    );
+                    assert!(
+                        sidebar.right() <= detail.left(),
+                        "navigation and detail have distinct columns"
+                    );
                     for pane in kagi_ui_settings::Pane::ALL {
-                        let probe = crate::settings_controls::probe(cx, window,
-                            &format!("settings-pane-{}", pane.id())).unwrap();
+                        let probe = crate::settings_controls::probe(
+                            cx,
+                            window,
+                            &format!("settings-pane-{}", pane.id()),
+                        )
+                        .unwrap();
                         assert_eq!(probe.role, gpui::Role::Tab);
                         assert_eq!(probe.name, pane.title());
                         assert_eq!(probe.selected, pane == kagi_ui_settings::Pane::General);
@@ -85,26 +116,47 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                     // focus rings. The new hierarchy has neutral surfaces, not
                     // the old heading/titlebar hairlines or floating-card frame.
                     let samples = [
-                        (gpui::point(sidebar.left() + gpui::px(2.), sidebar.top() + gpui::px(2.)), palette.surface),
-                        (gpui::point(detail.left() + gpui::px(2.), detail.center().y), palette.panel),
-                        (gpui::point(group.left() + gpui::px(2.), group.center().y), palette.bg_base),
+                        (
+                            gpui::point(
+                                sidebar.left() + gpui::px(2.),
+                                sidebar.top() + gpui::px(2.),
+                            ),
+                            palette.surface,
+                        ),
+                        (
+                            gpui::point(detail.left() + gpui::px(2.), detail.center().y),
+                            palette.panel,
+                        ),
+                        (
+                            gpui::point(group.left() + gpui::px(2.), group.center().y),
+                            palette.bg_base,
+                        ),
                     ];
                     cx.update_window(window, |_, window, _| {
-                        let image = window.render_to_image().expect("shared Settings native image");
+                        let image = window
+                            .render_to_image()
+                            .expect("shared Settings native image");
                         let scale = window.scale_factor();
                         for (point, color) in samples {
-                            let pixel = image.get_pixel(
-                                (f32::from(point.x) * scale) as u32,
-                                (f32::from(point.y) * scale) as u32,
-                            ).0;
+                            let pixel = image
+                                .get_pixel(
+                                    (f32::from(point.x) * scale) as u32,
+                                    (f32::from(point.y) * scale) as u32,
+                                )
+                                .0;
                             for (got, expected) in pixel[..3].iter().zip([
-                                (color >> 16) as u8, (color >> 8) as u8, color as u8,
+                                (color >> 16) as u8,
+                                (color >> 8) as u8,
+                                color as u8,
                             ]) {
-                                assert!(got.abs_diff(expected) <= 2,
-                                    "neutral surface {pixel:?}, expected {color:06x} at {point:?}");
+                                assert!(
+                                    got.abs_diff(expected) <= 2,
+                                    "neutral surface {pixel:?}, expected {color:06x} at {point:?}"
+                                );
                             }
                         }
-                    }).unwrap();
+                    })
+                    .unwrap();
                     app.update(cx, |app, cx| {
                         app.menu_overlay = None;
                         cx.notify();

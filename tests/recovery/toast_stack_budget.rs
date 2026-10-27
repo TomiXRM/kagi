@@ -865,26 +865,55 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
+#[derive(Clone, Copy)]
+enum HostControls {
+    Settings,
+    Home,
+    Takeover,
+}
+
+impl HostControls {
+    fn bounds(self, cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> Bounds<Pixels> {
+        match self {
+            Self::Settings => cx
+                .update_window(window, |_, window, cx| {
+                    let view =
+                        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                            .expect("actual shared Settings host");
+                    view.read(cx)
+                        .control_probe("settings-theme-apple-light")
+                        .expect("actual Appearance theme card")
+                        .bounds
+                })
+                .unwrap(),
+            Self::Home => e2e::control_bounds(window.window_id(), "home-page-controls").unwrap(),
+            Self::Takeover => {
+                e2e::control_bounds(window.window_id(), "takeover-page-controls").unwrap()
+            }
+        }
+    }
+}
+
 fn assert_mixed_lane_stability(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<KagiApp>,
     window: AnyWindowHandle,
-    controls_id: &str,
+    host_controls: HostControls,
     controls: Bounds<Pixels>,
     lane: Bounds<Pixels>,
 ) {
     let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
-    let (audience, subject) = match controls_id {
-        "settings-page-controls" => (ToastAudience::Settings, ToastSubject::Settings),
-        "home-page-controls" => (ToastAudience::Repository, ToastSubject::App),
-        _ => (ToastAudience::Repository, ToastSubject::Repository),
+    let (audience, subject) = match host_controls {
+        HostControls::Settings => (ToastAudience::Settings, ToastSubject::Settings),
+        HostControls::Home => (ToastAudience::Repository, ToastSubject::App),
+        HostControls::Takeover => (ToastAudience::Repository, ToastSubject::Repository),
     };
     let stable = |cx: &mut VisualTestAppContext| {
         cx.run_until_parked();
         e2e::clear_control_bounds(window.window_id(), "busy-snackbar");
         draw(cx, window);
         assert_eq!(
-            e2e::control_bounds(window.window_id(), controls_id).unwrap(),
+            host_controls.bounds(cx, window),
             controls,
             "transient and busy feedback must not move content controls"
         );
@@ -908,7 +937,7 @@ fn assert_mixed_lane_stability(
             id
         });
         stable(cx);
-        let containing = (controls_id == "takeover-page-controls").then(|| Bounds {
+        let containing = matches!(host_controls, HostControls::Takeover).then(|| Bounds {
             origin: gpui::point(lane.left(), lane.top()),
             size: gpui::size(lane.size.width, controls.bottom() - lane.top()),
         });
@@ -934,7 +963,7 @@ fn assert_mixed_lane_stability(
             e2e::control_bounds(window.window_id(), "busy-snackbar").is_some(),
             "held repository read remains visible in its owning window"
         );
-        let containing = (controls_id == "takeover-page-controls").then(|| Bounds {
+        let containing = matches!(host_controls, HostControls::Takeover).then(|| Bounds {
             origin: gpui::point(lane.left(), lane.top()),
             size: gpui::size(lane.size.width, controls.bottom() - lane.top()),
         });
@@ -1020,7 +1049,7 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         let lane = e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap();
         let shifted = e2e::control_bounds(window.window_id(), "takeover-page-controls").unwrap();
         assert_eq!(shifted, original, "persistent feedback never moves content");
-        assert_mixed_lane_stability(cx, &app, window, "takeover-page-controls", shifted, lane);
+        assert_mixed_lane_stability(cx, &app, window, HostControls::Takeover, shifted, lane);
         stack.update(cx, |stack, cx| stack.begin_exit(error, cx));
         cx.run_until_parked();
         draw(cx, window);
@@ -1063,6 +1092,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let (app, repository) = mount(cx, fixture.path());
         let window = if settings {
+            kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
             cx.simulate_keystrokes(repository, "cmd-,");
             cx.run_until_parked();
             cx.read(|cx| cx.windows())
@@ -1076,13 +1106,13 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
             .unwrap();
             repository
         };
-        let controls_id = if settings {
-            "settings-page-controls"
+        let host_controls = if settings {
+            HostControls::Settings
         } else {
-            "home-page-controls"
+            HostControls::Home
         };
         draw(cx, window);
-        let original = e2e::control_bounds(window.window_id(), controls_id).unwrap();
+        let original = host_controls.bounds(cx, window);
         let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
         stack.update(cx, |stack, cx| {
             stack.push_keyed_notify(
@@ -1098,9 +1128,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         draw(cx, window);
         assert_eq!(
-            e2e::control_bounds(window.window_id(), controls_id)
-                .unwrap()
-                .top(),
+            host_controls.bounds(cx, window).top(),
             original.top(),
             "Info cannot move first-row controls"
         );
@@ -1120,12 +1148,30 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         draw(cx, window);
         let lane = e2e::control_bounds(window.window_id(), "toast-content-anchor").unwrap();
-        let shifted = e2e::control_bounds(window.window_id(), controls_id).unwrap();
+        let shifted = host_controls.bounds(cx, window);
         assert_eq!(shifted, original, "persistent feedback never moves content");
-        assert_mixed_lane_stability(cx, &app, window, controls_id, shifted, lane);
+        assert_mixed_lane_stability(cx, &app, window, host_controls, shifted, lane);
         if settings {
-            let tabs = e2e::control_bounds(window.window_id(), "settings-pane-0").unwrap();
-            assert!(lane.top() >= tabs.bottom(), "lane is below navigation");
+            let (sidebar, title) = cx
+                .update_window(window, |_, window, cx| {
+                    let view =
+                        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                            .unwrap();
+                    let view = view.read(cx);
+                    (
+                        view.control_probe("settings-sidebar").unwrap().bounds,
+                        view.control_probe("settings-pane-title").unwrap().bounds,
+                    )
+                })
+                .unwrap();
+            assert!(
+                lane.left() >= sidebar.right(),
+                "anchor excludes the Settings sidebar"
+            );
+            assert!(
+                lane.top() >= title.bottom(),
+                "anchor excludes the pane heading"
+            );
         }
         stack.update(cx, |stack, cx| {
             stack.advance_age_for_e2e(Duration::from_secs(60));
@@ -1146,7 +1192,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         draw(cx, window);
         assert_eq!(
-            e2e::control_bounds(window.window_id(), controls_id).unwrap(),
+            host_controls.bounds(cx, window),
             shifted,
             "a later Success never changes content control positions"
         );
@@ -1165,9 +1211,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
             .iter()
             .all(|toast| toast.id != error || toast.dismissing.is_some())));
         assert_eq!(
-            e2e::control_bounds(window.window_id(), controls_id)
-                .unwrap()
-                .top(),
+            host_controls.bounds(cx, window).top(),
             original.top(),
             "explicit dismissal closes lane even with transient feedback"
         );

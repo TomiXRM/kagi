@@ -167,7 +167,10 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     let detail = crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
         .expect("shared Settings detail is painted over Home");
     assert!(sidebar.size.width > gpui::px(0.) && detail.size.height > gpui::px(0.));
-    assert!(sidebar.right() <= detail.left(), "sidebar does not cover the detail pane");
+    assert!(
+        sidebar.right() <= detail.left(),
+        "sidebar does not cover the detail pane"
+    );
     for pane in kagi_ui_settings::Pane::ALL {
         let id = format!("settings-pane-{}", pane.id());
         let control = crate::settings_controls::probe(cx, window, &id).unwrap();
@@ -177,7 +180,11 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     crate::settings_controls::click(cx, window, "settings-pane-general");
     assert!(crate::settings_controls::probe(cx, window, "settings-language-en").is_some());
     assert_eq!(home(cx, &app), Some(true), "Settings leaves Home in front");
-    assert_eq!(tab_count(cx, &app), 2, "Settings does not create a repository tab");
+    assert_eq!(
+        tab_count(cx, &app),
+        2,
+        "Settings does not create a repository tab"
+    );
     assert_eq!(active_path(cx, &app), first_path);
     app.update(cx, |app, cx| {
         app.menu_overlay = None;

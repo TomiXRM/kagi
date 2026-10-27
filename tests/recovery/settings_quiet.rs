@@ -196,6 +196,27 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         },
                         zoom,
                     );
+                    let hit = crate::settings_controls::bounds(cx, window, language).unwrap();
+                    let track =
+                        crate::settings_controls::bounds(cx, window, "settings-language-visual")
+                            .unwrap();
+                    let pill =
+                        crate::settings_controls::bounds(cx, window, &format!("{language}-visual"))
+                            .unwrap();
+                    assert!(
+                        hit.size.height >= gpui::px(28. * zoom - 0.5),
+                        "segment hit target remains at least 28 points: {hit:?}"
+                    );
+                    for (bounds, height, name) in [(track, 24., "track"), (pill, 20., "pill")] {
+                        assert!(
+                            (bounds.size.height - gpui::px(height * zoom)).abs() <= gpui::px(0.5),
+                            "normal one-line segment {name} is {height} points: {bounds:?}"
+                        );
+                        assert!(
+                            bounds.top() >= hit.top() && bounds.bottom() <= hit.bottom(),
+                            "segment {name} stays within the larger hit target"
+                        );
+                    }
                     app.update(cx, |app, cx| {
                         app.menu_overlay = None;
                         cx.notify();

@@ -44,6 +44,10 @@ measurement can still be hard-clipped if the final text leaf is allocated 165px.
 samples native Metal pixels, including same-height pane transitions. It checks
 the selected language segment while hovered against the approved white
 (Apple Light) and light-gray (Apple Dark) fills, not the inactive-row helper.
+Actual element bounds also require the normal one-line segment's 24-point
+visible track and 20-point pill to fit inside a hit target of at least 28 points
+at both zoom levels. Wrapped labels may increase height; the 18-point mini
+switch is a separate, unchanged control.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 

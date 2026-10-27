@@ -229,7 +229,7 @@ impl SettingsView {
                     })
             })
             .when(enabled, |el| el.cursor_pointer())
-            .when(enabled && !selected, |el| {
+            .when(enabled && !selected && role != Role::RadioButton, |el| {
                 el.hover(|s| s.bg(rgb(theme().surface)))
             })
             .child(
@@ -444,16 +444,36 @@ impl SettingsView {
         }
         let mut track = div()
             .id(SharedString::from(group.to_owned()))
+            .relative()
             .min_w_0()
             .w(pt(144. * entries.len() as f32))
             .max_w_full()
             .flex()
             .flex_wrap()
             .gap(pt(4.))
-            .p(pt(3.))
-            .rounded(pt(7.))
-            .bg(rgb(theme().surface))
-            .role(Role::RadioGroup);
+            .px(pt(2.))
+            .role(Role::RadioGroup)
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(pt(2.))
+                    .bottom(pt(2.))
+                    .rounded(pt(6.))
+                    .bg(rgb(theme().surface))
+                    .when(cfg!(feature = "gui-e2e"), |visual| {
+                        visual.child(self.measured(
+                            format!("{group}-visual"),
+                            Role::Image,
+                            String::new(),
+                            String::new(),
+                            false,
+                            false,
+                            false,
+                        ))
+                    }),
+            );
         for (index, (id, label, selected, enabled, intent)) in entries.into_iter().enumerate() {
             let control = self
                 .control(
@@ -470,7 +490,10 @@ impl SettingsView {
                 .flex_1()
                 .min_w(pt(64.))
                 .px(pt(8.))
-                .py(pt(3.))
+                .py(pt(4.))
+                .flex()
+                .items_center()
+                .justify_center()
                 .text_center()
                 .when(selected, |el| {
                     // The Settings segment is raised, not an inactive row (#1816).
@@ -479,9 +502,30 @@ impl SettingsView {
                         "apple-dark" => rgb(0x66666c).into(),
                         _ => theme().segment_selected_bg(),
                     };
-                    el.bg(fill).shadow_sm()
+                    el.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(pt(4.))
+                            .bottom(pt(4.))
+                            .rounded(pt(4.))
+                            .bg(fill)
+                            .shadow_sm()
+                            .when(cfg!(feature = "gui-e2e"), |visual| {
+                                visual.child(self.measured(
+                                    format!("{}-visual", ids[index]),
+                                    Role::Image,
+                                    String::new(),
+                                    String::new(),
+                                    false,
+                                    false,
+                                    false,
+                                ))
+                            }),
+                    )
                 })
-                .child(label);
+                .child(div().min_w_0().child(label));
             track = track.child(control);
         }
         track.into_any_element()

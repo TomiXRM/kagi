@@ -1,6 +1,6 @@
 //! #1404 / #1415 / #1416: Settings draft safety and persistent form help.
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, settings, theme, KagiApp};
 
 use kagi::ui::i18n::Msg;
@@ -106,9 +106,12 @@ fn draft(
 ) {
     let input = cx.read(|cx| app.read(cx).analyze_ignore_input.clone().unwrap());
     cx.update_window(window, |_, window, cx| {
-        input.update(cx, |input, cx| input.set_value(text, window, cx))
+        window.focus(&input.read(cx).focus_handle(cx), cx);
     })
     .unwrap();
+    draw(cx, window);
+    crate::keyboard_nav::keys(cx, window, "cmd-a");
+    cx.simulate_input(window, text);
     draw(cx, window);
 }
 
@@ -408,6 +411,11 @@ fn stale_analyze_result(
     // fixture write, while a newer editor revision is already present.
     settings::write_analyze_ignore(request.text.as_ref()).unwrap();
     draft(cx, app, window, "newer-draft\n");
+    let newer = cx.read(|cx| view.read(cx).analyze_request(cx));
+    assert!(
+        newer.revision > request.revision,
+        "real editor input creates a newer revision before delayed acknowledgement"
+    );
     cx.update_window(window, |_, window, cx| {
         view.update(cx, |view, cx| {
             view.seed_analyze_result(

@@ -204,6 +204,11 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     assert_eq!(home(cx, &app), None);
     assert_eq!(tab_count(cx, &app), 2, "no duplicate tab");
     assert_eq!(active_path(cx, &app), first_path);
+    assert_eq!(
+        &tabs::recent_repos()[..2],
+        &[first_path.clone(), second_path.clone()],
+        "opening an existing repository promotes its identity in MRU order"
+    );
 
     // Remote Browse opens over Home; Esc closes it and leaves Home in front.
     click_control(cx, window, "tab-add");
@@ -335,8 +340,13 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
         Some(true),
         "the last close puts Home in front"
     );
-    forget(window, "home-recent-0");
-    click_control(cx, window, "home-recent-0");
+    let recent_index = tabs::recent_repos()
+        .iter()
+        .position(|path| path == &second_path)
+        .expect("the intended repository remains in Home's current MRU list");
+    let recent_control = format!("home-recent-{recent_index}");
+    forget(window, &recent_control);
+    click_control(cx, window, &recent_control);
     cx.run_until_parked();
     assert_eq!(tab_count(cx, &app), 1);
     assert_eq!(active_path(cx, &app), second_path);

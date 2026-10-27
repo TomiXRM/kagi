@@ -264,18 +264,19 @@ impl Render for SettingsView {
                             .min_w_0()
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll)
-                            .child(self.measured(
-                                "settings-detail-scroll".into(),
-                                Role::Group,
-                                self.pane.title().into(),
-                                String::new(),
-                                false,
-                                false,
-                                false,
-                            ))
                             .p(controls::pt(18.))
                             .child(content),
                     )
+                    // Measure the fixed viewport, not a child translated by scroll.
+                    .child(self.measured(
+                        "settings-detail-scroll".into(),
+                        Role::Group,
+                        self.pane.title().into(),
+                        String::new(),
+                        false,
+                        false,
+                        false,
+                    ))
                     .child(
                         gpui_component::scroll::Scrollbar::vertical(&self.scroll)
                             .id("settings-detail-scrollbar"),

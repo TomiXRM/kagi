@@ -1451,6 +1451,15 @@ use shared segmented controls and palette cards.
 Root `e2e::measure_control` remains available for other native components;
 Settings controls use `kagi-ui-settings`' feature-gated probes. Neither recorder
 substitutes for real keyboard, VoiceOver or Tier B evidence.
+The detail-viewport probe is attached outside the scrolling content and must
+equal the actual GPUI ScrollHandle bounds before and after scrolling. Never
+normalize translated probe coordinates to make containment pass. Native Analyze
+revision tests focus the real Input, use Cmd-A and `simulate_input`, and assert
+that the newer request revision increases: `InputState::set_value` intentionally
+suppresses Change and cannot establish that editing precondition. Operational
+provider fixtures seed both their model catalog and matching availability /
+finished-detection state; unavailable-provider guards remain active. Opening
+Settings with no pane preference must not create one merely to display Appearance.
 
 For #1200 use `KAGI_GUI_E2E_ONLY=settings` for the complete Settings matrix.
 `settings_groups` walks all eight production panes and checks shared semantic

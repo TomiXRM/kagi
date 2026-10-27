@@ -290,11 +290,13 @@ test("Page keys scroll detail without moving focus or stealing Analyze editing",
   await boot(page);
   await click(page, "settings-theme-apple-light");
   const before = await observed(page);
+  const viewport = await probe(page, "settings-detail-scroll");
   expect(before.scrollMax).toBeGreaterThan(0);
   await page.keyboard.press("PageDown");
   await frames(page);
   const down = await observed(page);
   expect(down.scrollY).toBeLessThan(before.scrollY);
+  expect(await probe(page, "settings-detail-scroll")).toEqual(viewport);
   expect((await probe(page, "settings-theme-apple-light")).focused).toBe(true);
   await page.keyboard.press("PageUp");
   await frames(page);

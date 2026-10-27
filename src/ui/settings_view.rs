@@ -132,7 +132,7 @@ impl KagiApp {
             .unwrap_or_else(|| {
                 Pane::from_legacy(stored.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0))
             });
-        if stored.as_deref() != Some(pane.id()) {
+        if stored.as_deref().is_some_and(|stored| stored != pane.id()) {
             settings::write_setting("settings_pane", Some(pane.id()));
         }
         let snapshot = self.settings_snapshot();
@@ -303,7 +303,8 @@ pub(super) fn render_settings_overlay(
                 .px_4()
                 .py_3()
                 .child(Msg::SettingsTitle.t())
-                .child(
+                .child(super::e2e::measure_control(
+                    "settings-close",
                     Button::new("settings-close")
                         .label("×")
                         .small()
@@ -313,7 +314,7 @@ pub(super) fn render_settings_overlay(
                             this.clear_analyze_reset_alert(window.window_handle().window_id());
                             cx.notify();
                         })),
-                ),
+                )),
         )
         .children(view)
         .when_some(consent, |el, alert| {

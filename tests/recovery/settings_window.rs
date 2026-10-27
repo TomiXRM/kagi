@@ -301,8 +301,23 @@ pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
                     .update_window(repo, |_, window, _| window.window_bounds())
                     .unwrap();
                 assert_screen_fit(cx, settings, "first content-driven resize");
-                assert_manual_move_preserved(cx, settings);
-                for pane in kagi_ui_settings::Pane::ALL {
+                let view = cx
+                    .update_window(settings, |_, window, cx| {
+                        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                            .unwrap()
+                    })
+                    .unwrap();
+                let initial = cx.read(|cx| view.read(cx).pane());
+                let panes = kagi_ui_settings::Pane::ALL;
+                let initial_index = panes.iter().position(|pane| *pane == initial).unwrap();
+                // Start after the selected pane and return to it last. Clicking
+                // the selected pane is not a layout change and must not undo a
+                // user's manual move (ADR-0223). Exercise every real transition
+                // from an overflowing origin, including equal-height pages.
+                for offset in 1..=panes.len() {
+                    let pane = panes[(initial_index + offset) % panes.len()];
+                    assert_ne!(cx.read(|cx| view.read(cx).pane()), pane);
+                    assert_manual_move_preserved(cx, settings);
                     let bounds = crate::settings_controls::bounds(
                         cx,
                         settings,
@@ -311,6 +326,11 @@ pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
                     .expect("pane control");
                     cx.simulate_click(settings, bounds.center(), gpui::Modifiers::none());
                     assert_screen_fit(cx, settings, "pane switch");
+                    assert_eq!(
+                        cx.read(|cx| view.read(cx).pane()),
+                        pane,
+                        "pointer activation must actually switch the pane"
+                    );
                 }
                 crate::settings_controls::click(cx, settings, "settings-pane-appearance");
                 let zoom = theme::zoom();
@@ -581,6 +601,25 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
         .unwrap();
         cx.simulate_keystrokes(reopened, "cmd-w");
         cx.run_until_parked();
+    });
+    configurations(cx, |cx| {
+        kagi::ui::settings::write_setting("settings_pane", None);
+        run_cell(cx, |cx, _, settings| {
+            assert!(
+                kagi::ui::settings::read_setting("settings_pane").is_none(),
+                "opening Settings must not persist an implicit default pane"
+            );
+            assert!(
+                crate::settings_controls::probe(cx, settings, "settings-pane-appearance")
+                    .unwrap()
+                    .selected,
+                "an absent preference still presents the default Appearance pane"
+            );
+        });
+        assert!(
+            kagi::ui::settings::read_setting("settings_pane").is_none(),
+            "closing Settings without a pane choice must not create a preference"
+        );
     });
     configurations(cx, |cx| {
         for (legacy, expected) in [

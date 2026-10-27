@@ -109,7 +109,7 @@ constructors in the UI crates). Their child/front-layer routes are:
 | Compact rail PRs / PR context menu | Root overlay (`file_menu::render_pr_menu_overlay`) now takes focus via session-owned `MenuKeys`; `KagiMenu` Escape retires only `pr_menu` and restores the opener, leaving the navigator open. Root placement alone was insufficient while focus remained inside the Popover. |
 | Toolbar overflow / kit PopupMenu | Deeper kit PopupMenu Escape dismisses the menu; existing callback synchronizes its Popover and trigger focus. |
 | Repository-tab overflow / kit PopupMenu | Same kit PopupMenu-first route; existing callback synchronizes the tab-overflow host. |
-| Settings theme Select | Kit Select popup consumes first Escape; next Escape closes Settings via its existing owner route. Settings is not an explicit Popover host. |
+| Settings theme cards (#1816) | Cards have no nested popup. Escape or Command-Period closes the portable overlay and restores its origin; the macOS Settings window retains its window-level Escape no-op (ADR-0223). |
 
 Regression coverage includes `compact_layout_state` and
 `compact_layout_state_tall` (existing co-author owner/focus/draft assertions),

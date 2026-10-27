@@ -463,8 +463,11 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
     assert_eq!(selected(cx), 0);
 
     // A real theme-card click moves focus into the production Settings tree.
-    // Cards have no popup: either close route must immediately restore focus.
-    for (close_by, arrow, expected) in [("escape", "down", 1), ("×", "up", 0)] {
+    // Portable Settings has an in-content ×; native Settings instead has OS
+    // window chrome and deliberately does not close on Escape (ADR-0223).
+    // Cards have no popup: all overlay close routes immediately restore focus.
+    for (close_by, arrow, expected) in [("escape", "down", 1), ("cmd-.", "up", 0), ("×", "down", 1)]
+    {
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {
                 app.handle_menu_command("app.settings", window, cx)
@@ -485,11 +488,11 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
                 .focused),
             "the real theme card holds focus"
         );
-        if close_by == "escape" {
-            keys(cx, window, "escape");
+        if close_by != "×" {
+            keys(cx, window, close_by);
         } else {
             let close = e2e::control_bounds(window.window_id(), "settings-close")
-                .expect("Settings draws its × button");
+                .expect("portable Settings draws its in-content × button");
             cx.simulate_click(window, close.center(), Modifiers::none());
             cx.run_until_parked();
         }

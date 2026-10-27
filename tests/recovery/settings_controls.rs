@@ -123,6 +123,8 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
     for count in [0, 1, 20] {
         app.update(cx, |app, cx| {
             app.smart_commit.provider = SmartProvider::Ollama;
+            app.smart_commit.ollama_available = true;
+            app.smart_commit.detecting = false;
             app.smart_commit.claude_available = count > 0;
             app.smart_commit.codex_available = false;
             app.smart_commit.detected_models = (0..count)

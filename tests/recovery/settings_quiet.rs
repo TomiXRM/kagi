@@ -250,8 +250,9 @@ pub fn scenario_settings_radio_dot(cx: &mut VisualTestAppContext) {
                         (u32::from(dot[0]) << 16) | (u32::from(dot[1]) << 8) | u32::from(dot[2]);
                     let (dot_luma, fill_luma) =
                         (luminance(dot_rgb), luminance(theme::theme().ui_accent()));
+                    // The selected dot is a non-text state indicator (#1468).
                     assert!(
-                        (dot_luma.max(fill_luma) + 0.05) / (dot_luma.min(fill_luma) + 0.05) >= 4.5
+                        (dot_luma.max(fill_luma) + 0.05) / (dot_luma.min(fill_luma) + 0.05) >= 3.
                     );
                     if slug == "apple-dark" && source.is_none() {
                         assert!(

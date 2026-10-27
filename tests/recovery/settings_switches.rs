@@ -239,6 +239,11 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                 let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
                 let scroll = cx.read(|cx| view.read(cx).scroll_handle());
                 let viewport = bounds(cx, window, "settings-detail-scroll").unwrap();
+                assert_eq!(
+                    viewport,
+                    scroll.bounds(),
+                    "the probe measures the actual GPUI scroll-owner viewport"
+                );
                 let sidebar = bounds(cx, window, "settings-sidebar").unwrap();
                 let probes = cx.read(|cx| view.read(cx).control_probes());
                 let controls: Vec<_> = probes
@@ -393,6 +398,12 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                         sidebar,
                         "detail scrolling never moves navigation"
                     );
+                    assert_eq!(
+                        bounds(cx, window, "settings-detail-scroll").unwrap(),
+                        viewport,
+                        "content translation never moves the fixed viewport probe"
+                    );
+                    assert_eq!(scroll.bounds(), viewport);
                 }
                 if pane == kagi_ui_settings::Pane::Appearance {
                     let before = scroll.offset().y;

@@ -5,21 +5,24 @@ Status: Accepted — 2026-10-12. Issue #1198. Supersedes ADR-0080's macOS overla
 ## Decision
 
 On macOS every Settings entry point opens or raises one process-wide window,
-not a repository overlay. The host wraps the existing settings entity callbacks,
-theme Select/Input entities and #1200 grouped-form section renderers in the
-same gpui-component Root used by repository windows. It owns presentation only:
-selected pane, focus, scroll and the OS window handle. There is no second
-Settings store and no repository read model, tab, modal slot or Git access in
-this host. Other platforms keep the portable overlay implementation.
+not a repository overlay. Since #1816 it mounts the shared production Settings
+entity and retained InputState in the same gpui-component Root used by repository
+windows. The native host owns the OS window and frame; the shared entity owns
+pane selection, control focus and detail scrolling. The native adapter retains
+store/effect ownership, with no second Settings store or repository read model
+in this host. Other platforms keep the portable overlay around the same entity.
 
 The 715-logical-point window is non-resizable and non-modal, with standard
 close/minimize lights and disabled zoom. The transparent unified compact frame
 sets app_owns_titlebar_drag and owns dragging only on its blank/title surface,
-not pane controls. General, Language, Smart Commit and Analyze use the existing
-localized groups. Pane selection, position and the last content height are saved
-through settings::; invalid/missing selections use General, and disconnected-
-display positions recenter. Restoring height avoids an unnecessary initial
-resize on every reopen. The selected pane determines content height through real
+not pane controls. The #1816 panes are Appearance, Graph, Editor, Terminal,
+Network & Sync, Smart Commit, Analyze and General (language). Pane selection,
+position and the last content height are saved through settings::; invalid or
+missing selections display Appearance, but a missing preference is not written
+merely by opening Settings. Existing legacy selections migrate once.
+Disconnected-display positions recenter. Restoring height avoids an unnecessary
+initial resize on every reopen.
+The selected pane determines content height through real
 layout, with a 500-logical-point floor when the display permits it and the
 current display's visible frame as the ceiling. Oversized pages remain reachable
 through one persistent system-scrollbar owner. Width does not scale with UI zoom.
@@ -79,13 +82,12 @@ screencapture -l<settings-window-id>, not the first PID-matching window.
 
 ## Amendment — 2026-10-12: settings control feedback (#1298 / #1299)
 
-The Smart Commit pane shares the existing manual TabList choice focus owner
-with the portable overlay; pointer activation returns to the active Settings
-host's focus, and departing/removed cells yield focus to that host. Analyze
-Save/Reset outcomes use the originating app's existing bounded ToastStack,
-placed with the repository window's shared out-of-flow toast container so
-feedback cannot change page layout or content-height measurement. The saved
-editor baseline and full inline failure remain on KagiApp, not on this window.
+The Smart Commit pane shares the production choice-group focus owner with the
+portable overlay; selection, roving focus and unavailable choices remain distinct.
+Analyze Save/Reset outcomes use the originating app's bounded ToastStack in the
+window's out-of-flow detail-content slot, never over the sidebar. Feedback cannot
+change page layout or content-height measurement. The shared entity owns the
+accepted editor baseline and inline failure; the native adapter owns file writes.
 
 Since both hosts render the same ToastStack, each card retains its rendered
 close handle per window rather than overwriting one global handle. Both hosts
@@ -155,14 +157,14 @@ Saved display identity uses the GPUI display UUID, not an ambiguous local x/y
 coordinate or the currently focused screen. A disconnected UUID recenters on
 the primary display; the old three-component frame remains readable and acquires
 its display identity at the next native bounds capture.
-Unmodified Page Up/Down bubble to the native host's existing scroll owner when
-an editing control has not consumed them. This keeps focused controls intact
-while allowing keyboard inspection of page content below the fitted frame.
+Unmodified Page Up/Down reach the shared detail viewport when an editing control
+has not consumed them. This keeps focused controls intact while allowing keyboard
+inspection of page content below the fitted frame.
 
 The native `settings_window_screen_fit` regression checks window bounds against
 the display's visible bounds after first open, all pane transitions, 100%→167%
 zoom and reopen in EN/JA and Apple Light/Dark. Wheel scrolling and real Tab plus
-Page Down must reach the final General switch inside that page viewport; the
+Page Down must reach the final Appearance switch inside that page viewport; the
 native accessibility tree retains its localized name. Saved right/bottom-overflow
 frames must restore on their own connected display and fit fully, not merely
 expose a titlebar. These deterministic hidden-window bounds do not prove physical
@@ -171,4 +173,7 @@ window on the main display at 167%.
 The same regression also moves the live native frame partly beyond the right and
 bottom visible edges, drains its bounds notifications and redraws repeatedly,
 and requires the chosen position to survive until a pane/content/zoom change.
+The pane-transition regression starts from the actual selected pane's successor:
+clicking an already-selected Appearance pane is not a layout transition and must
+not undo a user's unchanged manual position.
 

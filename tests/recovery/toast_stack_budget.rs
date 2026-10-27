@@ -65,8 +65,16 @@ fn portable_settings_scroll(cx: &mut VisualTestAppContext) {
     draw(cx, window);
     let viewport = e2e::control_bounds(window.window_id(), "toast-container").unwrap();
     let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
-    assert!(viewport.left() >= frame.left() && viewport.right() <= frame.right());
-    assert!(viewport.top() >= frame.top() && viewport.bottom() <= frame.bottom());
+    let detail = crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
+        .expect("actual fixed Settings detail viewport");
+    assert!(
+        viewport.left() >= frame.left() && viewport.right() <= frame.right(),
+        "toast {viewport:?}, Settings frame {frame:?}, fixed detail {detail:?}"
+    );
+    assert!(
+        viewport.top() >= frame.top() && viewport.bottom() <= frame.bottom(),
+        "toast {viewport:?}, Settings frame {frame:?}, fixed detail {detail:?}"
+    );
     assert!(viewport.size.height <= px(660. * 0.3 + 1.));
     cx.simulate_event(
         window,
@@ -592,9 +600,7 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         settings_dimensions,
                         false,
                     );
-                    let controls =
-                        e2e::control_bounds(settings.window_id(), "settings-page-controls")
-                            .expect("Settings controls remain mounted");
+                    let controls = HostControls::Settings.bounds(cx, settings);
                     assert!(settings_stack.size.height > px(0.));
                     let settings_more = i18n::Msg::ToastMore.t().replace("{count}", "2");
                     assert!(crate::native_ax::press(cx, settings, &settings_more),
@@ -614,11 +620,7 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         (settings_expanded.bottom() - settings_stack.bottom()).abs() <= px(1.),
                         "Settings expansion grows upward from its content-bottom anchor"
                     );
-                    assert_eq!(
-                        e2e::control_bounds(settings.window_id(), "settings-page-controls")
-                            .unwrap(),
-                        controls
-                    );
+                    assert_eq!(HostControls::Settings.bounds(cx, settings), controls);
                     assert!(crate::native_ax::press(
                         cx,
                         settings,
@@ -636,9 +638,7 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         cx.run_until_parked();
                     }
                     draw(cx, settings);
-                    let settings_controls_before_busy =
-                        e2e::control_bounds(settings.window_id(), "settings-page-controls")
-                            .unwrap();
+                    let settings_controls_before_busy = HostControls::Settings.bounds(cx, settings);
                     let settings_lane_before_busy =
                         e2e::control_bounds(settings.window_id(), "toast-content-anchor").unwrap();
                     let (hold, release) = crate::evidence_support::deferred::<()>(cx);
@@ -659,8 +659,7 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                                 "repository fetch progress never enters Settings"
                             );
                             assert_eq!(
-                                e2e::control_bounds(host.window_id(), "settings-page-controls")
-                                    .unwrap(),
+                                HostControls::Settings.bounds(cx, host),
                                 settings_controls_before_busy
                             );
                             assert_eq!(

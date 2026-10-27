@@ -228,8 +228,9 @@ impl SettingsView {
                         builder.parent_node().set_disabled()
                     })
             })
-            .when(enabled, |el| {
-                el.cursor_pointer().hover(|s| s.bg(rgb(theme().surface)))
+            .when(enabled, |el| el.cursor_pointer())
+            .when(enabled && !selected, |el| {
+                el.hover(|s| s.bg(rgb(theme().surface)))
             })
             .child(
                 div()
@@ -472,7 +473,13 @@ impl SettingsView {
                 .py(pt(3.))
                 .text_center()
                 .when(selected, |el| {
-                    el.bg(theme().segment_selected_bg()).shadow_sm()
+                    // The Settings segment is raised, not an inactive row (#1816).
+                    let fill = match theme().slug.as_ref() {
+                        "apple-light" => white(),
+                        "apple-dark" => rgb(0x66666c).into(),
+                        _ => theme().segment_selected_bg(),
+                    };
+                    el.bg(fill).shadow_sm()
                 })
                 .child(label);
             track = track.child(control);

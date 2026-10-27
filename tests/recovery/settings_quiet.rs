@@ -166,6 +166,36 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         }
                     })
                     .unwrap();
+                    // Keep the pointer over the selected control. A neutral
+                    // hover fill must not erase selection on same-height panes.
+                    for pane in kagi_ui_settings::Pane::ALL {
+                        let id = format!("settings-pane-{}", pane.id());
+                        crate::settings_controls::click(cx, window, &id);
+                        assert!(
+                            crate::settings_controls::probe(cx, window, &id)
+                                .unwrap()
+                                .selected
+                        );
+                        assert_hover_fill(cx, window, &id, palette.selected, zoom);
+                    }
+                    let language = if lang == kagi::ui::i18n::Lang::En {
+                        "settings-language-en"
+                    } else {
+                        "settings-language-ja"
+                    };
+                    // Independent approved raised-segment colors, not the
+                    // production helper that formerly returned inactive gray.
+                    assert_hover_fill(
+                        cx,
+                        window,
+                        language,
+                        if slug == "apple-light" {
+                            0xffffff
+                        } else {
+                            0x66666c
+                        },
+                        zoom,
+                    );
                     app.update(cx, |app, cx| {
                         app.menu_overlay = None;
                         cx.notify();
@@ -175,6 +205,46 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
         }
     }
     unmount(cx, app, window);
+}
+
+fn assert_hover_fill(
+    cx: &mut VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    id: &str,
+    expected: u32,
+    zoom: f32,
+) {
+    let bounds = crate::settings_controls::bounds(cx, window, id).unwrap();
+    cx.simulate_event(
+        window,
+        gpui::MouseMoveEvent {
+            position: bounds.center(),
+            ..Default::default()
+        },
+    );
+    crate::settings_controls::draw(cx, window);
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().expect("selected hovered control");
+        let scale = window.scale_factor();
+        // Inside the leading padding, away from text, glyphs and focus rings.
+        let pixel = image
+            .get_pixel(
+                ((f32::from(bounds.left()) + 3. * zoom) * scale) as u32,
+                (f32::from(bounds.center().y) * scale) as u32,
+            )
+            .0;
+        for (got, want) in pixel[..3].iter().zip([
+            (expected >> 16) as u8,
+            (expected >> 8) as u8,
+            expected as u8,
+        ]) {
+            assert!(
+                got.abs_diff(want) <= 2,
+                "{id} selected hover fill {pixel:?}, expected {expected:06x}"
+            );
+        }
+    })
+    .unwrap();
 }
 
 struct RadioProbe;

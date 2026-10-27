@@ -305,6 +305,24 @@ fn exercise_lane(
             theme::zoom()
         );
     }
+    // Opt-in native fixture frames for the narrow/zoom HIG review. These are
+    // held-read Tier A evidence, not plain-application Tier B captures.
+    if std::env::var_os("KAGI_GUI_E2E_ONSCREEN").is_some()
+        && i18n::lang() == i18n::Lang::Ja
+        && (theme::zoom() - 1.67).abs() < 0.01
+        && matches!(layout, "text" | "saved")
+    {
+        let width = cx
+            .update_window(window, |_, window, _| {
+                f32::from(window.viewport_size().width)
+            })
+            .unwrap();
+        let tag = format!(
+            "toast-conflict-{layout}-ja167-{}-{width}",
+            theme::theme().slug
+        );
+        crate::macos::capture_screenshot_best_effort(cx, window, &tag);
+    }
     let control = if matches!(layout, "text" | "raw") {
         "busy-snackbar-skip"
     } else {

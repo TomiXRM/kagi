@@ -616,6 +616,16 @@ cards persistent. The actual Status node clears its arrival rather than
 re-announcing an old card. `toast_stack::status_for_e2e(window_id, audience)`
 records each rendered host, including empty Status labels; another window or
 audience cannot overwrite its evidence.
+Clear chrome bounds before a fresh draw when resizing between full sidebar and
+compact rail; never intersect a stale unmounted sidebar probe. Activate native
+AX before painting its tree, then press the actual disclosure. Busy cards keep
+their natural height inside the bounded stack: caption/advice paint is one line
+each with full AX names and hover help. Skip/clone actions wrap on an optional
+second row, never competing horizontally with the primary Hide control.
+Assert both axes of every control and dispatch real Skip/Hide. Opt into
+`KAGI_GUI_E2E_ONSCREEN=1` to save JA167% text/saved Conflict mixed-stack native
+frames through the existing success screenshot helper. Label those held-read
+fixtures Tier A; they do not replace plain-application Tier B evidence.
 Include `toast_`, `slow_read_explained`, `slow_write_conflict_continue`,
 `bottom_panel_nested` and `pr_detail_adaptive`. PR/Issues nested-panel coverage
 compares independent `pr-mode-center-pane` / `issue-mode-center-pane` probes
@@ -649,18 +659,19 @@ and a saved draft read failure: both source identities and all choice controls
 must remain visible, including with the persistent N-more summary. Include
 × / Escape, root Return, focused-button activation and actual destructive caption
 contrast in EN/JA and Light/Dark.
-For the footer correction, capture real EN Light and JA Dark conflict transients
-in the footer, then their automatic reversion; add a JA Dark Settings frame with
-a live draft-rescue card in the repository window, and a Settings-owned theme
-JSON error. A repository's draft warning is not valid Settings lane evidence.
+For the restored bottom-left contract, capture real EN Light and JA Dark conflict
+transients in the shared content stack, then their automatic expiry; add a JA Dark
+Settings frame with a live draft-rescue card in the repository window and a
+Settings-owned theme JSON error. A repository draft warning is not valid Settings
+notification evidence.
 For focused activation evidence, inspect the actual focus-ring pixels before
 pressing Space: the header Copy control precedes Cancel in Tab order, so never
 assume the first Tab focuses Cancel or activate Copy during validation. Capture
 a selected **convention-file** row on opaque accent fill for Rule's local AA
 correction; conflict rows cannot supply that selected-state evidence.
-永続通知レーンは永続カードだけで測る。conflict の一時通知と処理中表示は
-固定高フッターへ置き、4 秒後の復帰と操作への非交差を確認する。通知は対象を
-所有するウィンドウにだけ表示し、下書き救済の内部ファイル名は操作ログに残す。
+永続通知・一時通知・処理中表示は、中央コンテンツ左下の同じスタックで測る。
+conflict でもフッターへ分岐せず、4 秒後の一時通知消失と操作への非交差を確認する。
+通知は対象を所有するウィンドウにだけ表示し、下書き救済の内部ファイル名は操作ログに残す。
 フォーカス枠を確認してから Space を押し、Copy を作動させない。
 選択色の証跡には規約ファイルの行を使う。
 

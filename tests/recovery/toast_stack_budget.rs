@@ -67,6 +67,20 @@ fn portable_settings_scroll(cx: &mut VisualTestAppContext) {
     let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
     let detail = crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
         .expect("actual fixed Settings detail viewport");
+    for pane in kagi_ui_settings::Pane::ALL {
+        let control =
+            crate::settings_controls::bounds(cx, window, &format!("settings-pane-{}", pane.id()))
+                .expect("actual sidebar navigation control");
+        assert!(
+            control.size.width > px(0.)
+                && control.size.height > px(0.)
+                && control.left() >= frame.left()
+                && control.right() <= frame.right()
+                && control.top() >= frame.top()
+                && control.bottom() <= frame.bottom(),
+            "{pane:?} control {control:?} remains inside Settings frame {frame:?}; detail {detail:?}"
+        );
+    }
     assert!(
         viewport.left() >= frame.left() && viewport.right() <= frame.right(),
         "toast {viewport:?}, Settings frame {frame:?}, fixed detail {detail:?}"

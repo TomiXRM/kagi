@@ -121,6 +121,8 @@ impl SettingsView {
         #[cfg(feature = "gui-e2e")]
         {
             let probes = self.probes.clone();
+            let paint_probes = probes.clone();
+            let paint_id = id.clone();
             let focus = self.focus.get(&id).cloned();
             return canvas(
                 move |bounds, window, _| {
@@ -138,10 +140,20 @@ impl SettingsView {
                             role,
                             name,
                             value,
+                            paint: None,
                         },
                     );
                 },
-                |_, _, _, _| {},
+                move |_, _, window, _| {
+                    if let Some(probe) = paint_probes.borrow_mut().get_mut(&paint_id) {
+                        let style = window.text_style();
+                        probe.paint = Some(ControlPaint {
+                            font_size: style.font_size.to_pixels(window.rem_size()),
+                            font_weight: style.font_weight,
+                            text_color: style.color,
+                        });
+                    }
+                },
             )
             .absolute()
             .top_0()

@@ -192,6 +192,9 @@ The #1816 design records the owner-approved sidebar-vs-toolbar and fixed
 category-hue deviations. Preserve ADR-0223 window chrome/lifecycle. Native and
 browser exercise the same controls; browser evidence cannot replace native
 OS, process, persistence or Git safety verification.
+The approved Japanese pane name is `スマートコミット`: this is the localized
+feature name, not a translation of the Git `commit` operation. The terminology
+gate retains the operation rule and recognizes this named-feature exception.
 
 The browser host embeds the same pinned component icon bytes via the asset
 crate's published Cargo build metadata. It must not silently omit symbols or

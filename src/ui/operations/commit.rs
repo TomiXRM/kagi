@@ -535,6 +535,7 @@ impl KagiApp {
         }
         if !self.smart_commit.llm_enabled {
             self.smart_commit.set_enabled(true);
+            self.seed_settings(cx);
         }
         // Gate 2: model selection — Ollama only. CLI providers (ADR-0099) have no
         // model picker; the provider itself is chosen in Settings.
@@ -586,6 +587,7 @@ impl KagiApp {
         }
         self.clear_smart_commit_modal();
         self.smart_commit.accept_consent();
+        self.seed_settings(cx);
         klog!("smart-commit: llm enabled (consent given)");
         // Move on to picking a model (always confirm at least once per ADR).
         if self.smart_commit.model.is_none() {

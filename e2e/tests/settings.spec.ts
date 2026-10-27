@@ -8,6 +8,7 @@ type Observed = {
   terminalAutoLock: boolean; autoFetch: boolean; reduceMotion: boolean; zoom: number; toolbar: string;
   followsSystemAccent: boolean; compactThreshold: number; copyTarget: string; markdown: string;
   draft: string; baseline: string; dirty: boolean; controls: Probe[];
+  scrollY: number; scrollMax: number;
 };
 declare global {
   interface Window {
@@ -205,6 +206,35 @@ test("Analyze retains newer drafts across delayed/failing results, pane and fixt
   expect((await observed(page)).dirty).toBe(false);
 });
 
+test("Page keys scroll detail without moving focus or stealing Analyze editing", async ({ page }) => {
+  await page.setViewportSize({ width: 715, height: 400 });
+  await boot(page);
+  await click(page, "settings-theme-apple-light");
+  const before = await observed(page);
+  expect(before.scrollMax).toBeGreaterThan(0);
+  await page.keyboard.press("PageDown");
+  await frames(page);
+  const down = await observed(page);
+  expect(down.scrollY).toBeLessThan(before.scrollY);
+  expect((await probe(page, "settings-theme-apple-light")).focused).toBe(true);
+  await page.keyboard.press("PageUp");
+  await frames(page);
+  expect((await observed(page)).scrollY).toBeGreaterThan(down.scrollY);
+  expect((await probe(page, "settings-theme-apple-light")).focused).toBe(true);
+  await pane(page, "analyze");
+  await click(page, "settings-analyze-input");
+  const editing = await observed(page);
+  expect(editing.scrollMax).toBeGreaterThan(0);
+  await page.keyboard.press("PageDown");
+  await page.keyboard.press("PageUp");
+  await frames(page);
+  expect((await observed(page)).scrollY).toBe(editing.scrollY);
+  expect((await observed(page)).draft).toBe(editing.draft);
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type("still-editing/");
+  expect((await observed(page)).draft).toBe("still-editing/");
+});
+
 for (const language of ["en", "ja"]) {
   for (const theme of ["apple-light", "apple-dark"]) {
     for (const layout of ["normal", "narrow", "zoom167"]) {
@@ -220,7 +250,7 @@ for (const language of ["en", "ja"]) {
         for (const destination of panes) {
           await pane(page, destination);
           const state = await observed(page);
-          const navigation = state.controls.filter(control => control.id.startsWith("settings-pane-"));
+          const navigation = state.controls.filter(control => panes.some(pane => control.id === `settings-pane-${pane}`));
           expect(navigation).toHaveLength(8);
           expect(navigation.filter(control => control.selected).map(control => control.id)).toEqual([`settings-pane-${destination}`]);
           for (const control of state.controls) {

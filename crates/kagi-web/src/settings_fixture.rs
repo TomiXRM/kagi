@@ -366,6 +366,7 @@ impl SettingsFixture {
 
     fn describe(&self, cx: &App) -> Value {
         let view = self.view.read(cx);
+        let scroll = view.scroll_handle();
         let probes: Vec<_> = view.control_probes().iter().map(|probe| json!({
             "id": probe.id, "x": f32::from(probe.bounds.origin.x), "y": f32::from(probe.bounds.origin.y),
             "width": f32::from(probe.bounds.size.width), "height": f32::from(probe.bounds.size.height),
@@ -384,6 +385,7 @@ impl SettingsFixture {
             "copyTarget": match self.snapshot.graph_copy_target { CopyTarget::Hash => "hash", CopyTarget::Branch => "branch" },
             "markdown": self.snapshot.markdown_default_view.as_str(),
             "draft": self.input.read(cx).value().as_ref(), "baseline": self.snapshot.analyze_saved.as_ref(),
+            "scrollY": f32::from(scroll.offset().y), "scrollMax": f32::from(scroll.max_offset().y),
             "dirty": view.analyze_dirty(cx), "controls": probes })
     }
 }

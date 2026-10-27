@@ -596,15 +596,14 @@ System Settings with an isolated running Kagi, compare pane/spinner and PR tile
 before/after without restarting, and restore both OS preferences afterward.
 
 For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
-`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
-role/name/value/expanded/disabled properties on Appearance controls in the native
-Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
-to the kit's actual focused Select root; confirmation and Escape preserve its
-identity and focus owner. Zoom retains kit activation and discrete caps, hands
-focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
-These probes are not native VoiceOver or Full Keyboard Access evidence.
-Tier B inspects the live ComboBox and option names and both zoom button/value
-nodes at 100%, 70% and 167%, including disabled announcements.
+`settings_theme_select_ax` retains its historical scenario ID but now exercises
+the production theme-card RadioGroup: one selected card, full names, manual
+arrow focus without selection, and Space/Enter activation. There is no Select
+popup or ComboBox compatibility path. `settings_zoom_stepper_ax` inspects the
+shared stepper names, value and disabled caps across EN/JA and Apple Light/Dark,
+including focus repair at each bound. Shared renderer probes do not establish
+native VoiceOver announcements or Full Keyboard Access; Tier B still checks
+those on the real native window.
 
 For #1772 include `commit_panel_density,commit_panel` in the native filter.
 Retain tree/flat, EN/JA, Apple Light/Dark and zoom coverage. Measure actual
@@ -1233,8 +1232,8 @@ For #1298 / #1299 use
 with KEEP_GOING; run `settings_` for the neighboring baseline. These two
 scenarios explicitly select the production 715px macOS Settings host in
 EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
-renderer's named selected Tab recorder and real Enter/Space down/up after
-focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+shared renderer's RadioButton name/selected/disabled probes and real Enter/Space
+down/up after focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
 values and no generation modal. Analyze clicks actual visible/scroll-reachable
 Save/Reset controls against a directory at the target path and a mode-000
 settings directory: errors retain the draft/dirty marker and original bytes;
@@ -1411,29 +1410,23 @@ These renderer/simulated-input assertions do not prove Full Keyboard Access,
 VoiceOver or IME behavior; Tier B compares those in the real EN/JA window.
 
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
-`settings_quiet` measures inherited heading colour/size/weight and Metal pixels
-for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes
-and injected blue/purple accents; adjacent pixels enforce literal 1px width.
-`settings_radio_dot` renders the actual pinned Radio component and checks a
-symmetric contrast-preserving primary-foreground centre, surrounding accent
-and empty unchecked input fill in both themes at both zooms, with explicit
-Theme accent and blue/purple System accent (Dark Theme requires a dark dot).
-Public `e2e::measure_control` permits native component probes to reuse the app's
-bounds recorder; default builds retain its pass-through. Shared non-E2E
-`measure_inside` placeholders are absolute and zero-sized: the unit
-`measure_inside_placeholder_is_out_of_flow` prevents flex/gap layout changes.
-These renderer assertions are not real keyboard, VoiceOver or Tier B evidence.
+`settings_quiet` protects neutral hierarchy, contrast and actual native pixels
+in the approved sidebar design at 100%/167%, EN/JA, both Apple themes and
+injected blue/purple accents. The old Appearance hairline/dropdown geometry is
+not a compatibility contract. `settings_radio_dot` remains an adjacent pinned
+Radio-component contrast regression; Settings exclusive choices themselves now
+use shared segmented controls and palette cards.
+Root `e2e::measure_control` remains available for other native components;
+Settings controls use `kagi-ui-settings`' feature-gated probes. Neither recorder
+substitutes for real keyboard, VoiceOver or Tier B evidence.
 
 For #1200 use `KAGI_GUI_E2E_ONLY=settings` for the complete Settings matrix.
-`settings_groups` checks semantic card bounds, native base-fill pixels and page
-wheel ownership at 1392×883, EN/JA, 100%/167%; ordinary controls fit when
-reached and the unchanged oversized Analyze editor has separately reachable
-edges. It measures Analyze's vertical padding/gaps and ordinary descriptions
-of at most two lines at 100%. Real mouse-move events plus the Tooltip delay
-exercise avatar/custom-theme/Analyze help builders in both languages.
-`settings_view::take_settings_help_for_e2e` consumes only text actually passed
-to an invoked Tooltip builder; each hover clears old observations first.
-This is renderer/tooltip-construction evidence, not native VoiceOver delivery.
+`settings_groups` walks all eight production panes and checks shared semantic
+group/control bounds, full visible explanations, page wheel ownership and a
+stationary sidebar at EN/JA × 100%/167%. Ordinary controls and both Analyze editor
+edges must remain reachable. Help is form content, not a tooltip-only fallback;
+theme-name tooltips supplement one-line truncation. Native and browser probes
+are emitted by the same production elements, not root-only legacy renderers.
 
 For #1271/#1272 use `KAGI_GUI_E2E_ONLY=palette_` with KEEP_GOING. The
 `palette_highlight` scenario compares native row-fill pixels with the one AX
@@ -1980,25 +1973,18 @@ The current suite covers:
   Tier B: Peek a fetched live PR from its actual menu, inspect visible Compare,
   open a changed file and use Back. Capture only the launched PID's window;
   a large fixture or sample is not proof of FPS/input latency.
-- Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
-  `tests/recovery/settings_switches.rs`, #970): every switch is a
-  `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,
-  checks each switch is named by its row (`e2e::recorded_switch`), walks Tab
-  from the root over the six in drawing order
-  (`settings_switch_focused_for_e2e`), presses Space then Enter on each of
-  the five Appearance switches and checks the setting is saved each time and
-  the checked state given to assistive technology follows (Smart Commit's
-  is only reached: turning it on probes for local LLMs), and clicks one with
-  the pointer (one flip). `SavedKeys` puts the five settings back. The ring
-  is not observable in Tier A: Tier B Tabs through Settings and looks.
-- Settings zoom bound (`KAGI_GUI_E2E_ONLY=settings_zoom_bound`,
-  `tests/recovery/settings_switches.rs`, #1019 review): open the real Settings
-  view with a legacy 150% value, then step from 156% to 167% and back to
-  160%. The `gui-e2e`-only `e2e::settings_zoom_label` reads the
-  rendered percentage after each frame; persisted `ui_zoom` must match.
-  `GlobalSettings::capture()` restores the original settings. This Tier A
-  probe cannot establish the label's physical appearance; Tier B remains
-  unchanged.
+- Settings switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
+  `tests/recovery/settings_switches.rs`): shared `SettingsView` emits typed
+  requests through the actual pointer/keyboard handlers. Check each switch's
+  row name, Switch role, value and separate focus via shared probes; focus alone
+  must not toggle. Ordinary switch activation must preserve its existing native
+  setting/effect, while Smart Commit first enable waits for window-bound consent.
+  Visit each setting's owning pane rather than expecting six controls in one
+  legacy Appearance page. Tier B still inspects visible rings and announcements.
+- Settings zoom (`KAGI_GUI_E2E_ONLY=settings_zoom_bound`): preserve legacy
+  restoration, existing discrete zoom steps and bounded button focus repair.
+  The shared `zoom-value` probe exposes the rendered percentage; persisted
+  `ui_zoom` must match. Restore the original preferences after the scenario.
 - Tab panels (`KAGI_GUI_E2E_ONLY=tab_panels`, `tests/recovery/tab_panels.rs`,
   #979): the content a tab list switches goes through
   `tab_panel_a11y::tab_panel`, which records the role and label it set
@@ -2578,7 +2564,7 @@ The current suite covers:
   (`active-modal/app-notice`), a Pull confirmation (`plan-cancel`) and the
   Editor unsaved-changes guard raised by closing the dirty tab behind Home
   (`active-modal/editor-dirty-guard`; Esc keeps the tab) are on screen, as is
-  Settings (`settings-theme-select`). Closing the covered tab does not enter
+  the shared Settings sidebar view. Closing the covered tab does not enter
   its neighbour behind Home. `recent_repos` is restored by `SavedKeys`. For Tier B
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.

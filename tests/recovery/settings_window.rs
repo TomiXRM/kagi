@@ -94,7 +94,10 @@ fn assert_last_setting_reachable(
     repo: AnyWindowHandle,
     settings: AnyWindowHandle,
 ) {
-    let _ = repo;
+    let view = cx.update_window(settings, |_, window, cx| {
+        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx).unwrap()
+    }).unwrap();
+    let scroll = cx.read(|cx| view.read(cx).scroll_handle());
     let viewport = crate::settings_controls::bounds(cx, settings, "settings-detail-scroll")
         .expect("existing page scrollbar viewport");
     cx.simulate_event(
@@ -129,6 +132,36 @@ fn assert_last_setting_reachable(
         cx.simulate_click(settings, at, gpui::Modifiers::none());
         settle(cx, settings);
     }
+    // Begin near the top with a real early control focused. Checking PageDown
+    // only after Tab reveals the final action would not prove page scrolling.
+    let first_card = format!("settings-theme-{}", theme::theme().slug);
+    let mut first_focused = false;
+    for _ in 0..80 {
+        cx.simulate_keystrokes(settings, "tab");
+        draw(cx, settings);
+        first_focused = crate::settings_controls::probe(cx, settings, &first_card)
+            .is_some_and(|probe| probe.focused);
+        if first_focused {
+            break;
+        }
+    }
+    assert!(first_focused, "Tab reaches the selected theme card");
+    let before_page = scroll.offset();
+    cx.simulate_keystrokes(settings, "pagedown");
+    draw(cx, settings);
+    let after_down = scroll.offset();
+    assert!(after_down.y < before_page.y - gpui::px(20.),
+        "PageDown moves the actual detail scroll owner: {before_page:?} -> {after_down:?}");
+    assert!(crate::settings_controls::probe(cx, settings, &first_card).unwrap().focused,
+        "PageDown preserves the earlier control's keyboard focus");
+    cx.simulate_keystrokes(settings, "pageup");
+    draw(cx, settings);
+    let after_up = scroll.offset();
+    assert!(after_up.y > after_down.y + gpui::px(20.) && after_up.y <= gpui::px(0.),
+        "PageUp returns toward the earlier offset: {after_down:?} -> {after_up:?}");
+    assert!((after_up.y - before_page.y).abs() < (after_down.y - before_page.y).abs());
+    assert!(crate::settings_controls::probe(cx, settings, &first_card).unwrap().focused,
+        "PageUp preserves keyboard focus");
     let mut reached = false;
     for _ in 0..80 {
         cx.simulate_keystrokes(settings, "tab");
@@ -140,12 +173,6 @@ fn assert_last_setting_reachable(
         }
     }
     assert!(reached, "real Tab reaches the final Appearance action");
-    // Ordinary Page Down moves the existing page scroller while keeping focus
-    // on the setting; no test-only scroll setter.
-    for _ in 0..4 {
-        cx.simulate_keystrokes(settings, "pagedown");
-        draw(cx, settings);
-    }
     let last = crate::settings_controls::bounds(cx, settings, "settings-theme-guide").unwrap();
     assert!(
         last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
@@ -158,6 +185,65 @@ fn assert_last_setting_reachable(
         node["aria"]["label"],
         kagi::ui::i18n::Msg::SettingsCustomThemesGuide.t()
     );
+    assert_analyze_page_keys_stay_in_editor(cx, repo, settings);
+}
+
+fn assert_analyze_page_keys_stay_in_editor(
+    cx: &mut VisualTestAppContext,
+    repo: AnyWindowHandle,
+    settings: AnyWindowHandle,
+) {
+    use gpui::Focusable as _;
+    use gpui_component::scroll::ScrollbarHandle as _;
+    let owner = cx.update_window(repo, |_, window, cx| {
+        window.root::<gpui_component::Root>().flatten().unwrap()
+            .read(cx).view().clone().downcast::<kagi::ui::KagiApp>().unwrap()
+    }).unwrap();
+    crate::settings_controls::click(cx, settings, "settings-pane-analyze");
+    let input = cx.read(|cx| owner.read(cx).analyze_ignore_input.clone().unwrap());
+    let view = cx.read(|cx| owner.read(cx).settings_entity().unwrap());
+    let scroll = cx.read(|cx| view.read(cx).scroll_handle());
+    let original = cx.read(|cx| input.read(cx).value());
+    let draft = (0..120).map(|line| format!("page-key-fixture-{line}/\n")).collect::<String>();
+    cx.update_window(settings, |_, window, cx| {
+        input.update(cx, |input, cx| input.set_value(draft.clone(), window, cx));
+        input.read(cx).focus_handle(cx).focus(window, cx);
+    }).unwrap();
+    draw(cx, settings);
+    let viewport = crate::settings_controls::bounds(cx, settings, "settings-detail-scroll").unwrap();
+    if scroll.content_size().height > viewport.size.height + gpui::px(20.) {
+        // Where Analyze itself overflows, demonstrate that its outer owner
+        // handles the same key with a button focused before testing the editor.
+        cx.update_window(settings, |_, window, cx| {
+            view.update(cx, |view, cx| view.focus_control("settings-analyze-save", window, cx));
+        }).unwrap();
+        draw(cx, settings);
+        let button_offset = scroll.offset();
+        cx.simulate_keystrokes(settings, "pageup");
+        draw(cx, settings);
+        assert!(scroll.offset().y > button_offset.y + gpui::px(1.),
+            "Analyze PageUp moves the detail owner when a non-editor control is focused");
+        cx.update_window(settings, |_, window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        }).unwrap();
+        draw(cx, settings);
+    }
+    let before = scroll.offset();
+    for key in ["pagedown", "pageup"] {
+        cx.simulate_keystrokes(settings, key);
+        draw(cx, settings);
+        assert_eq!(scroll.offset(), before,
+            "{key} consumed by Analyze editor must not move the surrounding detail pane");
+        assert!(cx.update_window(settings, |_, window, cx| {
+            input.read(cx).focus_handle(cx).is_focused(window)
+        }).unwrap(), "page navigation retains Analyze input focus");
+        assert_eq!(cx.read(|cx| input.read(cx).value()).as_ref(), draft.as_str(),
+            "page navigation cannot change the Analyze draft");
+    }
+    cx.update_window(settings, |_, window, cx| {
+        input.update(cx, |input, cx| input.set_value(original, window, cx));
+    }).unwrap();
+    crate::settings_controls::click(cx, settings, "settings-pane-appearance");
 }
 
 pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {

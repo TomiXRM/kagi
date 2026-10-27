@@ -4000,7 +4000,7 @@ impl Msg {
             (En, SettingsPaneNetwork) => "Network & Sync",
             (Ja, SettingsPaneNetwork) => "ネットワークと同期",
             (En, SettingsPaneSmartCommit) => "Smart Commit",
-            (Ja, SettingsPaneSmartCommit) => "Smart Commit",
+            (Ja, SettingsPaneSmartCommit) => "スマートコミット",
             (En, SettingsPaneAnalyze) => "Analyze",
             (Ja, SettingsPaneAnalyze) => "分析",
             (En, SettingsColorTheme) => "Color theme",

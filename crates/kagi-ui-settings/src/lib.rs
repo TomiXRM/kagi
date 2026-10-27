@@ -24,6 +24,15 @@ pub struct ControlProbe {
     pub role: Role,
     pub name: String,
     pub value: String,
+    pub paint: Option<ControlPaint>,
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct ControlPaint {
+    pub font_size: Pixels,
+    pub font_weight: FontWeight,
+    pub text_color: Hsla,
 }
 
 pub struct SettingsView {
@@ -281,6 +290,26 @@ impl Render for SettingsView {
             .text_color(rgb(kagi_ui_core::theme::theme().text_main))
             .text_size(controls::pt(13.))
             .font(kagi_ui_core::theme::ui_font())
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                let direction = match event.keystroke.key.as_str() {
+                    "pageup" => 1.,
+                    "pagedown" => -1.,
+                    _ => return,
+                };
+                // The editor owns caret/selection paging. Only unconsumed
+                // page keys outside it move the surrounding detail viewport.
+                if this.input.read(cx).focus_handle(cx).is_focused(window) {
+                    return;
+                }
+                let offset = this.scroll.offset();
+                let page = this.scroll.bounds().size.height * 0.9;
+                this.scroll.set_offset(point(
+                    offset.x,
+                    (offset.y + page * direction).clamp(-this.scroll.max_offset().y, px(0.)),
+                ));
+                cx.stop_propagation();
+                cx.notify();
+            }))
             .child(sidebar)
             .child(
                 div()
@@ -309,7 +338,16 @@ impl Render for SettingsView {
                                 .size_full(),
                             )
                             .font_weight(FontWeight::BOLD)
-                            .child(self.pane.title()),
+                            .child(self.pane.title())
+                            .child(self.measured(
+                                "settings-pane-title".into(),
+                                Role::Heading,
+                                self.pane.title().into(),
+                                String::new(),
+                                false,
+                                false,
+                                false,
+                            )),
                     )
                     .child(viewport),
             )

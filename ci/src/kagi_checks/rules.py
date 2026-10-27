@@ -516,6 +516,8 @@ RULES: tuple[Rule, ...] = (
         summary="JA localization keeps Git domain terms in English (ADR-0048 / #1465)",
         pattern="|".join(
             {
+                # Owner-approved feature name (#1816), not the Git commit verb.
+                "コミット": r"(?<!スマート)コミット",
                 "マージ": r"マージ(?!ン)",
                 "ステージ": r"ステージ(?!マネージャ)",
                 "リモート": r"リモート(?!デスクトップ)",
@@ -540,6 +542,7 @@ RULES: tuple[Rule, ...] = (
                 )
             ),
             'Lang::Ja => {\n let label = "commit";\n format!("{} をコミット", label)\n}',
+            '(Ja, Action) => "スマートコミット後にコミットする",',
             'Lang::Ja => match state { Some(_) => "ブランチ", None => "なし" },',
             'fn note_ja(note: &Note) -> String {\n format!("未コミット: {}", note)\n}',
             'fn note_ja_any(note: &Note) -> String { format!("作業ツリー: {}", note) }',
@@ -600,6 +603,7 @@ RULES: tuple[Rule, ...] = (
             'Lang::Ja => "ステージマネージャ",',
             'Lang::Ja => "プルダウン",',
             'Lang::Ja => "リモートデスクトップ",',
+            '(Ja, SettingsPaneSmartCommit) => "スマートコミット",',
             'Lang::Ja => "既存の ref `{}` と名前空間が競合しています。",',
             'fn name_error_ja() -> String { "ref namespace が競合しています".into() }',
             'const ADVICE_NAME: &str = "ref の名前空間が競合しています";',

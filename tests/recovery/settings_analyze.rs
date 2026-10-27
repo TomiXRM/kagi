@@ -444,7 +444,7 @@ fn stale_analyze_result(
     );
     assert!(!cx.read(|cx| view.read(cx).analyze_dirty(cx)));
 }
-fn help_leg(cx: &mut VisualTestAppContext, _app: &Entity<KagiApp>, window: AnyWindowHandle) {
+fn help_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     for (pane, id, text) in [
         (
             "graph",
@@ -474,11 +474,6 @@ fn help_leg(cx: &mut VisualTestAppContext, _app: &Entity<KagiApp>, window: AnyWi
             Msg::SettingsSmartEnableDesc,
         ),
         (
-            "smart_commit",
-            "settings-provider-help",
-            Msg::SettingsSmartProviderDesc,
-        ),
-        (
             "analyze",
             "settings-analyze-help",
             Msg::SettingsAnalyzeIgnoreDesc,
@@ -499,6 +494,61 @@ fn help_leg(cx: &mut VisualTestAppContext, _app: &Entity<KagiApp>, window: AnyWi
             help.bounds.left() >= viewport.left() && help.bounds.right() <= viewport.right(),
             "{id} wraps inside the production detail column"
         );
+    }
+    provider_unavailable_help(cx, app, window);
+}
+
+fn provider_unavailable_help(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    click(cx, window, "settings-pane-smart_commit");
+    // Detection has settled in matrix_host. Seed known host availability so
+    // neither the explanations nor disabled choices depend on the machine PATH.
+    app.update(cx, |app, cx| {
+        app.smart_commit.provider = kagi::ui::smart_commit::SmartProvider::Ollama;
+        app.smart_commit.ollama_available = true;
+        app.smart_commit.detecting = false;
+        app.smart_commit.claude_available = false;
+        app.smart_commit.codex_available = false;
+        app.seed_settings(cx);
+    });
+    draw(cx, window);
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    let saved_provider = settings::read_setting("smart_commit_provider");
+    let help = crate::settings_controls::probe(cx, window, "settings-provider-help").unwrap();
+    assert_eq!(help.name, Msg::SettingsSmartProvider.t());
+    assert!(help.value.contains(Msg::SettingsSmartProviderDesc.t()),
+        "availability explanations supplement, not replace, the base provider help");
+    for provider in ["Claude Code", "Codex"] {
+        let reason = i18n::provider_not_found_hint(provider);
+        assert!(help.value.contains(reason.as_str()),
+            "{provider} has an understandable unavailability explanation in the visible help");
+    }
+    let viewport = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
+    let scroll = cx.read(|cx| view.read(cx).scroll_handle());
+    scroll.set_offset(gpui::point(gpui::px(0.), scroll.offset().y - help.bounds.top() + viewport.top()));
+    draw(cx, window);
+    crate::recovery_layout::contained(
+        viewport,
+        crate::settings_controls::probe(cx, window, "settings-provider-help").unwrap().bounds,
+        "full provider help and unavailable reasons are visible without hover",
+    );
+    for id in ["sc-provider-claude-code", "sc-provider-codex"] {
+        let unavailable = crate::settings_controls::probe(cx, window, id).unwrap();
+        assert!(unavailable.disabled && !unavailable.selected);
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |view, cx| assert!(view.focus_control(id, window, cx)));
+        }).unwrap();
+        crate::keyboard_nav::keys(cx, window, "space enter");
+        click(cx, window, id);
+        let unchanged = crate::settings_controls::probe(cx, window, id).unwrap();
+        assert!(unchanged.disabled && !unchanged.selected,
+            "neither keyboard nor pointer activation selects an unavailable provider");
+        assert_eq!(cx.read(|cx| app.read(cx).smart_commit.provider),
+            kagi::ui::smart_commit::SmartProvider::Ollama);
+        assert_eq!(settings::read_setting("smart_commit_provider"), saved_provider);
     }
 }
 pub fn scenario_settings_analyze_reset_confirm(cx: &mut VisualTestAppContext) {

@@ -46,10 +46,14 @@ measurement can still be hard-clipped if the final text leaf is allocated 165px.
 samples native Metal pixels, including same-height pane transitions. It checks
 the selected language segment while hovered against the approved white
 (Apple Light) and light-gray (Apple Dark) fills, not the inactive-row helper.
-Actual element bounds also require the normal one-line segment's 24-point
-visible track and 20-point pill to fit inside a hit target of at least 28 points
-at both zoom levels. Wrapped labels may increase height; the 18-point mini
-switch is a separate, unchanged control.
+Actual element bounds require the normal one-line segment's 24-point visible
+track and 20-point pill at 100%, inside a hit target of at least 28 scaled points.
+At both zooms, independently assert the track's 2-point and pill's 4-point
+top/bottom insets against the actual hit bounds (≤0.5px per edge). GPUI's pinned
+`taffy.rs:342-403` snaps absolute near/far edges separately: at 167% the observed
+hit47/track41/pill33 satisfies those edges, although41 differs from24×1.67 by0.92.
+Do not repin41 or widen a height tolerance to hide this distinction. Wrapped
+labels may grow; the 18-point mini switch is separate and unchanged.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 Run the focused browser paint/geometry tests before heavy native gates.
@@ -65,9 +69,17 @@ at least 6px sibling spacing preserves its stroke without escaping ancestor clip
 The browser host also mounts an opaque GPUI overlay through `set_detail_slot`:
 it must cover all four ring edges while keyboard focus stays on the real control,
 then reveal identical ring pixels when removed. This is not a DOM overlay.
-A second actual browser tab tests
-inactive ring removal without clearing selection. This does not claim an OS
-Increase Contrast bridge: the shared ring always adjusts its composited contrast.
+Browser evidence here is **active paint only**. Headless-shell reports both tabs
+focused/visible; full Chrome156 new-headless with forced focus emulation disabled
+does switch `document.hasFocus()`, but both tabs remain `visibilityState=visible`.
+The pinned `gpui_web/window.rs:375-405` derives active state only from visibility.
+Do not substitute synthetic blur/visibility events or seed `active=false` and
+claim real browser activation. Native acceptance must retain active → inactive
+→ reactivated ring removal/restoration, with focus identity, selection/ON state
+and bounds unchanged. Tier A activation-input overrides and real OS/Tier B
+transitions are distinct evidence; the latter requires the owner's foreground
+permission when activation is necessary. Neither lane claims an OS Increase
+Contrast bridge: the shared ring always adjusts its composited contrast.
 
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.

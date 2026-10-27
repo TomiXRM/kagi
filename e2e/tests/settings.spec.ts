@@ -131,7 +131,7 @@ async function paintedRgb(page: Page, x: number, y: number) {
   }, png.toString("base64"));
 }
 
-test("pale accent focus paint contrasts on unselected themes and ON switches and clears when inactive", async ({ page }, info) => {
+test("pale accent active focus paint contrasts on unselected themes, ON switches and adjacent selections", async ({ page }, info) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 900, height: 740 });
   await boot(page);
@@ -216,21 +216,7 @@ test("pale accent focus paint contrasts on unselected themes and ON switches and
             JSON.stringify({ appearance, kind, edge, depth, color, background, control, ring })).toBeGreaterThanOrEqual(3);
         }
       }
-      const background = await paintedRgb(page, midX, ring.y + 3.5);
       await info.attach(`${appearance}-${kind}-yellow-active.png`, { body: await page.screenshot(), contentType: "image/png" });
-      const other = await page.context().newPage();
-      try {
-        await other.bringToFront();
-        await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
-        await frames(page);
-        const inactive = await paintedRgb(page, midX, ring.y + 0.5);
-        inactive.forEach((value, channel) => expect(Math.abs(value - background[channel])).toBeLessThanOrEqual(2));
-        await info.attach(`${appearance}-${kind}-yellow-inactive.png`, { body: await page.screenshot(), contentType: "image/png" });
-      } finally {
-        await other.close();
-        await page.bringToFront();
-        await frames(page);
-      }
       expect((await probe(page, control.id)).selected).toBe(control.selected);
     }
   }
@@ -298,11 +284,16 @@ test("selected hover paint and segmented visible geometry remain distinct from h
         const track = await probe(page, "settings-language-visual");
         const pill = await probe(page, `settings-language-${language}-visual`);
         expect(hit.height).toBeGreaterThanOrEqual(28 * zoom - 0.5);
-        expect(Math.abs(track.height - 24 * zoom)).toBeLessThanOrEqual(0.5);
-        expect(Math.abs(pill.height - 20 * zoom)).toBeLessThanOrEqual(0.5);
-        for (const visual of [track, pill]) {
-          expect(visual.y).toBeGreaterThanOrEqual(hit.y);
-          expect(visual.y + visual.height).toBeLessThanOrEqual(hit.y + hit.height + 0.5);
+        if (zoom === 1) {
+          expect(Math.abs(track.height - 24)).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(pill.height - 20)).toBeLessThanOrEqual(0.5);
+        }
+        // GPUI snaps absolute near/far edges independently (taffy.rs).
+        // At 167%, hit47/track41/pill33 can satisfy each inset even though
+        // subtracting the snapped edges differs from 24*1.67 by 0.92.
+        for (const [visual, inset] of [[track, 2], [pill, 4]] as const) {
+          expect(Math.abs(visual.y - hit.y - inset * zoom)).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(hit.y + hit.height - visual.y - visual.height - inset * zoom)).toBeLessThanOrEqual(0.5);
         }
         await page.mouse.move(hit.x + hit.width / 2, hit.y + hit.height / 2);
         await frames(page);

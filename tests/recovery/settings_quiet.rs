@@ -207,11 +207,22 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         hit.size.height >= gpui::px(28. * zoom - 0.5),
                         "segment hit target remains at least 28 points: {hit:?}"
                     );
-                    for (bounds, height, name) in [(track, 24., "track"), (pill, 20., "pill")] {
-                        assert!(
-                            (bounds.size.height - gpui::px(height * zoom)).abs() <= gpui::px(0.5),
-                            "normal one-line segment {name} is {height} points: {bounds:?}"
-                        );
+                    for (bounds, height, inset, name) in
+                        [(track, 24., 2., "track"), (pill, 20., 4., "pill")]
+                    {
+                        if zoom == 1. {
+                            assert!(
+                                (bounds.size.height - gpui::px(height)).abs() <= gpui::px(0.5),
+                                "normal one-line segment {name} is {height} points: {bounds:?}"
+                            );
+                        }
+                        // GPUI rounds absolute near/far edges independently.
+                        for gap in [bounds.top() - hit.top(), hit.bottom() - bounds.bottom()] {
+                            assert!(
+                                (gap - gpui::px(inset * zoom)).abs() <= gpui::px(0.5),
+                                "segment {name} inset is {inset} scaled points: {bounds:?}, hit={hit:?}"
+                            );
+                        }
                         assert!(
                             bounds.top() >= hit.top() && bounds.bottom() <= hit.bottom(),
                             "segment {name} stays within the larger hit target"

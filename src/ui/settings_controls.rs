@@ -12,6 +12,7 @@ use gpui::{div, prelude::*, rgb, App, Context, Entity, SharedString, Window};
 #[derive(Default)]
 pub(crate) struct SettingsControls {
     pub provider: TabFocus,
+    pub view: Option<Entity<kagi_ui_settings::SettingsView>>,
     pub models: TabFocus,
     pub saved_ignore: Option<String>,
     pub ignore_error: Option<String>,

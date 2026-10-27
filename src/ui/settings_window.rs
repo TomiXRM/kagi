@@ -269,7 +269,8 @@ impl SettingsWindow {
                 cx,
             )
             .into_any_element(),
-            1 => settings_view::language_section(owner).into_any_element(),
+            1 => settings_view::language_section(app.settings_controls.view.as_ref())
+                .into_any_element(),
             2 => settings_view::smart_commit_section(
                 owner,
                 &app.smart_commit,

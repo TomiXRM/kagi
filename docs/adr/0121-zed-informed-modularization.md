@@ -153,3 +153,42 @@ Phase A〜C を完走した。最終形:
 
 CI ゲート(blocking): kagi-ui-* から git2/kagi-git 禁止、kagi-ui-* 間の
 横 import 禁止(`invariant-ui-core-layering`)。
+
+## Settings production/browser boundary (#1816, 2026-10-27)
+
+The approved Settings rebuild first extracts a real production control through
+the established constructor/`seed_*` and `EventEmitter` seam, and mounts that
+same entity in the native host and existing `kagi-web` verification host. Only
+then does the same owner expand to the approved eight-pane sidebar design.
+This bounded extraction does not complete S5 or authorize a universal UI/Git
+facade. Separate boundary and visible-rebuild commits when practical.
+
+`kagi-ui-settings` owns rendering and input only; root host glue resolves
+preferences, theme catalogs, provider availability and approvals, performs the
+existing native effects, and seeds effective snapshots. It depends only on
+domain, UI core, GPUI and gpui-component. The browser fixture records the same
+typed intents and supplies deterministic outcomes; it is not a shipping browser
+app or another Settings renderer. Native syntax grammar features are selected
+only for native targets.
+
+Ordinary setters acknowledge live application, not durable persistence:
+the existing store remains the sole writer, with unknown-key preservation,
+flat strings, corrupt-file rescue, repeated-key coalescing and quit flush.
+Do not invent saved-success notifications, optimistic rollback or a new store
+result API. Analyze uses its actual write result: the retained draft and saved
+baseline survive pane changes and close/reopen; a delayed result advances only
+the saved revision, without replacing subsequent edits. Ordinary reseeding
+must not overwrite dirty text. Reset and consent are bound to the invoking
+window and canceled when it closes; first enable stays OFF until consent.
+
+Core's atomic theme/language/zoom reads remain shared. Browser initialization
+uses nonpersisting loaded-state inputs; native persistence/discovery APIs are
+not exposed on wasm. The existing layering gate must also prohibit these host
+calls in the shared view on native builds, where Cargo feature unification
+alone cannot enforce isolation. Native adapters preserve menu, terminal and
+all-window live application and reseed external changes.
+
+The #1816 design records the owner-approved sidebar-vs-toolbar and fixed
+category-hue deviations. Preserve ADR-0223 window chrome/lifecycle. Native and
+browser exercise the same controls; browser evidence cannot replace native
+OS, process, persistence or Git safety verification.

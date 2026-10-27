@@ -2,6 +2,7 @@
 //! shape as `theme::auto_fetch` / `reduce_motion`, kept under `settings` per
 //! the "theme.rs is for theme tokens" rule.
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::{write_setting, Settings};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -15,6 +16,7 @@ pub fn terminal_auto_lock() -> bool {
 }
 
 /// Set + persist the terminal auto-lock flag (`terminal_auto_lock`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_terminal_auto_lock(on: bool) {
     TERMINAL_AUTO_LOCK.store(on, Ordering::Relaxed);
     write_setting(
@@ -24,6 +26,7 @@ pub fn set_terminal_auto_lock(on: bool) {
 }
 
 /// Initialise the terminal auto-lock flag at startup from `settings.json`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_terminal_auto_lock() {
     TERMINAL_AUTO_LOCK.store(Settings::load().terminal_auto_lock(), Ordering::Relaxed);
     klog!("terminal_auto_lock: {}", terminal_auto_lock());

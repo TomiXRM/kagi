@@ -3584,6 +3584,7 @@ dependencies = [
  "kagi-ui-ecosystem",
  "kagi-ui-editor",
  "kagi-ui-file-history",
+ "kagi-ui-settings",
  "markdown",
  "notify",
  "objc2 0.6.4",
@@ -3684,15 +3685,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "kagi-ui-settings"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "kagi-ui-core",
+]
+
+[[package]]
 name = "kagi-web"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
  "gpui",
+ "gpui-component",
  "gpui_platform",
  "gpui_web",
  "kagi-domain",
+ "kagi-ui-core",
+ "kagi-ui-settings",
  "log",
  "wasm-bindgen",
 ]

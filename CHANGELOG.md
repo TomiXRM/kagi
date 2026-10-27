@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Internal
+
+- Introduce the production Settings presentation boundary with a shared language control and typed host events, exercised by native Settings and the deterministic WASM verification host. Native storage/discovery stays outside the shared view; portable core no longer compiles native persistence APIs. This internal boundary proof precedes the full sidebar cutover and does not claim that rebuild complete. (#1816)
+
 ## [0.48.0] - 2026-10-27
 
 ### Added

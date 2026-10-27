@@ -15,6 +15,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 kagi-domain = { path = "../kagi-domain" }
+kagi-ui-core = { path = "../kagi-ui-core" }
+kagi-ui-settings = { path = "../kagi-ui-settings" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
 # Same rev-less zed git deps as the root Cargo.toml (cargo unifies on the
 # workspace Cargo.lock pin).
 gpui = { git = "https://github.com/zed-industries/zed" }

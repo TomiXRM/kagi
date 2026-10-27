@@ -1,4 +1,5 @@
 //! Settings-window geometry stays in the existing preference store.
+#[cfg(not(target_arch = "wasm32"))]
 use super::{read_setting, write_setting};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -10,8 +11,10 @@ pub struct SettingsWindowFrame {
     pub display_uuid: Option<u128>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const FRAME_KEY: &str = "settings_window_frame";
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn parse_frame(value: &str) -> Option<SettingsWindowFrame> {
     let mut parts = value.split(',');
     let frame = SettingsWindowFrame {
@@ -32,6 +35,7 @@ fn parse_frame(value: &str) -> Option<SettingsWindowFrame> {
 }
 
 /// Read the frame, migrating the former position/height keys only once.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn settings_window_frame() -> Option<SettingsWindowFrame> {
     if let Some(value) = read_setting(FRAME_KEY) {
         return parse_frame(&value);
@@ -59,6 +63,7 @@ pub fn settings_window_frame() -> Option<SettingsWindowFrame> {
 }
 
 /// One changing key lets the sole settings store coalesce a bounds burst.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_settings_window_frame(frame: SettingsWindowFrame) {
     let value = match frame.display_uuid {
         Some(uuid) => format!("{},{},{},{uuid:032x}", frame.x, frame.y, frame.height),

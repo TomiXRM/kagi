@@ -35,7 +35,7 @@ use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
 use gpui_component::{Disableable as _, FocusTrapElement as _, IndexPath, Sizable as _};
 
-use super::i18n::{self, Lang, Msg};
+use super::i18n::{self, Msg};
 #[cfg(feature = "gui-e2e")]
 pub use super::keyboard_nav::recorded_switch_help;
 use super::theme::{self, theme};
@@ -59,6 +59,20 @@ impl KagiApp {
     /// the editor has live text to show (the input needs `&mut Window`, which is
     /// unavailable during `render`).
     pub fn ensure_analyze_ignore_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_controls.view.is_none() {
+            let view = cx.new(|_| {
+                kagi_ui_settings::SettingsView::new(kagi_ui_settings::SettingsSnapshot {
+                    language: i18n::lang(),
+                })
+            });
+            cx.subscribe(&view, |app, _, event, cx| match event {
+                kagi_ui_settings::SettingsEvent::LanguageRequested(language) => {
+                    app.set_lang(*language, cx);
+                }
+            })
+            .detach();
+            self.settings_controls.view = Some(view);
+        }
         if self.analyze_ignore_input.is_some() {
             return;
         }
@@ -282,7 +296,7 @@ pub(super) fn render_settings_overlay(
                             &scroll,
                             cx,
                         ))
-                        .child(language_section(&app))
+                        .child(language_section(controls.view.as_ref()))
                         .child(smart_commit_section(
                             &app,
                             &smart,
@@ -1110,39 +1124,10 @@ impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::Rend
 // Language
 // ────────────────────────────────────────────────────────────
 
-pub(super) fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
-    // Two-way segmented choice → gpui-component RadioGroup (stateless). The
-    // on_click index maps back to the Lang ordering below.
-    const LANGS: [(Lang, &str); 2] = [(Lang::En, "English"), (Lang::Ja, "日本語")];
-    let cur = i18n::lang();
-    let selected = LANGS.iter().position(|(l, _)| *l == cur);
-    let app2 = app.downgrade();
-    let chips = RadioGroup::horizontal("settings-language")
-        .children(LANGS.map(|(_, label)| SharedString::from(label)))
-        .selected_index(selected)
-        .on_click(
-            move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
-                if let Some((lang, _)) = LANGS.get(*index) {
-                    let lang = *lang;
-                    let _ = app2.update(cx, |app, cx| app.set_lang(lang, cx));
-                }
-            },
-        );
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(section_header(
-            "settings-language-heading",
-            SharedString::from(Msg::SettingsLanguage.t()),
-        ))
-        .child(settings_group("settings-language-group").child(setting_row(
-            true,
-            SharedString::from(Msg::SettingsInterfaceLang.t()),
-            SharedString::from(Msg::SettingsInterfaceLangDesc.t()),
-            chips.into_any_element(),
-        )))
+pub(super) fn language_section(
+    view: Option<&Entity<kagi_ui_settings::SettingsView>>,
+) -> impl IntoElement {
+    div().w_full().children(view.cloned())
 }
 
 // ────────────────────────────────────────────────────────────

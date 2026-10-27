@@ -23,6 +23,7 @@
 //! `En` and `Ja` arms below.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::settings::{read_setting, write_setting};
 
 pub fn settings_zoom_action(increase: bool, value: &str) -> String {
@@ -165,14 +166,14 @@ pub fn lang() -> Lang {
 }
 
 /// Set the active language and persist it to `settings.json` (key `"lang"`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_lang(l: Lang) {
     ACTIVE.store(l.index(), Ordering::Relaxed);
     write_setting("lang", Some(l.slug()));
 }
 
-/// Set the active language **without** persisting (test helper — keeps the
-/// unit tests off the real `settings.json`).
-#[cfg(test)]
+/// Initialize host-loaded language without reading or persisting settings.
+/// Shared renderers only read `lang()`; native test helpers use this same state.
 pub fn set_lang_no_persist(l: Lang) {
     ACTIVE.store(l.index(), Ordering::Relaxed);
 }
@@ -188,6 +189,7 @@ pub fn set_lang_no_persist(l: Lang) {
 /// 2. persisted `settings.json` `"lang"`,
 /// 3. `LANG` / `LC_ALL` starting with `"ja"` → [`Lang::Ja`],
 /// 4. otherwise [`Lang::En`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn resolve_lang() -> Lang {
     if let Ok(v) = std::env::var("KAGI_LANG") {
         if let Some(l) = Lang::from_slug(&v) {
@@ -211,6 +213,7 @@ pub fn resolve_lang() -> Lang {
 
 /// Initialise the active language at startup (called once from `main`).
 /// Logs `[kagi] lang: <slug>`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_lang() {
     let l = resolve_lang();
     ACTIVE.store(l.index(), Ordering::Relaxed);

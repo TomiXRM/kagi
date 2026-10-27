@@ -14,6 +14,16 @@ Choose the smallest evidence lane that proves the change. Tier A is deterministi
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
 
+The production Settings boundary is also exercised in the browser: build with
+`CARGO_BUILD_JOBS=4 bash scripts/build-web.sh`, then run
+`cd e2e && npx playwright test settings.spec.ts --workers=1`.
+The `?story=settings` verification host mounts `kagi-ui-settings::SettingsView`,
+the same entity used by native Settings; it does not copy its input handlers.
+Its deterministic adapter records typed requests and seeds effective values
+without native persistence. A request count proves dispatch, not native durability.
+Use the script's nightly WASM toolchain (`wasm_thread` requires it), and install
+the pinned Playwright Chromium runtime before testing.
+
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.
 The runner pins stable TLC v1.7.4 and checks its SHA-256 before every Java launch;

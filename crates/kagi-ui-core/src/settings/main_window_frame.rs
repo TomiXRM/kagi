@@ -1,4 +1,5 @@
 //! A single string-valued preference owns main-window geometry.
+#[cfg(not(target_arch = "wasm32"))]
 use super::{read_setting, write_setting};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -10,6 +11,7 @@ pub struct MainWindowFrame {
     pub display: String,
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn parse_frame(raw: &str) -> Option<MainWindowFrame> {
     let mut parts = raw.split(',');
     let frame = MainWindowFrame {
@@ -29,10 +31,12 @@ fn parse_frame(raw: &str) -> Option<MainWindowFrame> {
     .then_some(frame)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn main_window_frame() -> Option<MainWindowFrame> {
     parse_frame(&read_setting("window_frame")?)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_main_window_frame(frame: &MainWindowFrame) {
     write_setting(
         "window_frame",

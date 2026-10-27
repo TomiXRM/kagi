@@ -11,9 +11,10 @@
   </head>
   <body>
     <script type="module">
-      import init, { run } from "./kagi_web.js";
+      import init, { run, settings_observed } from "./kagi_web.js";
       await init();
-      run();
+      run(new URLSearchParams(location.search).get("story") ?? undefined);
+      window.kagiSettingsObserved = () => JSON.parse(settings_observed());
       // Signal readiness to Playwright once the gpui canvas exists.
       const mark = () => {
         if (document.querySelector("canvas")) {

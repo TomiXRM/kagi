@@ -179,7 +179,9 @@ def check_mcp_gpui() -> int:
 
 def check_ui_core_layering() -> int:
     status = _run_rule(_rule("ui-core-layering"))
-    return status | _run_manifest_rule(_manifest_rule("ui-core-layering-manifest"))
+    status |= _run_manifest_rule(_manifest_rule("ui-core-layering-manifest"))
+    status |= _run_rule(_rule("ui-settings-host-boundary"))
+    return status | _run_manifest_rule(_manifest_rule("ui-settings-host-manifest"))
 
 
 def check_plan_verbatim() -> int:

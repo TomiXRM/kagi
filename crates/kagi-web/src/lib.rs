@@ -6,6 +6,7 @@
 //! UI belongs here — never `kagi::git`.
 
 use gpui::{div, prelude::*, px, rems, rgb, SharedString, Window};
+mod settings_fixture;
 
 /// Catalog root: one story per known layout-regression class.
 /// Add a story when a UI bug is fixed so the e2e suite guards it.
@@ -102,7 +103,7 @@ mod web {
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
-    pub fn run() -> Result<(), JsValue> {
+    pub fn run(story: Option<String>) -> Result<(), JsValue> {
         console_error_panic_hook::set_once();
         let _ = console_log::init_with_level(log::Level::Info);
 
@@ -118,7 +119,7 @@ mod web {
             unsafe { std::mem::transmute::<WasmApplication, gpui::Application>(wasm_app) }
         };
 
-        app.run(|cx: &mut gpui::App| {
+        app.run(move |cx: &mut gpui::App| {
             // Browsers have no system fonts we can rely on — embed Inter
             // (same OFL files the native app bundles).
             if let Err(e) = cx.text_system().add_fonts(vec![
@@ -128,12 +129,33 @@ mod web {
                 std::borrow::Cow::Borrowed(
                     include_bytes!("../../../assets/fonts/Inter-Bold.ttf").as_slice(),
                 ),
+                std::borrow::Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/NotoSansJP-Regular.ttf").as_slice(),
+                ),
+                std::borrow::Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/NotoSansJP-Bold.ttf").as_slice(),
+                ),
             ]) {
                 log::warn!("add_fonts failed: {e}");
             }
-            cx.open_window(gpui::WindowOptions::default(), |_, cx| cx.new(|_| Catalog))
-                .expect("open window");
+            gpui_component::init(cx);
+            kagi_ui_core::keyboard_nav::bind_keys(cx);
+            if story.as_deref() == Some("settings") {
+                cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+                    let view = cx.new(|cx| settings_fixture::SettingsFixture::new(window, cx));
+                    cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                })
+                .expect("open Settings verification window");
+            } else {
+                cx.open_window(gpui::WindowOptions::default(), |_, cx| cx.new(|_| Catalog))
+                    .expect("open window");
+            }
         });
         Ok(())
+    }
+
+    #[wasm_bindgen]
+    pub fn settings_observed() -> String {
+        settings_fixture::observed()
     }
 }

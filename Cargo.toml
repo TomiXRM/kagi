@@ -2,7 +2,7 @@
 # ADR-0047 authorizes adding the xtask build/bundle helper as a workspace member.
 # ADR-0072 (v1.0 re-architecture): crates/* host the layered workspace; the pure
 # `kagi-domain` crate is the first extracted layer (strangler migration).
-members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-mcp", "crates/kagi-ui-core", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
+members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-mcp", "crates/kagi-ui-core", "crates/kagi-ui-settings", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
 # Keep host/build and target feature sets separate. GUI test support is enabled
 # only by the explicit `gui-e2e` feature below (ADR-0166).
 resolver = "2"
@@ -32,6 +32,7 @@ kagi-domain = { path = "crates/kagi-domain" }
 kagi-git = { path = "crates/kagi-git" }
 # Shared UI foundation (ADR-0121 C1): klog macro, settings, i18n, theme.
 kagi-ui-core = { path = "crates/kagi-ui-core" }
+kagi-ui-settings = { path = "crates/kagi-ui-settings" }
 # Feature pane crates (ADR-0121 C2+): Git-free; the bin owns the data feed.
 kagi-ui-ecosystem = { path = "crates/kagi-ui-ecosystem" }
 kagi-ui-editor = { path = "crates/kagi-ui-editor" }

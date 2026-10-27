@@ -2544,6 +2544,11 @@ impl KagiApp {
     ///    `SelectItem::title` resolves localized names at render time.
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
+        if let Some(view) = &self.settings_controls.view {
+            view.update(cx, |view, cx| {
+                view.seed_effective(kagi_ui_settings::SettingsSnapshot { language: l }, cx);
+            });
+        }
         klog!("lang: {}", l.slug());
         publish_menus(cx);
         cx.refresh_windows();

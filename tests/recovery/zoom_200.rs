@@ -296,7 +296,10 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                 ] {
                     contained(bounds(cx, win, "cp-body"), bounds(cx, win, id), id);
                 }
-                assert!(bounds(win, "cp-body").bottom() <= bounds(win, "cp-commit-action").top());
+                assert!(
+                    bounds(cx, win, "cp-body").bottom()
+                        <= bounds(cx, win, "cp-commit-action").top()
+                );
                 let template_on =
                     e2e::commit_panel_labels::accessible_pressed("cp-template-toggle");
                 click(cx, win, "cp-template-toggle-hit");

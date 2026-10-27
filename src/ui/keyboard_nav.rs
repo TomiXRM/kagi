@@ -126,13 +126,4 @@ impl FocusSlots {
             .iter()
             .position(|handle| handle.is_focused(window))
     }
-
-    /// Focus `slot` (GUI E2E: Tier A cannot press Tab).
-    #[cfg(feature = "gui-e2e")]
-    pub(crate) fn focus(&self, slot: usize, window: &mut Window, cx: &mut App) {
-        let handle = self.0.borrow().get(slot).cloned();
-        if let Some(handle) = handle {
-            handle.focus(window, cx);
-        }
-    }
 }

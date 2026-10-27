@@ -2,7 +2,7 @@
 use crate::macos::{build_fixture, mount, unmount};
 use gpui::{point, px, size, AnyWindowHandle, Modifiers, MouseButton, VisualTestAppContext};
 use gpui_component::scroll::{ScrollbarHandle, ScrollbarShow};
-use kagi::ui::{e2e, theme};
+use kagi::ui::theme;
 
 /// Restore both disk keys and thread-local/kit presentation state on unwind.
 pub(crate) struct PresentationRestore {

@@ -3908,7 +3908,6 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
 /// simulation — where the default theme falls below 15 for deutans.
 pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang"]);
-    use gpui_component::select::SelectItem;
     use kagi::ui::commands::{self, ThemeColorVision};
     use kagi::ui::i18n::{self, Lang};
     use kagi_ui_core::color_vision::{delta_e, Cvd};

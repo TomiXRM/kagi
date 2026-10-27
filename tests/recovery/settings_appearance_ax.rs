@@ -205,13 +205,13 @@ fn compact_threshold_ax_leg(
         }
         focus_zoom_by_tab(cx, app, window, "compact-threshold-inc", None);
         draw(cx, window);
-        let focused =
+        let focused_bounds =
             crate::settings_controls::bounds(cx, window, "compact-threshold-inc").unwrap();
-        // The actual kit focus target (verified by F19 during traversal), not
-        // merely its row, must clear both the fixed tabs and the body bottom.
+        // The actual production focus target, not merely its row, must clear
+        // both the fixed pane heading and the body bottom.
         crate::recovery_layout::contained(
             body,
-            focused,
+            focused_bounds,
             "keyboard-first threshold focus ring is inside the Settings scroll body",
         );
         keys(cx, window, "space");

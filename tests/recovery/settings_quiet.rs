@@ -111,6 +111,15 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         assert_eq!(probe.role, gpui::Role::Tab);
                         assert_eq!(probe.name, pane.title());
                         assert_eq!(probe.selected, pane == kagi_ui_settings::Pane::General);
+                        let tile = crate::settings_controls::bounds(
+                            cx,
+                            window,
+                            &format!("settings-pane-tile-{}", pane.id()),
+                        )
+                        .expect("actual category tile");
+                        let expected = gpui::px(20. * zoom);
+                        assert!((tile.size.width - expected).abs() <= gpui::px(0.5));
+                        assert!((tile.size.height - expected).abs() <= gpui::px(0.5));
                     }
                     // Sample interiors away from text, rounded corners and
                     // focus rings. The new hierarchy has neutral surfaces, not

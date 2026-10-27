@@ -536,7 +536,8 @@ impl SettingsView {
                 .when(selected, |el| el.bg(rgb(theme().selected)))
                 .child(
                     div()
-                        .size(pt(22.))
+                        .relative()
+                        .size(pt(20.))
                         .flex_shrink_0()
                         .rounded(pt(5.))
                         .flex()
@@ -544,6 +545,17 @@ impl SettingsView {
                         .justify_center()
                         .bg(rgb(if theme().dark { dark } else { light }))
                         .text_color(white())
+                        .when(cfg!(feature = "gui-e2e"), |tile| {
+                            tile.child(self.measured(
+                                format!("settings-pane-tile-{}", pane.id()),
+                                Role::Image,
+                                pane.title().into(),
+                                String::new(),
+                                false,
+                                false,
+                                false,
+                            ))
+                        })
                         .child(Icon::new(icon).with_size(Size::Size(pt(12.4)))),
                 )
                 .child(div().min_w_0().child(pane.title()));

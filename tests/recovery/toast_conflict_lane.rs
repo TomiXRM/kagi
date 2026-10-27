@@ -167,10 +167,12 @@ fn exercise_lane(
             .collect()
     });
     cx.run_until_parked();
+    // Native accessibility is lazy: activate before painting the tree that
+    // supplies the real disclosure Press action.
+    crate::native_ax::activate(cx);
     draw(cx, window);
     let lane = assert_safe_lane(window, layout);
     let collapsed = bounds(window, "toast-container");
-    crate::native_ax::activate(cx);
     let more = i18n::Msg::ToastMore.t().replace("{count}", "2");
     assert!(
         crate::native_ax::press(cx, window, &more),
@@ -178,9 +180,35 @@ fn exercise_lane(
     );
     cx.run_until_parked();
     draw(cx, window);
+    assert_eq!(
+        crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]["expanded"],
+        true,
+        "native disclosure expands the shared Conflict stack"
+    );
     let expanded = bounds(window, "toast-container");
     assert!((expanded.bottom() - collapsed.bottom()).abs() <= px(1.));
     assert!(expanded.top() <= collapsed.top());
+    assert_eq!(assert_safe_lane(window, layout), lane);
+    // Expansion must expose actual older cards, not only flip aria-expanded.
+    // Reach the oldest card through the bounded scroll viewport.
+    let oldest_message = format!("toast-message-{}", errors[0]);
+    e2e::clear_control_bounds(window.window_id(), &oldest_message);
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: gpui::point(expanded.center().x, expanded.bottom() - px(2.)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-600.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    draw(cx, window);
+    let oldest = bounds(window, &oldest_message);
+    assert!(
+        oldest.bottom() > expanded.top() && oldest.top() < expanded.bottom(),
+        "expanded Conflict stack exposes the oldest card through its bounded viewport"
+    );
+    crate::native_ax::node(cx, window, ("toast-dismiss", errors[0]).into());
     assert_eq!(assert_safe_lane(window, layout), lane);
     let shifted = control_bounds(window, layout);
     assert_eq!(

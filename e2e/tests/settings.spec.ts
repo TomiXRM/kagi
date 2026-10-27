@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 
-type Probe = { id: string; x: number; y: number; width: number; height: number; focused: boolean; selected: boolean; disabled: boolean; name: string; value: string };
+type Probe = { id: string; x: number; y: number; width: number; height: number; focused: boolean; selected: boolean; disabled: boolean; name: string; value: string; role: string };
 type Observed = {
-  language: string; theme: string; pane: string; requests: number; events: string[];
+  language: string; theme: string; themeCount: number; pane: string; requests: number; events: string[];
   visible: boolean; unsupported: string[]; pendingSaves: number; pendingReset: boolean; pendingConsent: boolean;
   smartEnabled: boolean; smartProvider: string; smartModel: string | null; graphCompact: boolean; graphLaneCompact: boolean;
   terminalAutoLock: boolean; autoFetch: boolean; reduceMotion: boolean; zoom: number; toolbar: string;
@@ -40,22 +40,42 @@ async function probe(page: Page, id: string) {
 }
 // Geometry comes from the actual production element after layout. Scroll and
 // pointer/keyboard events still go through Chromium/GPUI, not fixture callbacks.
-async function click(page: Page, id: string) {
+async function reveal(page: Page, id: string) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const control = await probe(page, id);
-    const viewport = page.viewportSize()!;
-    const x = control.x + control.width / 2;
-    const y = control.y + control.height / 2;
-    if (x >= 0 && x < viewport.width && y >= 4 && y < viewport.height - 4) {
-      await page.mouse.click(x, y);
+    const size = page.viewportSize()!;
+    const viewport = id.startsWith("settings-pane-")
+      ? { x: 0, y: 0, width: size.width, height: size.height }
+      : await probe(page, "settings-detail-scroll");
+    const top = viewport.y + 1;
+    const bottom = viewport.y + viewport.height - 1;
+    if (control.y < top || control.y + control.height > bottom) {
+      await page.mouse.move(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
+      await page.mouse.wheel(0, control.y < top ? control.y - top : control.y + control.height - bottom);
       await frames(page);
-      return;
+      continue;
     }
-    await page.mouse.move(Math.max(4, Math.min(viewport.width - 4, x)), viewport.height / 2);
-    await page.mouse.wheel(0, y < 4 ? -240 : 240);
-    await frames(page);
+    if (control.role === "RadioButton" && id.startsWith("settings-theme-")) {
+      const strip = await probe(page, "settings-themes-scroll");
+      const left = strip.x + 7;
+      const right = strip.x + strip.width - 7;
+      if (control.x < left || control.x + control.width > right) {
+        await page.mouse.move(strip.x + strip.width / 2, control.y + control.height / 2);
+        await page.mouse.wheel(control.x < left ? control.x - left : control.x + control.width - right, 0);
+        await frames(page);
+        continue;
+      }
+    }
+    expect(control.x).toBeGreaterThanOrEqual(viewport.x - 1);
+    expect(control.x + control.width).toBeLessThanOrEqual(viewport.x + viewport.width + 1);
+    return control;
   }
   throw new Error(`Production control ${id} did not become visible: ${JSON.stringify(await probe(page, id))}`);
+}
+async function click(page: Page, id: string) {
+  const control = await reveal(page, id);
+  await page.mouse.click(control.x + control.width / 2, control.y + control.height / 2);
+  await frames(page);
 }
 async function pane(page: Page, id: string) {
   await click(page, `settings-pane-${id}`);
@@ -142,14 +162,15 @@ async function paintedPixels(page: Page, points: number[][]) {
   return { png, colors };
 }
 
+const luminance = (rgb: number[]) => rgb.reduce((sum, value, channel) => {
+  const s = value / 255;
+  return sum + (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][channel];
+}, 0);
+
 test("pale accent active focus paint contrasts on unselected themes, ON switches and adjacent selections", async ({ page }, info) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 900, height: 740 });
   await boot(page);
-  const luminance = (rgb: number[]) => rgb.reduce((sum, value, channel) => {
-    const s = value / 255;
-    return sum + (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][channel];
-  }, 0);
   for (const appearance of ["apple-light", "apple-dark"]) {
     await host(page, "appearance", appearance);
     await host(page, "accent", "yellow");
@@ -372,6 +393,7 @@ test("short theme captions paint names and long names paint constrained ellipses
   for (const appearance of ["apple-light", "apple-dark"]) {
     await click(page, `settings-theme-${appearance}`);
     for (const slug of ["apple-light", "apple-dark"]) {
+      await reveal(page, `settings-theme-${slug}`);
       const card = await probe(page, `settings-theme-${slug}`);
       const caption = await probe(page, `settings-theme-caption-${slug}`);
       expect(caption.width).toBeGreaterThan(card.width * 0.6);
@@ -380,6 +402,7 @@ test("short theme captions paint names and long names paint constrained ellipses
       expect(ink.width, `${appearance}: ${slug} must paint a readable short name`).toBeGreaterThan(35);
     }
     for (const slug of ["color-vision", "monokai"]) {
+      await reveal(page, `settings-theme-${slug}`);
       const card = await probe(page, `settings-theme-${slug}`);
       const caption = await probe(page, `settings-theme-caption-${slug}`);
       const leaf = await probe(page, `settings-theme-caption-text-${slug}`);
@@ -402,7 +425,7 @@ for (const [language, appearance, zoom] of [
   ["ja", "apple-dark", 1.67],
 ] as const) {
   test(`composite numeric controls own their complete rows at 715px: ${language} ${zoom}`, async ({ page }, info) => {
-    await page.setViewportSize({ width: 715, height: 1064 });
+    await page.setViewportSize({ width: 715, height: 640 });
     await boot(page);
     await host(page, "language", language);
     await host(page, "appearance", appearance);
@@ -429,6 +452,8 @@ for (const [language, appearance, zoom] of [
     const zoomRow = control("settings-zoom-row");
     const thresholdRow = control("settings-threshold-row");
     const motionRow = control("settings-motion-row");
+    contains(viewport, zoomRow);
+    contains(viewport, thresholdRow);
     for (const [row, ids] of [
       [zoomRow, ["settings-zoom-help", "zoom-dec", "zoom-value", "zoom-inc"]],
       [thresholdRow, ["settings-threshold-help", "compact-threshold-dec", "compact-threshold-value", "compact-threshold-inc", "compact-threshold-help"]],
@@ -599,7 +624,7 @@ for (const language of ["en", "ja"]) {
         test.setTimeout(120_000);
         const errors: string[] = [];
         page.on("pageerror", error => errors.push(String(error)));
-        await page.setViewportSize(layout === "normal" ? { width: 900, height: 740 } : { width: 715, height: 600 });
+        await page.setViewportSize(layout === "normal" ? { width: 900, height: 740 } : { width: 715, height: 640 });
         await boot(page);
         await host(page, "language", language);
         await host(page, "appearance", theme);
@@ -610,11 +635,21 @@ for (const language of ["en", "ja"]) {
           const navigation = state.controls.filter(control => panes.some(pane => control.id === `settings-pane-${pane}`));
           expect(navigation).toHaveLength(8);
           expect(navigation.filter(control => control.selected).map(control => control.id)).toEqual([`settings-pane-${destination}`]);
+          const carouselIds = new Set(state.controls
+            .filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"))
+            .flatMap(control => {
+              const slug = control.id.slice("settings-theme-".length);
+              return [control.id, `${control.id}-focus-ring`, `settings-theme-caption-${slug}`, `settings-theme-caption-text-${slug}`];
+            }));
           for (const control of state.controls) {
             expect(control.width, control.id).toBeGreaterThan(0);
             expect(control.height, control.id).toBeGreaterThan(0);
-            expect(control.x, control.id).toBeGreaterThanOrEqual(-1);
-            expect(control.x + control.width, control.id).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+            // Horizontal content is intentionally laid out beyond its clipped
+            // viewport; the carousel consumer below reveals every actual card.
+            if (!carouselIds.has(control.id)) {
+              expect(control.x, control.id).toBeGreaterThanOrEqual(-1);
+              expect(control.x + control.width, control.id).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+            }
           }
           await info.attach(`${destination}.png`, { body: await page.screenshot(), contentType: "image/png" });
         }
@@ -627,4 +662,99 @@ for (const language of ["en", "ja"]) {
       });
     }
   }
+}
+
+for (const [language, appearance, zoom] of [
+  ["en", "apple-light", 1], ["ja", "apple-dark", 1],
+  ["en", "apple-light", 1.67], ["ja", "apple-dark", 1.67],
+] as const) {
+  test(`horizontal theme chooser at 715x640: ${language} ${zoom}`, async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 715, height: 640 });
+    await boot(page);
+    await host(page, "language", language);
+    await host(page, "appearance", appearance);
+    await host(page, "zoom", String(zoom));
+    const initial = await observed(page);
+    const cards = initial.controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-")).sort((a, b) => a.x - b.x);
+    expect(cards).toHaveLength(initial.themeCount);
+    expect(cards.length).toBeGreaterThan(2);
+    const inStrip = async (control: Probe, margin = 0) => {
+      const strip = await probe(page, "settings-themes-scroll");
+      expect(control.x - margin).toBeGreaterThanOrEqual(strip.x);
+      expect(control.x + control.width + margin).toBeLessThanOrEqual(strip.x + strip.width);
+      expect(control.y - margin).toBeGreaterThanOrEqual(strip.y);
+      expect(control.y + control.height + margin).toBeLessThanOrEqual(strip.y + strip.height);
+    };
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    await info.attach("appearance-initial.png", { body: await page.screenshot(), contentType: "image/png" });
+    await click(page, `settings-theme-${initial.theme}`);
+    const beforeKeys = (await observed(page)).requests;
+    await page.keyboard.press("Home");
+    await frames(page);
+    for (let index = 0; index < cards.length; index++) {
+      const card = await probe(page, cards[index].id);
+      expect(card.focused).toBe(true);
+      expect((await observed(page)).theme).toBe(initial.theme);
+      await inStrip(card, 7);
+      const ring = await probe(page, `${card.id}-focus-ring`);
+      await inStrip(ring);
+      if (index === 0 || index === cards.length - 1) {
+        const edges = (depth: number) => [[ring.x + depth, ring.y + ring.height / 2], [ring.x + ring.width - depth, ring.y + ring.height / 2], [ring.x + ring.width / 2, ring.y + depth], [ring.x + ring.width / 2, ring.y + ring.height - depth]];
+        const paint = await paintedPixels(page, [3.5, 2.5, 4.5, 0.5, 1.5].flatMap(edges));
+        for (let edge = 0; edge < 4; edge++) {
+          const background = paint.colors[edge];
+          for (const layer of [1, 2]) paint.colors[layer * 4 + edge].forEach((value, channel) => expect(Math.abs(value - background[channel])).toBeLessThanOrEqual(2));
+          for (const layer of [3, 4]) {
+            const a = luminance(background), b = luminance(paint.colors[layer * 4 + edge]);
+            expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), `${card.id} complete two-pixel edge ${edge}`).toBeGreaterThanOrEqual(3);
+          }
+        }
+        await info.attach(index === 0 ? "first-theme-focus.png" : "last-theme-focus.png", { body: paint.png, contentType: "image/png" });
+      }
+      if (index + 1 < cards.length) { await page.keyboard.press("ArrowRight"); await frames(page); }
+    }
+    expect((await observed(page)).requests).toBe(beforeKeys);
+    await page.keyboard.press("Home"); await frames(page);
+    expect((await probe(page, cards[0].id)).focused).toBe(true);
+    await page.keyboard.press("End"); await frames(page);
+    expect((await probe(page, cards.at(-1)!.id)).focused).toBe(true);
+    await page.keyboard.press("Space"); await frames(page);
+    expect((await observed(page)).theme).toBe(cards.at(-1)!.id.slice("settings-theme-".length));
+    await click(page, `settings-theme-${initial.theme}`);
+    let strip = await probe(page, "settings-themes-scroll");
+    const firstX = (await probe(page, cards[0].id)).x;
+    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
+    await page.mouse.wheel(400, 0); await frames(page);
+    const browsedX = (await probe(page, cards[0].id)).x;
+    expect(browsedX).toBeLessThan(firstX);
+    await host(page, "reseed");
+    expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
+    const beforeVertical = (await observed(page)).scrollY;
+    await page.mouse.wheel(0, 120); await frames(page);
+    expect((await observed(page)).scrollY).toBeLessThan(beforeVertical);
+    expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
+    await page.mouse.wheel(0, -100000); await frames(page);
+    await pane(page, "graph"); await pane(page, "appearance");
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    await host(page, "close"); await host(page, "reopen");
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    await page.setViewportSize({ width: 640, height: 640 }); await frames(page);
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    await page.setViewportSize({ width: 715, height: 640 }); await frames(page);
+    for (const destination of panes) {
+      await pane(page, destination);
+      const navigation = (await observed(page)).controls.filter(control => panes.some(pane => control.id === `settings-pane-${pane}`));
+      expect(navigation).toHaveLength(8);
+      expect(navigation.filter(control => control.selected).map(control => control.id)).toEqual([`settings-pane-${destination}`]);
+      for (const control of navigation) {
+        expect(control.y).toBeGreaterThanOrEqual(0);
+        expect(control.y + control.height).toBeLessThanOrEqual(640);
+      }
+      await info.attach(`${destination}-compact.png`, { body: await page.screenshot(), contentType: "image/png" });
+    }
+    await pane(page, "appearance");
+    await reveal(page, "settings-theme-guide");
+    await info.attach("appearance-lower.png", { body: await page.screenshot(), contentType: "image/png" });
+  });
 }

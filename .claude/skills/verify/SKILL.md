@@ -42,6 +42,23 @@ Long names also require the painted `StyledText` layout's actual ellipsis text
 and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
 Do not replace this with the original full label: a correct 138px truncation
 measurement can still be hard-clipped if the final text leaf is allocated 165px.
+The compact theme chooser is a horizontal radio group, not a value slider.
+Before native compilation, run the scoped browser cases:
+`npx playwright test settings.spec.ts --workers=1 --grep 'horizontal theme chooser|short theme captions|composite numeric controls|pale accent active focus'`.
+The new chooser matrix uses715×640 at EN/JA and100%/167%. Compare measured
+RadioButton count with the host catalog, visit every card using real arrow keys,
+and sample both pixels of all four first/last focus-ring edges from one PNG.
+Home/End and Space retain their focus/selection semantics. Real horizontal
+wheel browsing must survive unchanged seeds; vertical wheel over the strip
+must still move the form without changing its horizontal position. Check
+selected reveal after pane return, host reopen and actual viewport resize,
+all eight sidebar destinations, and lower Appearance content. Caption tests
+must first reveal each real card rather than sampling offscreen grid coordinates.
+Native `settings_window_screen_fit` additionally bounds content height to640;
+its existing saved-frame/display/position and final-control reachability
+assertions remain. The original tall-grid captures are historical, not approval
+of the compact chooser.
+
 `settings_quiet` also moves the pointer onto each selected sidebar row and
 samples native Metal pixels, including same-height pane transitions. It checks
 the selected language segment while hovered against the approved white
@@ -62,8 +79,8 @@ same image. Hover or state changes require a fresh capture; do not raise test
 deadlines to accommodate a separate GPU screenshot for every sampled pixel.
 Composite numeric controls also need the lower Appearance viewport, not only the
 initial pane image. From `e2e/`, run
-`npx playwright test settings.spec.ts --workers=1 --grep 'composite numeric controls|en apple-light narrow:|ja apple-dark zoom167:'`.
-The focused cases use actual715px production rendering at EN Apple Light100%
+`npx playwright test settings.spec.ts --workers=1 --grep 'composite numeric controls|horizontal theme chooser'`.
+The focused cases use actual715×640 production rendering at EN Apple Light100%
 and JA Apple Dark167%. They require the minus/value/plus unit to stay horizontal,
 the entire unit and conversion helper to fit their owning row, and successive
 rows not to overlap. At narrow widths the whole unit may move below its label.

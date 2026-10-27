@@ -326,6 +326,7 @@ impl SettingsFixture {
             }
             "reopen" => {
                 self.visible = true;
+                self.view.update(cx, |view, cx| view.prepare_open(cx));
                 window.focus(&self.focus, cx);
             }
             "appearance" => {
@@ -403,9 +404,10 @@ impl SettingsFixture {
             "id": probe.id, "x": f32::from(probe.bounds.origin.x), "y": f32::from(probe.bounds.origin.y),
             "width": f32::from(probe.bounds.size.width), "height": f32::from(probe.bounds.size.height),
             "focused": probe.focused, "selected": probe.selected, "disabled": probe.disabled,
-            "name": probe.name, "value": probe.value,
+            "name": probe.name, "value": probe.value, "role": format!("{:?}", probe.role),
         })).collect();
         json!({ "language": self.snapshot.language.slug(), "theme": self.snapshot.theme_slug.as_ref(),
+            "themeCount": self.snapshot.themes.len(),
             "pane": view.pane().id(), "requests": self.requests.len(), "events": self.requests,
             "visible": self.visible, "unsupported": self.unsupported, "pendingSaves": self.pending_saves.len(),
             "pendingReset": self.pending_reset.is_some(), "pendingConsent": self.pending_consent,

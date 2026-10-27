@@ -273,7 +273,11 @@ pub fn scenario_settings_provider_keys(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS settings_provider_keys EN/JA Light/Dark 100/167%, 0/1/20 models");
 }
 
-pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
+pub(crate) fn reveal(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    name: &str,
+) -> gpui::Bounds<gpui::Pixels> {
     draw(cx, window);
     let mut bounds = self::bounds(cx, window, name).unwrap();
     let viewport = if name.starts_with("settings-pane-") || probe(cx, window, name).is_none() {
@@ -294,11 +298,11 @@ pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name
                 position: viewport.center(),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(
                     gpui::px(0.),
-                    gpui::px(if bounds.top() < viewport.top() {
-                        500.
+                    if bounds.top() < viewport.top() {
+                        viewport.top() - bounds.top()
                     } else {
-                        -500.
-                    }),
+                        viewport.bottom() - bounds.bottom()
+                    },
                 )),
                 touch_phase: gpui::TouchPhase::Moved,
                 ..Default::default()
@@ -313,6 +317,42 @@ pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name
         i18n::lang(),
         theme::zoom()
     );
+    if probe(cx, window, name).is_some_and(|probe| {
+        probe.role == gpui::Role::RadioButton && name.starts_with("settings-theme-")
+    }) {
+        let strip = self::bounds(cx, window, "settings-themes-scroll").unwrap();
+        let margin = gpui::px(7.);
+        for _ in 0..20 {
+            let delta = if bounds.left() < strip.left() + margin {
+                strip.left() + margin - bounds.left()
+            } else if bounds.right() > strip.right() - margin {
+                strip.right() - margin - bounds.right()
+            } else {
+                break;
+            };
+            cx.simulate_event(
+                window,
+                gpui::ScrollWheelEvent {
+                    position: gpui::point(strip.center().x, bounds.center().y),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(delta, gpui::px(0.))),
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            draw(cx, window);
+            bounds = self::bounds(cx, window, name).unwrap();
+        }
+        assert!(
+            bounds.left() >= strip.left() + margin
+                && bounds.right() <= strip.right() - margin,
+            "{name} and its focus clearance are horizontally reachable: {bounds:?} in {strip:?}"
+        );
+    }
+    bounds
+}
+
+pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
+    let bounds = reveal(cx, window, name);
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
     draw(cx, window);
 }

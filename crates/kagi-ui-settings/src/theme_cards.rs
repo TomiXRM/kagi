@@ -1,5 +1,6 @@
 //! Palette-derived theme choices; preview colors never substitute invented art.
 use super::{controls::pt, *};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use kagi_ui_core::{theme::theme, tooltip::HoverTooltip as _};
 
 impl SettingsView {
@@ -13,21 +14,59 @@ impl SettingsView {
             .iter()
             .position(|theme| theme.slug.as_ref() == self.snapshot.theme_slug.as_ref())
             .unwrap_or(0);
-        if !ids.iter().any(|id| {
+        let focused_index = ids.iter().position(|id| {
             self.focus
                 .get(id)
                 .is_some_and(|focus| focus.is_focused(window))
-        }) {
+        });
+        if focused_index.is_none() {
             self.groups.insert("themes".into(), selected_index);
+        }
+        let selection_changed = self.theme_reveal.as_ref().is_none_or(
+            |(slug, selected, _, _, _)| {
+                slug != &self.snapshot.theme_slug || *selected != selected_index
+            },
+        );
+        let target = if selection_changed {
+            selected_index
+        } else {
+            focused_index.unwrap_or(selected_index)
+        };
+        if self.theme_reveal.as_ref().is_none_or(
+            |(slug, selected, focused, zoom, count)| {
+                slug != &self.snapshot.theme_slug
+                    || *selected != selected_index
+                    || *focused != focused_index
+                    || *zoom != self.snapshot.zoom
+                    || *count != themes.len()
+            },
+        ) {
+            self.theme_scroll.scroll_to_item(target);
+            self.theme_reveal = Some((
+                self.snapshot.theme_slug.clone(),
+                selected_index,
+                focused_index,
+                self.snapshot.zoom,
+                themes.len(),
+            ));
         }
         let mut cards = div()
             .id("settings-theme-cards")
             .role(Role::RadioGroup)
             .aria_label(Msg::SettingsTheme.t())
             .flex()
-            .flex_wrap()
+            .flex_nowrap()
+            .items_start()
             .gap(pt(12.))
-            .min_w_0();
+            .min_w_0()
+            .w_full()
+            .overflow_x_scroll()
+            .track_scroll(&self.theme_scroll)
+            .map(|mut strip| {
+                // Vertical gestures belong to the containing Settings form.
+                strip.style().restrict_scroll_to_axis = Some(true);
+                strip
+            });
         for (index, palette) in themes.iter().enumerate() {
             let selected = palette.slug.as_ref() == self.snapshot.theme_slug.as_ref();
             let rgb_tuple =
@@ -198,12 +237,62 @@ impl SettingsView {
                             .child(Msg::SettingsThemeContrastWarning.t()),
                     )
                 });
-            cards = cards.child(card.hover_tooltip(
-                SharedString::from(format!("settings-theme-name-{}", palette.slug)),
-                name,
-            ));
+            // The scroll item includes the complete 2px ring and 3px gap.
+            // A transparent wrapper is not another visual card.
+            cards = cards.child(
+                div()
+                    .w(pt(152.) + px(14.))
+                    .max_w_full()
+                    .flex_shrink_0()
+                    .p(px(7.))
+                    .child(card.hover_tooltip(
+                        SharedString::from(format!("settings-theme-name-{}", palette.slug)),
+                        name,
+                    )),
+            );
         }
-        cards.into_any_element()
+        let viewport = self.theme_viewport.clone();
+        let scroll = self.theme_scroll.clone();
+        let resize = canvas(
+            move |bounds, window, _| {
+                if viewport.replace(bounds.size) != bounds.size {
+                    scroll.scroll_to_item(target);
+                    window.on_next_frame(|window, _| window.refresh());
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let persistent =
+            gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling;
+        div()
+            .id("settings-themes-area")
+            .relative()
+            .min_w_0()
+            .w_full()
+            .when(persistent, |area| area.pb(px(16.)))
+            .child(cards)
+            .child(resize)
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    "settings-themes-scroll".into(),
+                    Role::Group,
+                    Msg::SettingsTheme.t().into(),
+                    String::new(),
+                    false,
+                    false,
+                    false,
+                )
+            }))
+            .child(
+                Scrollbar::horizontal(&self.theme_scroll)
+                    .id("settings-themes-scrollbar")
+                    .when(persistent, |bar| bar.scrollbar_show(ScrollbarShow::Always)),
+            )
+            .into_any_element()
     }
 }
 fn contrast(a: u32, b: u32) -> f32 {

@@ -46,6 +46,10 @@ pub struct SettingsView {
     revealed: BTreeMap<String, Rc<std::cell::Cell<bool>>>,
     groups: BTreeMap<String, usize>,
     scroll: ScrollHandle,
+    theme_scroll: ScrollHandle,
+    // Last presentation request, not another source of selected-theme state.
+    theme_reveal: Option<(SharedString, usize, Option<usize>, f32, usize)>,
+    theme_viewport: Rc<std::cell::Cell<Size<Pixels>>>,
     detail_slot: Option<DetailSlot>,
     content_measure: Option<ContentMeasure>,
     detail_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
@@ -79,6 +83,9 @@ impl SettingsView {
             revealed: BTreeMap::new(),
             groups: BTreeMap::new(),
             scroll: ScrollHandle::new(),
+            theme_scroll: ScrollHandle::new(),
+            theme_reveal: None,
+            theme_viewport: Rc::default(),
             detail_slot: None,
             content_measure: None,
             chrome_heights: Rc::new(RefCell::new((px(0.), px(0.)))),
@@ -94,10 +101,17 @@ impl SettingsView {
     pub fn pane(&self) -> Pane {
         self.pane
     }
+    /// Reset presentation on host reopen without replacing preferences or drafts.
+    pub fn prepare_open(&mut self, cx: &mut Context<Self>) {
+        self.scroll.set_offset(point(px(0.), px(0.)));
+        self.theme_reveal = None;
+        cx.notify();
+    }
     pub fn seed_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
         if self.pane != pane {
             self.pane = pane;
             self.scroll.set_offset(point(px(0.), px(0.)));
+            self.theme_reveal = None;
             cx.notify();
         }
     }
@@ -265,6 +279,10 @@ impl Render for SettingsView {
                             .min_w_0()
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll)
+                            .map(|mut detail| {
+                                detail.style().restrict_scroll_to_axis = Some(true);
+                                detail
+                            })
                             .p(controls::pt(18.))
                             .child(content),
                     )

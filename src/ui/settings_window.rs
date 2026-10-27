@@ -9,6 +9,8 @@ use gpui::{
 };
 use gpui_component::Root;
 
+const SETTINGS_HEIGHT: f32 = 640.;
+
 #[derive(Default)]
 struct SettingsWindowHandle(Option<WindowHandle<Root>>);
 impl Global for SettingsWindowHandle {}
@@ -81,9 +83,11 @@ fn window_options(cx: &App) -> WindowOptions {
         })
         .or_else(|| cx.primary_display());
     let visible = display.as_ref().map(|display| display.visible_bounds());
-    let max_height = visible.map_or(720., |bounds| f32::from(bounds.size.height));
+    let max_height = visible
+        .map_or(SETTINGS_HEIGHT, |bounds| f32::from(bounds.size.height))
+        .min(SETTINGS_HEIGHT);
     let height = saved
-        .map_or(720., |frame| frame.height)
+        .map_or(SETTINGS_HEIGHT, |frame| frame.height)
         .clamp(500_f32.min(max_height), max_height);
     let width = visible.map_or(px(715.), |bounds| px(715.).min(bounds.size.width));
     let mut bounds = Bounds::centered(None, size(width, px(height)), cx);
@@ -387,7 +391,9 @@ fn fit_content(window: &Window, height: f32, cx: &App) {
         let content: NSRect = msg_send![view, frame];
         let visible: NSRect = msg_send![screen, visibleFrame];
         let inset = current.size.height - content.size.height;
-        let max_content = (visible.size.height - inset).max(0.);
+        let max_content = (visible.size.height - inset)
+            .max(0.)
+            .min(f64::from(SETTINGS_HEIGHT));
         let content_height = f64::from(height).clamp(500_f64.min(max_content), max_content);
         let mut fitted = current;
         fitted.size.width =

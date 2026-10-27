@@ -271,6 +271,7 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                 assert!(!controls.is_empty(), "{} has production content", pane.id());
                 let required: &[&str] = match pane {
                     kagi_ui_settings::Pane::Appearance => &[
+                        "settings-themes-scroll",
                         "settings-interface-group",
                         "settings-theme-folder-group",
                         "settings-theme-folder-open",
@@ -338,7 +339,33 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                         );
                     }
                 }
+                let theme_ids: Vec<_> = controls
+                    .iter()
+                    .filter(|control| {
+                        control.role == gpui::Role::RadioButton
+                            && control.id.starts_with("settings-theme-")
+                    })
+                    .map(|control| control.id.clone())
+                    .collect();
+                if pane == kagi_ui_settings::Pane::Appearance {
+                    assert_eq!(
+                        theme_ids.len(),
+                        cx.read(|cx| view.read(cx).snapshot().themes.len()),
+                        "every catalog theme remains an actual production choice"
+                    );
+                }
                 for control in controls {
+                    if let Some(theme_id) = theme_ids.iter().find(|id| {
+                        let slug = id.strip_prefix("settings-theme-").unwrap();
+                        control.id == **id
+                            || control.id == format!("{id}-focus-ring")
+                            || control.id == format!("settings-theme-caption-{slug}")
+                            || control.id == format!("settings-theme-caption-text-{slug}")
+                    }) {
+                        // Preserve the actual containment assertion, but first
+                        // reveal this horizontal child with a real wheel event.
+                        crate::settings_controls::reveal(cx, window, theme_id);
+                    }
                     let rect = bounds(cx, window, &control.id).unwrap();
                     assert!(
                         rect.left() >= viewport.left() - px(1.),

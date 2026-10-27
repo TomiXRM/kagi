@@ -112,7 +112,7 @@ impl KagiApp {
 
     pub fn ensure_analyze_ignore_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(view) = &self.settings_controls.view {
-            view.read(cx).scroll_handle().set_offset(Default::default());
+            view.update(cx, |view, cx| view.prepare_open(cx));
             self.seed_settings(cx);
             return;
         }

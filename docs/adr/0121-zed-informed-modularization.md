@@ -193,14 +193,16 @@ category-hue deviations. Preserve ADR-0223 window chrome/lifecycle. Native and
 browser exercise the same controls; browser evidence cannot replace native
 OS, process, persistence or Git safety verification.
 
-The current native implementation retains ADR-0223's legacy 715-point fixed
-width and content-driven height (500-point floor where the display permits,
-visible-screen ceiling). This is preservation of the existing host, not a new
-owner-approved sizing decision. The proposed 900×720 figure is a roomy design
-reference; a 900-pixel browser capture does not prove that native geometry was
-implemented. Native evidence must report its actual dimensions and high-zoom
-scroll reachability separately. Widening the window is not a substitute for
-correct viewport or notification containment.
+The native implementation retains ADR-0223's 715-point fixed width. The owner's
+subsequent compact Settings request explicitly changes initial/content-driven
+height to a 640-point ceiling, retaining the 500-point floor where possible and
+visible-screen clamping, and changes the theme grid to a horizontal chooser.
+Existing frame position/display restoration and storage remain authoritative;
+previous auto-saved tall heights are bounded rather than deleting their keys.
+The original proposed 900×720 figure is a roomy reference, not current native
+geometry. Browser captures do not prove native sizing: native evidence reports
+actual dimensions and high-zoom scroll reachability separately. Widening the
+window is not a substitute for correct viewport or notification containment.
 The shared root takes the flex remainder below fixed host chrome and permits
 height shrinkage. Its actual scroll viewport, all sidebar destinations and
 notification slot must stay inside the host frame; a full-height body below

@@ -30,6 +30,11 @@ fn assert_screen_fit(cx: &mut VisualTestAppContext, settings: AnyWindowHandle, s
         let frame = window.window_bounds().get_bounds();
         let visible = window.display(cx).expect("Settings display").visible_bounds();
         assert!(
+            window.viewport_size().height <= gpui::px(640.),
+            "compact Settings content height stays capped after {step}: {:?}",
+            window.viewport_size()
+        );
+        assert!(
             frame.left() >= visible.left() - gpui::px(1.)
                 && frame.top() >= visible.top() - gpui::px(1.)
                 && frame.right() <= visible.right() + gpui::px(1.)

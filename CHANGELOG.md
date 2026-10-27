@@ -7,9 +7,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
-- Rebuild Settings as eight stable sidebar panes: Appearance, Graph, Editor, Terminal, Network & Sync, Smart Commit, Analyze and General. Retain every existing preference and native effect; use fixed category tiles, palette-driven theme cards, separate keyboard focus/selection/ON states, and wrapping EN/JA controls. Preserve native window chrome, the 715-point fixed width and content-driven height, and Analyze drafts across pane changes and reopening. (#1814, #1816)
+- Rebuild Settings as eight stable sidebar panes: Appearance, Graph, Editor, Terminal, Network & Sync, Smart Commit, Analyze and General. Retain every existing preference and native effect; use fixed category tiles, palette-driven theme cards, separate keyboard focus/selection/ON states, and wrapping EN/JA controls. Preserve native window chrome, the 715-point fixed width, and Analyze drafts across pane changes and reopening. (#1814, #1816)
   - Preserve selected sidebar rows and ON controls while hovered. Settings segments use raised white/light-gray selection in Apple Light/Dark, with a 24-point visible track and 20-point pill inside at least a 28-point hit target; long labels can grow rather than clip.
   - Keep keyboard focus separate from selection and ON state with a translucent, background-adjusted ring that maintains at least 3:1 composited contrast, including pale system accents.
+  - Browse themes in one horizontal, keyboard-reachable row instead of a tall grid. Reveal selected/focused cards without undoing manual browsing, retain complete focus rings and long-name ellipses, and keep vertical form scrolling independent. Start and bound the native Settings content height at 640 points while preserving saved position/display information and the existing smaller-content fit.
 
 ### Internal
 

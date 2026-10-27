@@ -22,10 +22,12 @@ missing selections display Appearance, but a missing preference is not written
 merely by opening Settings. Existing legacy selections migrate once.
 Disconnected-display positions recenter. Restoring height avoids an unnecessary
 initial resize on every reopen.
-The selected pane determines content height through real
-layout, with a 500-logical-point floor when the display permits it and the
-current display's visible frame as the ceiling. Oversized pages remain reachable
-through one persistent system-scrollbar owner. Width does not scale with UI zoom.
+The selected pane determines content height through real layout, with a
+500-logical-point floor when the display permits it. The owner's compact
+Settings amendment below sets the initial height and content-height ceiling
+to 640 points, further bounded by the current display's visible frame.
+Oversized pages remain reachable through the existing vertical scrollbar.
+Width does not scale with UI zoom.
 Both position and height are saved on bounds changes as one flat-string
 settings_window_frame value ("x,y,content-height[,display-uuid]"), not alternating
 preference keys. Display UUID is optional for existing frames and recorded as
@@ -176,4 +178,43 @@ and requires the chosen position to survive until a pane/content/zoom change.
 The pane-transition regression starts from the actual selected pane's successor:
 clicking an already-selected Appearance pane is not a layout transition and must
 not undo a user's unchanged manual position.
+
+## Amendment — 2026-10-27: compact Appearance theme chooser (#1816)
+
+The owner requests a horizontal theme chooser instead of showing every theme
+in a multi-row grid, and a shorter default Settings window. Extend the existing
+`SettingsView::theme_cards` and native `SettingsWindow`; do not introduce a
+second renderer, preference owner, carousel manager or stored scroll position.
+The shared/native/browser boundary in ADR-0121 is unchanged.
+
+The role remains an open-density Settings choice. Keep the approved palette
+cards, captions, selected checkmark and fixed category tiles; the multi-row
+grid is no longer the layout reference. Reuse the existing Editor tab-strip
+horizontal scrollbar and nearest-item reveal pattern. This is a continuously
+scrollable radio group, not a numeric slider, auto-playing carousel or pager.
+Apple's Scroll views guidance says: “It's alright to place a horizontal scroll
+view inside a vertical scroll view (or vice versa), however.”
+
+State contract: rest/hover/pressed use the existing card and activation handler;
+selection remains the effective theme, while focus is independent. Arrow and
+Home/End navigation reveals the focused card including its complete ring;
+Space/Return applies that choice. Selected-theme reveal runs on opening,
+returning to Appearance, changed selection/catalog/zoom and viewport resize,
+not ordinary redraws or manual horizontal browsing. First and last cards keep
+local ring clearance. Horizontal gestures and the scrollbar browse themes;
+vertical wheel input still scrolls the containing form. Full names, constrained
+caption ellipses, palette swatches and low-contrast explanations remain.
+Theme loading/error and unavailable filesystem actions remain native-adapter
+states, not new carousel states; the normal catalog contains built-ins.
+There is no new destructive, approval, IME or persistence behavior.
+
+Both initial/restored height and content fitting are bounded to 640 points
+(or the smaller visible display area), retaining the existing 500-point floor
+where possible and content-driven shrinkage. Previously auto-saved tall heights
+are clamped, not discarded; position, display identity, unknown settings and
+normal bounds/quit flushing remain intact. The window was already non-resizable,
+so this does not remove user resizing. Keep its 715-point width and native chrome.
+Browser evidence must exercise 715×640 at EN/JA and 100%/167%, all eight sidebar
+destinations, horizontal endpoints, selected/focused reveal, manual-scroll
+retention, captions and lower Appearance rows before another native build.
 

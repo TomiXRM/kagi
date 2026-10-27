@@ -480,6 +480,15 @@ fn run(cx: &mut VisualTestAppContext, lifecycle: bool) {
             )));
             app.update(cx, |a, cx| a.pr_mode_open(&pr_at(&head), cx));
             wait_loaded(cx, &app, &head);
+            if dimensions == (1392., 883.) && zoom == 1. {
+                crate::toast_stack_budget::assert_nested_feedback_host(
+                    cx,
+                    &app,
+                    win,
+                    "pr-mode-center-pane",
+                    true,
+                );
+            }
             for view in [PrView::Overview, PrView::Review, PrView::Diff] {
                 app.update(cx, |a, cx| {
                     if view == PrView::Diff {

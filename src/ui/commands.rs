@@ -3224,25 +3224,7 @@ impl KagiApp {
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => {
                 let audience = super::toast_stack::ToastAudience::Settings;
-                let lane = self
-                    .toast_stack
-                    .as_ref()
-                    .is_some_and(|stack| stack.read(cx).persistent_lane_open(audience))
-                    .then(|| {
-                        self.render_toasts(
-                            window,
-                            super::busy::ToastPlacement::PersistentLane,
-                            audience,
-                            cx,
-                        )
-                    })
-                    .flatten();
-                let transient = self.render_toasts(
-                    window,
-                    super::busy::ToastPlacement::Transient,
-                    audience,
-                    cx,
-                );
+                let notifications = self.render_toasts(window, audience, cx);
                 Some(super::settings_view::render_settings_overlay(
                     cx.entity(),
                     self.theme_select.clone(),
@@ -3254,8 +3236,7 @@ impl KagiApp {
                     self.analyze_ignore_dirty(cx),
                     self.analyze_reset_alert().cloned(),
                     self.settings_scroll.clone(),
-                    lane,
-                    transient,
+                    notifications,
                     window,
                     cx,
                 ))

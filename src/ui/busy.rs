@@ -10,7 +10,7 @@ use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::{self, theme};
 use super::toast_stack::ToastAudience;
-use super::{render_overlay, FooterStatus, KagiApp, ToastKind};
+use super::{render_overlay, KagiApp};
 
 const TICK: Duration = Duration::from_millis(250);
 
@@ -30,14 +30,23 @@ impl BusyIdentity {
     }
 }
 
-/// Match the footer's content box, excluding its unscaled dark-chrome border.
-fn footer_control_height() -> gpui::Pixels {
-    theme::scaled_px(super::STATUS_BAR_H)
-        - gpui::px(if theme().uses_neutral_dark_chrome() {
-            1.
-        } else {
-            0.
-        })
+/// Keep the kit's existing Skip/clone focus target visible in the shared flow.
+#[derive(gpui::IntoElement)]
+struct BusyAction(Button, &'static str, gpui::ScrollHandle);
+
+impl gpui::RenderOnce for BusyAction {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let focus = window
+            .use_keyed_state(self.1, cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        #[cfg(feature = "gui-e2e")]
+        if self.1 == "clone-busy-show" {
+            super::e2e::record_clone_busy_focus(focus.is_focused(window));
+        }
+        super::button_style::reveal_on_focus(self.0, self.1.into(), focus, self.2, window, cx)
+            .render(window, cx)
+    }
 }
 
 impl KagiApp {
@@ -274,12 +283,6 @@ impl KagiApp {
         is_slow(elapsed).then_some((name, elapsed.as_secs()))
     }
 
-    pub(super) fn busy_feedback_visible(&self) -> bool {
-        (!self.busy_progress_hidden() && self.home_github.cloning.is_some())
-            || self.busy_snackbar_label().is_some()
-            || self.slow_read_shown().is_some()
-    }
-
     fn busy_notice_label(&self, audience: ToastAudience) -> Option<SharedString> {
         self.home_github
             .cloning
@@ -304,104 +307,33 @@ impl KagiApp {
             })
     }
 
-    /// Conflict feedback borrows the toast lifecycle, never a second queue or
-    /// timer. Its footer projection leaves every conflict action unobscured.
-    pub(super) fn conflict_footer_feedback(
-        &self,
-        fallback: FooterStatus,
-        cx: &Context<Self>,
-    ) -> (FooterStatus, Option<(u64, SharedString)>, bool) {
-        let stack = self.toast_stack.as_ref().map(|stack| stack.read(cx));
-        let routine = stack.and_then(|stack| {
-            stack.toasts().iter().rev().find(|toast| {
-                ToastAudience::Repository.includes(toast)
-                    && !toast.is_persistent()
-                    && toast.dismissing.is_none()
-            })
-        });
-        let arrival = stack.and_then(|stack| {
-            stack
-                .status()
-                .filter(|(id, _)| routine.is_some_and(|toast| toast.id == *id))
-                .map(|(id, label)| (id, label.clone()))
-        });
-        let slow = self.slow_read_shown();
-        let busy = self.busy_notice_label(ToastAudience::Repository);
-        if let Some(toast) = routine {
-            // New feedback replaces the caption, not the truth that an
-            // admitted operation is still running.
-            let status = if busy.is_some() || matches!(fallback, FooterStatus::Busy(_)) {
-                FooterStatus::Busy(toast.message.clone())
-            } else if toast.kind == ToastKind::Success {
-                FooterStatus::Success(toast.message.clone())
-            } else {
-                FooterStatus::Idle(toast.message.clone())
-            };
-            return (status, arrival, false);
-        }
-        if let Some(label) = busy {
-            let advice = self
-                .slow_write_shown(cx.background_executor().now())
-                .map(|(kind, elapsed)| i18n::slow_write_advice(kind, elapsed))
-                .or_else(|| slow.map(i18n::slow_read_advice));
-            let has_advice = advice.is_some();
-            let caption = match advice {
-                Some(advice) => {
-                    #[cfg(feature = "gui-e2e")]
-                    super::e2e::record_busy_advice(&advice);
-                    if label.trim_end_matches('…') == advice {
-                        label
-                    } else {
-                        SharedString::from(format!("{label} · {advice}"))
-                    }
-                }
-                None => label,
-            };
-            return (FooterStatus::Busy(caption), arrival, has_advice);
-        }
-        (fallback, arrival, false)
-    }
-
-    /// Render notifications inside the surface's content anchor, or in a
-    /// persistent-only lane / transient overlay.
+    /// One bottom-left stack inside the owning surface's centre content.
     pub(super) fn render_toasts(
         &self,
         window: &gpui::Window,
-        placement: ToastPlacement,
         audience: ToastAudience,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
-        let partition = match placement {
-            ToastPlacement::Repository => super::toast_stack::ToastPartition::All,
-            ToastPlacement::PersistentLane => super::toast_stack::ToastPartition::Persistent,
-            ToastPlacement::Transient => super::toast_stack::ToastPartition::Transient,
-        };
-        toast_stack.update(cx, |stack, _| {
-            stack.set_trailing_placement(
-                window.window_handle().window_id(),
-                audience,
-                partition,
-                placement != ToastPlacement::Transient,
-            );
+        let scroll = toast_stack.update(cx, |stack, _| {
+            stack.set_host_audience(window.window_handle().window_id(), audience)
         });
-        let mut stack = toast_container(placement)
+        #[cfg(feature = "gui-e2e")]
+        let has_cards = toast_stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| audience.includes(toast));
+        let mut stack = div()
+            .id("notification-content")
+            .relative()
+            .flex()
+            .flex_col()
+            .gap_2()
             .max_h(gpui::px(f32::from(window.viewport_size().height) * 0.30))
             .min_h(gpui::px(0.))
-            .when(placement == ToastPlacement::Transient, |el| {
-                el.child(super::e2e::measure_inside("toast-transient-overlay"))
-            });
-        if placement == ToastPlacement::PersistentLane {
-            return Some(
-                stack
-                    .child(super::render_overlay::ToastHost {
-                        stack: toast_stack,
-                        partition,
-                        audience,
-                    })
-                    .into_any(),
-            );
-        }
+            .overflow_y_scroll()
+            .track_scroll(&scroll);
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
         // (user request) — a lighter alternative to a blocking popup. A slow
@@ -419,16 +351,23 @@ impl KagiApp {
                 write,
                 audience != ToastAudience::Settings,
                 cx,
+                &scroll,
             ));
         }
 
-        // Both projections borrow the same lifecycle/action owner.
+        // Cards and busy feedback share this bounded content-local host.
         stack = stack.child(super::render_overlay::ToastHost {
             stack: toast_stack,
-            partition,
             audience,
         });
-        Some(stack.into_any())
+        let stack = super::e2e::measure_leaf("toast-container", stack);
+        #[cfg(feature = "gui-e2e")]
+        let stack = if has_cards {
+            super::e2e::measure_leaf("toast-stack", stack)
+        } else {
+            stack
+        };
+        Some(toast_container().child(stack).into_any())
     }
 
     /// A snackbar shown while an async op runs: a continuously spinning sync
@@ -443,6 +382,7 @@ impl KagiApp {
         write: Option<(&'static str, u64)>,
         show_clone_action: bool,
         cx: &mut Context<Self>,
+        scroll: &gpui::ScrollHandle,
     ) -> gpui::AnyElement {
         let accent = theme().ui_accent();
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
@@ -454,42 +394,51 @@ impl KagiApp {
             .flex()
             .flex_col()
             .child(caption);
-        if let Some((kind, elapsed)) = write {
+        let advice = if let Some((kind, elapsed)) = write {
             let advice = i18n::slow_write_advice(kind, elapsed);
             #[cfg(feature = "gui-e2e")]
             super::e2e::record_busy_advice(&advice);
+            Some(SharedString::from(advice))
+        } else {
+            slow.map(|read| SharedString::from(i18n::slow_read_advice(read)))
+        };
+        if let Some(advice) = advice {
+            let tooltip = advice.clone();
             text = text.child(super::e2e::measure_control(
                 "busy-snackbar-advice",
                 div()
+                    .id("busy-snackbar-advice-text")
+                    .role(gpui::Role::Label)
+                    .aria_label(advice.clone())
                     .text_sm()
+                    .line_height(theme::scaled_px(18.))
+                    .max_h(theme::scaled_px(18.))
+                    .line_clamp(1)
+                    .text_ellipsis()
                     .text_color(rgb(theme().text_sub))
-                    .child(SharedString::from(advice)),
+                    .child(advice)
+                    .hover_tooltip_builder("busy-snackbar-advice-help", move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    }),
             ));
-        }
-        if write.is_none() {
-            if let Some(read) = slow {
-                text = text.child(super::e2e::measure_control(
-                    "busy-snackbar-advice",
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(i18n::slow_read_advice(read))),
-                ));
-            }
         }
         let skip = slow
             .filter(|read| read.skippable())
-            .map(|_| self.render_busy_skip(None, cx));
+            .map(|_| self.render_busy_skip(scroll, cx));
+        let clone_action = if show_clone_action && !self.busy_progress_hidden() {
+            self.render_clone_progress_action(scroll, cx)
+        } else {
+            None
+        };
+        let has_actions = skip.is_some() || clone_action.is_some();
         div()
             .relative()
             .child(super::e2e::measure_inside("busy-snackbar"))
             .w_full()
+            .flex_shrink_0()
             .flex()
-            .flex_row()
-            .items_center()
-            // 1.5× the toast gap (8px → 12px) so the larger sync icon breathes
-            // a bit more from the label (user request).
-            .gap_3()
+            .flex_col()
+            .gap_2()
             .px_4()
             .py_3()
             .rounded(theme::scaled_px(8.))
@@ -498,19 +447,45 @@ impl KagiApp {
             .border_color(rgb(theme().elevated_border(accent)))
             .text_base()
             .text_color(rgb(theme().text_main))
-            .child(div().flex_shrink_0().child(icon))
-            .child(text)
-            .children(skip)
-            .when(show_clone_action && !self.busy_progress_hidden(), |el| {
-                el.children(self.render_clone_progress_action(None, cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    // Keep breathing room around the larger sync icon.
+                    .gap_3()
+                    .child(div().flex_shrink_0().child(icon))
+                    .child(text)
+                    .child(self.render_busy_dismiss(scroll, cx)),
+            )
+            .when(has_actions, |card| {
+                card.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap_2()
+                        .children(skip)
+                        .children(clone_action),
+                )
             })
-            .child(self.render_busy_dismiss(false, cx))
             .into_any()
     }
 
     fn busy_caption(&self, label: SharedString) -> gpui::AnyElement {
         if self.home_github.cloning.is_none() || self.busy_progress_hidden() {
-            return div().child(label).into_any();
+            let tooltip = label.clone();
+            return div()
+                .id("busy-snackbar-caption")
+                .role(gpui::Role::Label)
+                .aria_label(label.clone())
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(label)
+                .hover_tooltip_builder("busy-snackbar-caption-help", move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                })
+                .into_any_element();
         }
         let role = gpui::Role::Status;
         #[cfg(feature = "gui-e2e")]
@@ -543,31 +518,27 @@ impl KagiApp {
 
     pub(super) fn render_busy_skip(
         &self,
-        footer_width: Option<gpui::Pixels>,
+        scroll: &gpui::ScrollHandle,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         super::e2e::measure_control(
             "busy-snackbar-skip",
-            Button::new("busy-snackbar-skip")
-                .label(i18n::slow_read_skip())
-                .small()
-                .ghost()
-                .when_some(footer_width, |button, width| {
-                    button
-                        .h(footer_control_height())
-                        .w(width)
-                        .px_0()
-                        .py_0()
-                        .text_xs()
-                })
-                .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
+            BusyAction(
+                Button::new("busy-snackbar-skip")
+                    .label(i18n::slow_read_skip())
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
+                "busy-snackbar-skip",
+                scroll.clone(),
+            ),
         )
         .into_any()
     }
 
     pub(super) fn render_busy_dismiss(
         &self,
-        compact: bool,
+        scroll: &gpui::ScrollHandle,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let owner = self.active_session();
@@ -578,12 +549,6 @@ impl KagiApp {
                 .ghost()
                 .small()
                 .flex_shrink_0()
-                .when(compact, |button| {
-                    button
-                        .h(footer_control_height())
-                        .w(theme::scaled_px(super::STATUS_BAR_H))
-                        .p_0()
-                })
                 .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.hide_busy_progress(owner, identity, cx);
@@ -591,6 +556,7 @@ impl KagiApp {
             0,
             self.busy_close_focus.clone(),
             "busy-snackbar-dismiss",
+            scroll.clone(),
         )
         .aria_label(SharedString::from(Msg::BusyHideProgress.t()))
         .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
@@ -609,7 +575,7 @@ impl KagiApp {
 
     pub(super) fn render_clone_progress_action(
         &self,
-        footer_width: Option<gpui::Pixels>,
+        scroll: &gpui::ScrollHandle,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         if !self.clone_progress_available() {
@@ -620,14 +586,6 @@ impl KagiApp {
             .small()
             .ghost()
             .flex_shrink_0()
-            .when_some(footer_width, |button, width| {
-                button
-                    .h(footer_control_height())
-                    .w(width)
-                    .px_0()
-                    .py_0()
-                    .text_xs()
-            })
             .disabled(self.has_active_modal())
             .on_click(cx.listener(|this, _, window, cx| {
                 // Restore the existing task, never construct or confirm a new clone.
@@ -639,9 +597,13 @@ impl KagiApp {
                     this.focus_after_pick(window, cx);
                 }
             }));
-        #[cfg(feature = "gui-e2e")]
-        let button = super::e2e::probe_clone_busy_button(button);
-        Some(super::e2e::measure_control("clone-busy-show", button).into_any())
+        Some(
+            super::e2e::measure_control(
+                "clone-busy-show",
+                BusyAction(button, "clone-busy-show", scroll.clone()),
+            )
+            .into_any(),
+        )
     }
 }
 
@@ -698,38 +660,17 @@ mod tests {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ToastPlacement {
-    Repository,
-    PersistentLane,
-    Transient,
-}
-
-/// The repository parent is the actual center content, never the window.
-pub(super) fn toast_container(placement: ToastPlacement) -> gpui::Div {
+/// The parent supplies the actual content bounds, never window-wide chrome.
+pub(super) fn toast_container() -> gpui::Div {
     div()
-        .when(placement == ToastPlacement::Repository, |el| {
-            el.absolute()
-                .top(theme::scaled_px(super::TOAST_INSET_PX))
-                .bottom(theme::scaled_px(super::TOAST_INSET_PX))
-                .right(theme::scaled_px(super::TOAST_INSET_PX))
-                .max_h(gpui::relative(1.0))
-        })
-        .when(placement == ToastPlacement::PersistentLane, |el| {
-            el.flex_shrink_0()
-                .my(theme::scaled_px(super::TOAST_INSET_PX))
-                .mr(theme::scaled_px(super::TOAST_INSET_PX))
-        })
-        .when(placement == ToastPlacement::Transient, |el| {
-            el.absolute()
-                .bottom(theme::scaled_px(
-                    super::STATUS_BAR_H + super::TOAST_INSET_PX,
-                ))
-                .left(theme::scaled_px(super::TOAST_INSET_PX))
-        })
+        .absolute()
+        .top(theme::scaled_px(super::TOAST_INSET_PX))
+        .bottom(theme::scaled_px(super::TOAST_INSET_PX))
+        .left(theme::scaled_px(super::TOAST_INSET_PX))
         .w(theme::scaled_px(460.))
         .max_w(gpui::relative(0.45))
         .flex()
         .flex_col()
+        .justify_end()
         .gap_2()
 }

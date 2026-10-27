@@ -223,7 +223,7 @@ impl ConflictView {
 // Render
 // ────────────────────────────────────────────────────────────
 
-/// Side identities stay above the persistent notification lane and scroll body.
+/// Side identities stay above the scroll body and its content-local notifications.
 pub(crate) fn render_raw_headers(labels: &SideLabels) -> gpui::AnyElement {
     let header = |label: String, accent, probe| {
         super::render_helpers::diff_state::side_header(label.into(), Some(accent))

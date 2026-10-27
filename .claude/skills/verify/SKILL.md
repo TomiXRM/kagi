@@ -604,25 +604,47 @@ ready unsaved Result has exactly one, Save. Danger-sheet root Return preserves
 the same sheet/arm without executing or cancelling; Escape / ⌘. still cancel,
 and focused buttons retain Space / Return. Quiet adoption captions must meet
 4.5:1 and outlines 3:1 against the real conflict band and rest/hover/pressed fills.
-Measure persistent notification bounds against each actual center content, not
-the window: top-trailing below file/graph/editor controls, outside sidebar/
-Inspector, at most 45% of that column. Every conflict layout places persistent
-cards AND the N-more summary in an in-flow lane after its column/side/saved
-header and before the panes and choice controls. Measure nonintersection with
-the actual current/incoming Use/Both controls in text, the raw choose row plus
-both side headers, directory/file choices and saved previews.
-In Conflict Mode only, newest routine Info/Success uses the existing fixed-height
-footer's single truncated text line, not a pane card (owner ruling, #1768).
-Assert the actual rendered footer text and Role::Status arrival, unchanged full
-lane/control/footer bounds, no transient/busy card probes, and no intersection
-with hunk/whole-file controls. Exercise automatic four-second expiry and verify
-the prior footer returns without re-announcing an older persistent error. Busy
-uses the existing footer spinner; held slow-read Skip/Hide remain inside the
-trailing end of that line. Include `slow_write_conflict_continue`.
-Read the actual Success footer paint and require at least 4.5:1 against its
-chrome background, not merely a semantic colour token.
-Home/Settings/Graph retain their current placement; their lanes still contain
-only persistent cards. Scope all hosts by typed subject (owner, #1806): with a
+For the restored #1590 ruling (2026-10-27), measure the one persistent/transient/
+busy stack against each actual centre content: bottom-left inset, outside
+sidebar, Inspector, toolbar and status bar, at most 45% of that column and 30%
+of the viewport height. Expansion grows upward without shifting controls.
+Conflict uses this same content stack at 100% and 167%, including text, raw,
+directory/file and saved layouts; it never routes routine feedback to the footer.
+Exercise collapsed/expanded mixed cards, four-second transient expiry, held busy
+Skip/Hide and unchanged content/footer geometry. Keep errors and action-bearing
+cards persistent. The actual Status node clears its arrival rather than
+re-announcing an old card. `toast_stack::status_for_e2e(window_id, audience)`
+records each rendered host, including empty Status labels; another window or
+audience cannot overwrite its evidence.
+Clear chrome bounds before a fresh draw when resizing between full sidebar and
+compact rail; never intersect a stale unmounted sidebar probe. Activate native
+AX before painting its tree, then press the actual disclosure. Busy cards keep
+their natural height inside the bounded stack: caption/advice paint is one line
+each with full AX names and hover help. Skip/clone actions wrap on an optional
+second row, never competing horizontally with the primary Hide control.
+Busy, disclosure and cards share one scroll viewport; measure that viewport with
+`measure_leaf`, not a probe that scrolls with its contents. While the held read
+is still busy at JA167%/940px, wheel to the disclosure and oldest real failed
+Fetch detail action, traverse the real keyboard focus tree, toggle disclosure
+with Enter and open that exact durable receipt. Require every error to remain
+until that explicit action, then wheel back and dispatch real Skip/Hide with
+both axes contained. Focus reveal must not pin subsequent manual scrolling.
+Also wheel away while disclosure retains focus, then Shift-Tab back to Skip or
+clone progress and require the actual Button to be visible before activation.
+Portable Settings and its underlying repository must retain independent scroll
+offsets in the same window; repeated background prepaint must not reset Settings.
+`clone_hidden_status` retains the real task/latch/dispatch and owner-window
+checks while requiring foreign clone status/cards to stay absent from Settings.
+Opt into
+`KAGI_GUI_E2E_ONSCREEN=1` to save JA167% text/saved Conflict mixed-stack native
+frames through the existing success screenshot helper. Label those held-read
+fixtures Tier A; they do not replace plain-application Tier B evidence.
+Include `toast_`, `slow_read_explained`, `slow_write_conflict_continue`,
+`bottom_panel_nested` and `pr_detail_adaptive`. PR/Issues nested-panel coverage
+compares independent `pr-mode-center-pane` / `issue-mode-center-pane` probes
+and excludes `bottom-panel`; loaded PR coverage also excludes its real
+`pr-mode-lane-pane`, not just the notification's own parent.
+Scope all hosts by typed subject (owner, #1806): with a
 real repository draft-rescue card live, native Settings must show no repository
 card, its repository window must still show it, and a real theme JSON error
 invoked in Settings must appear only there. Include
@@ -650,18 +672,19 @@ and a saved draft read failure: both source identities and all choice controls
 must remain visible, including with the persistent N-more summary. Include
 × / Escape, root Return, focused-button activation and actual destructive caption
 contrast in EN/JA and Light/Dark.
-For the footer correction, capture real EN Light and JA Dark conflict transients
-in the footer, then their automatic reversion; add a JA Dark Settings frame with
-a live draft-rescue card in the repository window, and a Settings-owned theme
-JSON error. A repository's draft warning is not valid Settings lane evidence.
+For the restored bottom-left contract, capture real EN Light and JA Dark conflict
+transients in the shared content stack, then their automatic expiry; add a JA Dark
+Settings frame with a live draft-rescue card in the repository window and a
+Settings-owned theme JSON error. A repository draft warning is not valid Settings
+notification evidence.
 For focused activation evidence, inspect the actual focus-ring pixels before
 pressing Space: the header Copy control precedes Cancel in Tab order, so never
 assume the first Tab focuses Cancel or activate Copy during validation. Capture
 a selected **convention-file** row on opaque accent fill for Rule's local AA
 correction; conflict rows cannot supply that selected-state evidence.
-永続通知レーンは永続カードだけで測る。conflict の一時通知と処理中表示は
-固定高フッターへ置き、4 秒後の復帰と操作への非交差を確認する。通知は対象を
-所有するウィンドウにだけ表示し、下書き救済の内部ファイル名は操作ログに残す。
+永続通知・一時通知・処理中表示は、中央コンテンツ左下の同じスタックで測る。
+conflict でもフッターへ分岐せず、4 秒後の一時通知消失と操作への非交差を確認する。
+通知は対象を所有するウィンドウにだけ表示し、下書き救済の内部ファイル名は操作ログに残す。
 フォーカス枠を確認してから Space を押し、Copy を作動させない。
 選択色の証跡には規約ファイルの行を使う。
 

@@ -1,4 +1,4 @@
-//! Persistent conflict feedback reserves space, including its overflow summary.
+//! Conflict shares the centre-content bottom-left stack without moving controls.
 use super::*;
 
 pub(super) fn run(cx: &mut VisualTestAppContext) {
@@ -7,11 +7,13 @@ pub(super) fn run(cx: &mut VisualTestAppContext) {
     let old_zoom = theme::zoom();
     let old_lang = i18n::lang();
     let old_theme = theme::theme().slug.to_string();
-    theme::set_zoom(1.);
-    for preset in ["apple-light", "apple-dark"] {
-        for lang in [i18n::Lang::En, i18n::Lang::Ja] {
-            for layout in ["text", "raw", "directory-file", "saved"] {
-                run_case(cx, layout, lang, preset);
+    for zoom in [1., 1.67] {
+        theme::set_zoom(zoom);
+        for preset in ["apple-light", "apple-dark"] {
+            for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+                for layout in ["text", "raw", "directory-file", "saved"] {
+                    run_case(cx, layout, lang, preset);
+                }
             }
         }
     }
@@ -37,12 +39,23 @@ fn fixture(layout: &str) -> tempfile::TempDir {
 
 fn run_case(cx: &mut VisualTestAppContext, layout: &str, lang: i18n::Lang, preset: &str) {
     let fixture = fixture(layout);
+    git(
+        fixture.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            fixture.path().join("missing-remote").to_str().unwrap(),
+        ],
+    );
     let index = std::fs::read(fixture.path().join(".git/index")).unwrap();
     let (app, window) = mount(cx, fixture.path());
     app.update(cx, |app, cx| {
         theme::set_active(preset);
         app.set_lang(lang, cx);
         app.detect_conflict_mode(cx);
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
     });
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
@@ -98,67 +111,82 @@ fn control_bounds(window: AnyWindowHandle, layout: &str) -> Vec<Bounds<Pixels>> 
         .collect()
 }
 
-fn assert_safe_lane(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
-    let lane = bounds(window, "conflict-notification-lane");
-    let stack = bounds(window, "toast-persistent-stack");
-    assert!(stack.top() >= lane.top() && stack.bottom() <= lane.bottom());
-    assert!(stack.size.width <= lane.size.width * 0.45 + px(1.));
-    let headers: &[&str] = match layout {
-        "text" => &["conflict-source-headers"],
-        "raw" => &[
-            "conflict-image-current-header",
-            "conflict-image-incoming-header",
-        ],
-        "saved" => &["conflict-saved-source-header"],
-        "directory-file" => &["conflict-content-header"],
-        _ => unreachable!(),
-    };
-    for id in headers {
-        assert!(
-            bounds(window, id).bottom() <= lane.top(),
-            "{id} is never covered"
-        );
-    }
-    for id in controls(layout) {
-        let control = bounds(window, id);
-        assert!(
-            stack.bottom() <= control.top() && lane.bottom() <= control.top(),
-            "{layout}: persistent cards AND summary must not intersect {id}"
-        );
-    }
-    if layout == "raw" {
-        eprintln!(
-            "[gui-e2e] ASSERT raw-lane {:?}/{}: both per-side Use controls below headers/lane; no overlap",
-            i18n::lang(),
-            theme::theme().slug
-        );
-    }
-    lane
+fn assert_safe_lane(window: AnyWindowHandle, _layout: &str) -> Bounds<Pixels> {
+    let anchor = bounds(window, "toast-content-anchor");
+    let stack = bounds(window, "toast-container");
+    assert!((stack.left() - anchor.left() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!((anchor.bottom() - stack.bottom() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!(stack.top() >= anchor.top() && stack.right() <= anchor.right());
+    assert!(stack.size.width <= anchor.size.width * 0.45 + px(1.));
+    let sidebar = bounds(window, "conflict-sidebar-clip");
+    let footer = bounds(window, "pr-menu-footer");
+    assert!(stack.left() >= sidebar.right());
+    assert!(stack.bottom() <= footer.top());
+    anchor
 }
 
 fn paint_feedback(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     for id in [
-        "toast-transient-stack",
-        "toast-transient-overlay",
+        "toast-stack",
+        "toast-container",
+        "toast-summary",
+        "operation-result-details",
         "busy-snackbar",
         "busy-snackbar-skip",
         "busy-snackbar-dismiss",
-        "conflict-footer-busy",
-        "conflict-footer-busy-controls",
     ] {
         e2e::clear_control_bounds(window.window_id(), id);
     }
     draw(cx, window);
-    for id in [
-        "toast-transient-stack",
-        "toast-transient-overlay",
-        "busy-snackbar",
-    ] {
-        assert!(
-            e2e::control_bounds(window.window_id(), id).is_none(),
-            "Conflict Mode never paints {id} over its choices"
-        );
+}
+
+fn scroll_feedback(cx: &mut VisualTestAppContext, window: AnyWindowHandle, delta: f32) {
+    let viewport = bounds(window, "toast-container");
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    paint_feedback(cx, window);
+}
+
+fn assert_visible_control(window: AnyWindowHandle, id: &str) {
+    let viewport = bounds(window, "toast-container");
+    let control = bounds(window, id);
+    assert!(
+        control.size.width > px(0.)
+            && control.size.height > px(0.)
+            && control.left() >= viewport.left()
+            && control.right() <= viewport.right()
+            && control.top() >= viewport.top()
+            && control.bottom() <= viewport.bottom(),
+        "{id} is genuinely reachable: control {control:?}, viewport {viewport:?}"
+    );
+}
+
+fn tab_to_feedback(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    focus: &gpui::FocusHandle,
+) {
+    for _ in 0..150 {
+        cx.simulate_keystrokes(window, "tab");
+        cx.run_until_parked();
+        if cx
+            .update_window(window, |_, window, _| focus.is_focused(window))
+            .unwrap()
+        {
+            paint_feedback(cx, window);
+            cx.run_until_parked();
+            paint_feedback(cx, window);
+            return;
+        }
     }
+    panic!("Tab reaches the oldest durable detail action while busy remains");
 }
 
 fn assert_safe_footer(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
@@ -179,37 +207,125 @@ fn assert_safe_footer(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
     footer
 }
 
+fn capture_feedback(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    layout: &str,
+    stage: &str,
+) {
+    // Held-read Tier A evidence, never plain-application Tier B captures.
+    if std::env::var_os("KAGI_GUI_E2E_ONSCREEN").is_some()
+        && i18n::lang() == i18n::Lang::Ja
+        && (theme::zoom() - 1.67).abs() < 0.01
+        && matches!(layout, "text" | "saved")
+    {
+        let width = cx
+            .update_window(window, |_, window, _| {
+                f32::from(window.viewport_size().width)
+            })
+            .unwrap();
+        let tag = format!(
+            "toast-conflict-{layout}-ja167-{}-{width}-{stage}",
+            theme::theme().slug
+        );
+        crate::macos::capture_screenshot_best_effort(cx, window, &tag);
+    }
+}
+
 fn exercise_lane(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<KagiApp>,
     window: AnyWindowHandle,
     layout: &str,
 ) {
+    // Use a real recorded failure for the oldest card's full-detail action.
+    app.update(cx, |app, cx| {
+        app.set_window_active_for_e2e(false, cx);
+        app.fetch_async(false, cx);
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
+        cx.run_until_parked();
+        assert!(Instant::now() < deadline, "failed fetch settles");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let recorded = cx.read(|cx| {
+        app.read(cx)
+            .op_log
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .entries()
+            .front()
+            .unwrap()
+            .clone()
+    });
+    assert_eq!(recorded.op, "fetch");
     draw(cx, window);
     let original = control_bounds(window, layout);
     let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
     let errors: Vec<_> = stack.update(cx, |stack, cx| {
-        (0..3)
-            .map(|index| {
+        let oldest = stack.toasts().last().expect("real failed Fetch notice").id;
+        std::iter::once(oldest)
+            .chain((1..3).map(|index| {
                 stack.push_notify(
                     kagi::ui::ToastKind::Error,
                     format!("Persistent {layout} lane fixture {index}"),
                     cx,
                 );
                 stack.toasts().last().unwrap().id
-            })
+            }))
             .collect()
     });
     cx.run_until_parked();
+    // Native accessibility is lazy: activate before painting the tree that
+    // supplies the real disclosure Press action.
+    crate::native_ax::activate(cx);
     draw(cx, window);
     let lane = assert_safe_lane(window, layout);
+    let collapsed = bounds(window, "toast-container");
+    let more = i18n::Msg::ToastMore.t().replace("{count}", "2");
+    assert!(
+        crate::native_ax::press(cx, window, &more),
+        "Conflict disclosure remains reachable"
+    );
+    cx.run_until_parked();
+    draw(cx, window);
+    assert_eq!(
+        crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]["expanded"],
+        true,
+        "native disclosure expands the shared Conflict stack"
+    );
+    let expanded = bounds(window, "toast-container");
+    assert!((expanded.bottom() - collapsed.bottom()).abs() <= px(1.));
+    assert!(expanded.top() <= collapsed.top());
+    assert_eq!(assert_safe_lane(window, layout), lane);
+    // Expansion must expose actual older cards, not only flip aria-expanded.
+    // Reach the oldest card through the bounded scroll viewport.
+    let oldest_message = format!("toast-message-{}", errors[0]);
+    e2e::clear_control_bounds(window.window_id(), &oldest_message);
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: gpui::point(expanded.center().x, expanded.bottom() - px(2.)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-600.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    draw(cx, window);
+    let oldest = bounds(window, &oldest_message);
+    assert!(
+        oldest.bottom() > expanded.top() && oldest.top() < expanded.bottom(),
+        "expanded Conflict stack exposes the oldest card through its bounded viewport"
+    );
+    crate::native_ax::node(cx, window, ("toast-dismiss", errors[0]).into());
+    assert_eq!(assert_safe_lane(window, layout), lane);
     let shifted = control_bounds(window, layout);
-    for (before, after) in original.iter().zip(&shifted) {
-        assert!(
-            after.top() > before.top(),
-            "persistent feedback reserves real height"
-        );
-    }
+    assert_eq!(
+        shifted, original,
+        "persistent feedback does not move conflict controls"
+    );
     let original_footer = assert_safe_footer(window, layout);
     let original_text = e2e::footer_display_text();
     for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
@@ -223,25 +339,20 @@ fn exercise_lane(
         assert_eq!(control_bounds(window, layout), shifted);
         assert_eq!(assert_safe_footer(window, layout), original_footer);
         assert_eq!(
-            e2e::footer_display_text().as_ref(),
-            "Unrelated transient fixture…"
+            e2e::footer_display_text(),
+            original_text,
+            "transient feedback no longer routes through the footer"
         );
-        let status = kagi::ui::toast_stack::status_for_e2e().expect("actual arrival status");
+        let status =
+            kagi::ui::toast_stack::status_for_e2e(window.window_id(), ToastAudience::Repository)
+                .expect("actual arrival status");
         assert_eq!(status.role, Some(gpui::Role::Status));
         assert_eq!(status.newest_id, Some(transient));
-        assert_eq!(
-            status.label.as_deref(),
-            Some("Unrelated transient fixture…")
-        );
-        if kind == kagi::ui::ToastKind::Success {
-            let text = e2e::control_paint(window.window_id(), "status-footer-text").unwrap();
-            let ink = u32::from(text.text_color.to_rgb()) >> 8;
-            let background = theme::theme().chrome_surface();
-            assert!(
-                theme::contrast_ratio(ink, background) >= 4.5,
-                "actual Success footer ink must reach AA on its painted chrome"
-            );
-        }
+        assert!(status
+            .label
+            .as_deref()
+            .unwrap()
+            .starts_with("Unrelated transient fixture"));
         stack.update(cx, |stack, _| {
             stack.advance_age_for_e2e(Duration::from_secs(4));
             assert!(stack.expiring_ids().contains(&transient));
@@ -261,7 +372,9 @@ fn exercise_lane(
                 .all(|toast| toast.id != transient));
         });
         assert_eq!(
-            kagi::ui::toast_stack::status_for_e2e().unwrap().newest_id,
+            kagi::ui::toast_stack::status_for_e2e(window.window_id(), ToastAudience::Repository)
+                .unwrap()
+                .newest_id,
             None,
             "expiry never re-announces an older persistent error"
         );
@@ -274,22 +387,145 @@ fn exercise_lane(
     cx.run_until_parked();
     crate::busy_dismiss::advance(cx, 10);
     paint_feedback(cx, window);
+    scroll_feedback(cx, window, 10_000.);
     assert_eq!(assert_safe_lane(window, layout), lane);
     assert_eq!(control_bounds(window, layout), shifted);
     assert_eq!(assert_safe_footer(window, layout), original_footer);
-    assert_ne!(e2e::footer_display_text(), original_text);
-    assert!(bounds(window, "conflict-footer-busy").size.height > px(0.));
+    assert!(bounds(window, "busy-snackbar").size.height > px(0.));
+    let read = kagi_ui_core::slow_read::SlowRead::AheadBehind;
+    assert_eq!(
+        crate::native_ax::node(cx, window, "busy-snackbar-caption".into())["aria"]["label"],
+        i18n::slow_read_label(read),
+        "bounded paint preserves the complete accessible busy caption"
+    );
+    assert_eq!(
+        crate::native_ax::node(cx, window, "busy-snackbar-advice-text".into())["aria"]["label"],
+        i18n::slow_read_advice(read),
+        "bounded paint preserves the complete accessible advice"
+    );
+    // Busy must not collapse the durable region to zero. The same wheel range
+    // reaches disclosure, oldest text and its real recorded-detail action.
+    let summary = bounds(window, "toast-summary");
+    let viewport = bounds(window, "toast-container");
+    scroll_feedback(cx, window, f32::from(viewport.top() - summary.top()));
+    assert_visible_control(window, "toast-summary");
+    e2e::clear_control_bounds(window.window_id(), &oldest_message);
+    scroll_feedback(cx, window, -10_000.);
+    let oldest = bounds(window, &oldest_message);
+    let viewport = bounds(window, "toast-container");
+    assert!(oldest.bottom() > viewport.top() && oldest.top() < viewport.bottom());
+    assert_visible_control(window, "operation-result-details");
+    crate::native_ax::node(cx, window, "busy-snackbar-caption".into());
+    cx.read(|cx| {
+        for id in &errors {
+            assert!(stack
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| toast.id == *id && toast.dismissing.is_none()));
+        }
+    });
+    assert_eq!(assert_safe_lane(window, layout), lane);
+    // Keyboard focus reveals the existing controls in this same scroll owner;
+    // it must not pin subsequent wheel input to the focused card.
+    crate::native_ax::focus_named(cx, window, "Button", i18n::Msg::ToastCollapse.t());
+    paint_feedback(cx, window);
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_visible_control(window, "toast-summary");
+    scroll_feedback(cx, window, -10_000.);
+    if i18n::lang() == i18n::Lang::Ja && theme::zoom() > 1.6 {
+        let skip = bounds(window, "busy-snackbar-skip");
+        assert!(
+            !bounds(window, "toast-container").contains(&skip.center()),
+            "fixture scrolls Skip out of view before backward keyboard traversal"
+        );
+    }
+    cx.simulate_keystrokes(window, "shift-tab");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_eq!(
+        crate::native_ax::focused(cx, window)["aria"]["label"],
+        i18n::slow_read_skip()
+    );
+    assert_visible_control(window, "busy-snackbar-skip");
+    cx.simulate_keystrokes(window, "tab");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_visible_control(window, "toast-summary");
+    assert_eq!(
+        crate::native_ax::focused(cx, window)["aria"]["label"],
+        i18n::Msg::ToastCollapse.t()
+    );
+    crate::keyboard_nav::keys(cx, window, "enter");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_eq!(
+        crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]["expanded"],
+        false
+    );
+    crate::keyboard_nav::keys(cx, window, "enter");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_eq!(
+        crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]["expanded"],
+        true
+    );
+    let action_focus = cx.read(|cx| {
+        stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .find(|toast| toast.id == errors[0])
+            .unwrap()
+            .action_focus
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .iter()
+            .find(|(host, _)| *host == window.window_id())
+            .unwrap()
+            .1
+            .clone()
+    });
+    tab_to_feedback(cx, window, &action_focus);
+    assert_visible_control(window, "operation-result-details");
+    crate::native_ax::node(cx, window, "busy-snackbar-caption".into());
+    capture_feedback(cx, window, layout, "durable-keyboard");
+    crate::keyboard_nav::keys(cx, window, "enter");
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+        let shown = &panel.entries()[panel
+            .expanded()
+            .expect("keyboard opens real durable detail")];
+        assert_eq!(shown.id, recorded.id);
+        assert_eq!(shown.timestamp, recorded.timestamp);
+        assert_eq!(shown.outcome, recorded.outcome);
+    });
+    crate::native_ax::node(cx, window, "busy-snackbar-caption".into());
+    scroll_feedback(cx, window, 10_000.);
+    assert_eq!(assert_safe_lane(window, layout), lane);
     for id in ["busy-snackbar-skip", "busy-snackbar-dismiss"] {
         let control = bounds(window, id);
         assert!(control.size.width > px(0.) && control.size.height > px(0.));
+        let container = bounds(window, "toast-container");
         assert!(
-            control.top() >= original_footer.top() && control.bottom() <= original_footer.bottom(),
-            "{id}: {control:?} must fit {original_footer:?}, layout={layout}, lang={:?}, zoom={}",
-            kagi::ui::i18n::lang(),
-            kagi::ui::theme::zoom()
+            control.top() >= container.top()
+                && control.bottom() <= container.bottom()
+                && control.left() >= container.left()
+                && control.right() <= container.right(),
+            "{layout}/{:?}/{:.2}x: {id} fits the shared content stack: control {control:?}, container {container:?}",
+            i18n::lang(),
+            theme::zoom()
         );
-        assert!(control.left() >= bounds(window, "status-footer-text").right());
     }
+    capture_feedback(cx, window, layout, "busy-header");
     let control = if matches!(layout, "text" | "raw") {
         "busy-snackbar-skip"
     } else {
@@ -334,10 +570,8 @@ fn exercise_lane(
     });
     cx.run_until_parked();
     paint_feedback(cx, window);
-    assert_eq!(
-        e2e::footer_display_text().as_ref(),
-        "Newest routine feedback"
-    );
+    assert_eq!(e2e::footer_display_text(), original_text);
+    assert_safe_lane(window, layout);
     assert_eq!(control_bounds(window, layout), original);
     assert_eq!(assert_safe_footer(window, layout), original_footer);
     stack.update(cx, |stack, _| {
@@ -419,7 +653,11 @@ pub(crate) fn assert_settings_subject_isolation(
         e2e::control_bounds(settings.window_id(), "toast-stack").is_none(),
         "a repository draft rescue must not create a Settings card or lane"
     );
-    assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open(ToastAudience::Settings)));
+    assert!(!cx.read(|cx| stack
+        .read(cx)
+        .toasts()
+        .iter()
+        .any(|toast| toast.subject == ToastSubject::Settings)));
     let path = theme::themes_dir()
         .unwrap()
         .join("owned-window-invalid.json");

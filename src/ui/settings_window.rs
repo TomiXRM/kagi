@@ -290,33 +290,11 @@ impl SettingsWindow {
         }
     }
 
-    fn page_body(
-        &self,
-        owner: &Entity<KagiApp>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
+    fn page_body(&self, owner: &Entity<KagiApp>, cx: &mut Context<Self>) -> gpui::Div {
         let chrome = 46. + f32::from(theme::scaled_px(48.));
         let host = cx.entity().downgrade();
         let pane = self.pane;
         let zoom = theme::zoom();
-        let persistent_lane = owner.read(cx).toast_stack.as_ref().is_some_and(|stack| {
-            stack
-                .read(cx)
-                .persistent_lane_open(super::toast_stack::ToastAudience::Settings)
-        });
-        let notifications = persistent_lane
-            .then(|| {
-                owner.update(cx, |app, cx| {
-                    app.render_toasts(
-                        window,
-                        super::busy::ToastPlacement::PersistentLane,
-                        crate::ui::toast_stack::ToastAudience::Settings,
-                        cx,
-                    )
-                })
-            })
-            .flatten();
         div()
             .relative()
             .flex()
@@ -324,15 +302,6 @@ impl SettingsWindow {
             .flex_shrink_0()
             .px_5()
             .py_4()
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .justify_end()
-                    .flex_shrink_0()
-                    .child(super::e2e::measure_inside("toast-content-anchor"))
-                    .children(notifications),
-            )
             .child(
                 div()
                     .relative()
@@ -376,7 +345,7 @@ impl Render for SettingsWindow {
         window.set_window_title(Msg::SettingsTitle.t());
         window.set_rem_size(theme::scaled_px(16.));
         let tabs = self.pane_tabs(cx);
-        let body = self.page_body(&owner, window, cx);
+        let body = self.page_body(&owner, cx);
         owner.update(cx, |app, cx| {
             let models_shown = self.pane == 2
                 && matches!(
@@ -469,28 +438,34 @@ impl Render for SettingsWindow {
             }))
             .child(titlebar())
             .child(tabs)
-            .child(super::render_helpers::with_system_vertical_scrollbar(
-                "settings-window-scrollbar",
-                &self.scroll,
+            .child(
                 div()
-                    .id("settings-window-scroll")
+                    .relative()
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .child(body),
-                cx,
-            ))
-            .map(|el| {
-                el.children(owner.update(cx, |app, cx| {
-                    app.render_toasts(
-                        window,
-                        super::busy::ToastPlacement::Transient,
-                        crate::ui::toast_stack::ToastAudience::Settings,
+                    .child(super::e2e::measure_inside("toast-content-anchor"))
+                    .child(super::render_helpers::with_system_vertical_scrollbar(
+                        "settings-window-scrollbar",
+                        &self.scroll,
+                        div()
+                            .id("settings-window-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .child(body),
                         cx,
-                    )
-                }))
-            })
+                    ))
+                    .children(owner.update(cx, |app, cx| {
+                        app.render_toasts(
+                            window,
+                            crate::ui::toast_stack::ToastAudience::Settings,
+                            cx,
+                        )
+                    })),
+            )
             .when_some(
                 owner.read(cx).analyze_reset_alert().cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),

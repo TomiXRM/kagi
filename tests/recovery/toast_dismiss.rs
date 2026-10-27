@@ -268,7 +268,7 @@ pub fn scenario_toast_dismiss(cx: &mut VisualTestAppContext) {
         let _ = kagi::ui::toast_stack::take_close_focus_for_e2e();
         drop(stack);
     }
-    actionable_info_preserves_transient_focus(cx, &app, window);
+    actionable_info_repairs_collapsed_focus(cx, &app, window);
     theme::set_zoom(old_zoom);
     kagi::ui::i18n::set_lang(old_lang);
     unmount(cx, app, window);
@@ -785,12 +785,12 @@ fn settings_reload_preserves_repository_focus(
     settle_removal(cx, window);
 }
 
-fn actionable_info_preserves_transient_focus(
+fn actionable_info_repairs_collapsed_focus(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<kagi::ui::KagiApp>,
     window: gpui::AnyWindowHandle,
 ) {
-    use kagi::ui::toast_stack::{ToastAudience, ToastSpec, ToastSubject};
+    use kagi::ui::toast_stack::{ToastSpec, ToastSubject};
     let _gh = crate::pr_fields_focus::OfflineGh::install();
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_home_tab(window, cx));
@@ -822,10 +822,10 @@ fn actionable_info_preserves_transient_focus(
     });
     paint(cx, window);
     assert!(e2e::control_bounds(window.window_id(), "home-page-controls").is_some());
-    assert!(e2e::control_bounds(window.window_id(), "toast-transient-overlay").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "toast-container").is_some());
     let focus = cx.read(|cx| {
         let stack = stack.read(cx);
-        assert!(!stack.persistent_lane_open(ToastAudience::Repository));
+        assert!(stack.toasts().iter().all(|toast| !toast.is_persistent()));
         assert!(
             stack.toasts()[0].close_focus.borrow().is_empty(),
             "older transient is collapsed, not an expanded-stack fixture"
@@ -873,32 +873,26 @@ fn actionable_info_preserves_transient_focus(
                 arrived.is_persistent(),
                 "actionable Info is persistent on arrival"
             );
-            assert!(stack.persistent_lane_open(ToastAudience::Repository));
             let original = stack.toasts().iter().find(|toast| toast.id == id).unwrap();
             assert!(!original.is_persistent(), "original card remains transient");
             assert!(
-                original
-                    .close_focus
-                    .borrow()
-                    .iter()
-                    .any(|(host, stored)| { *host == window.window_id() && *stored == focus }),
-                "painted={painted}: original control handle survives arrival"
+                original.close_focus.borrow().is_empty(),
+                "painted={painted}: collapsed preview no longer owns a control"
             );
         });
         cx.update_window(window, |_, window, _| {
             assert!(
-                focus.is_focused(window),
-                "painted={painted}: Button keeps focus"
+                !focus.is_focused(window),
+                "painted={painted}: hidden Button relinquishes focus"
             );
             assert!(
-                !root.is_focused(window),
-                "painted={painted}: production subscriber must not focus root"
+                root.is_focused(window),
+                "painted={painted}: production subscriber repairs hidden focus"
             );
         })
         .unwrap();
     }
-    assert!(e2e::control_bounds(window.window_id(), "toast-persistent-stack").is_some());
-    assert!(e2e::control_bounds(window.window_id(), "toast-transient-stack").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "toast-stack").is_some());
     stack.update(cx, |stack, cx| {
         let ids: Vec<_> = stack.toasts().iter().map(|toast| toast.id).collect();
         for id in ids {

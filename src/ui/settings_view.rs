@@ -183,7 +183,6 @@ pub(super) fn render_settings_overlay(
     analyze_dirty: bool,
     reset: Option<super::settings_analyze::AnalyzeResetAlert>,
     scroll: gpui::ScrollHandle,
-    notification_lane: Option<AnyElement>,
     notifications: Option<AnyElement>,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
@@ -249,9 +248,6 @@ pub(super) fn render_settings_overlay(
                         .on_click(close_click),
                 )),
         )
-        .when_some(notification_lane, |panel, lane| {
-            panel.child(div().flex().justify_end().flex_shrink_0().child(lane))
-        })
         // One persistent scroll owner for the whole body; the kit owns thumb
         // drag/visibility state under the stable scrollbar element id.
         .child(
@@ -261,6 +257,7 @@ pub(super) fn render_settings_overlay(
                 .flex_col()
                 .flex_1()
                 .min_h_0()
+                .child(super::e2e::measure_inside("toast-content-anchor"))
                 .child(super::render_helpers::with_system_vertical_scrollbar(
                     "settings-scrollbar",
                     &scroll,

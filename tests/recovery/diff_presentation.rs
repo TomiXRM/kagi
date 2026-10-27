@@ -223,6 +223,7 @@ pub fn scenario_conflict_image_zoom(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_conflict_preview_no_render_io(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
     let restore = GlobalSettings::capture();
     theme::set_zoom(1.);
     for preset in ["apple-light", "apple-dark"] {

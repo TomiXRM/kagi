@@ -206,8 +206,7 @@ impl toast_stack::ToastStack {
             let leaving = toast.dismissing.is_some();
             let card = toast_card(toast, error_line_height, cx);
 
-            // Slide from the host's placement edge; bottom transients retain
-            // their leading animation while content/lane cards enter trailing.
+            // Every card enters from the shared content stack's leading edge.
             // Reduce motion: skip the horizontal slide (a vestibular trigger) and
             // show the toast at its resting state — visible while present, hidden
             // once leaving — so it appears/disappears without motion.

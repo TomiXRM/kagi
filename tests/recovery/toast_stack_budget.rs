@@ -1295,6 +1295,20 @@ fn assert_content_anchor(
     dimensions: (f32, f32),
     repository: bool,
 ) -> Bounds<Pixels> {
+    // A resize can replace the full navigator with the compact rail. Probes
+    // retain their last paint, so discard old chrome geometry before measuring
+    // this frame rather than intersecting a sidebar that is no longer mounted.
+    let chrome_ids = [
+        "sidebar-clip",
+        "compact-rail",
+        "conflict-sidebar-clip",
+        "settings-titlebar",
+        "right-pane-clip",
+        "toolbar-row",
+    ];
+    for id in chrome_ids {
+        e2e::clear_control_bounds(window.window_id(), id);
+    }
     draw(cx, window);
     let bounds = e2e::control_bounds(window.window_id(), control)
         .unwrap_or_else(|| panic!("{control} painted in native host"));
@@ -1331,20 +1345,14 @@ fn assert_content_anchor(
         container.top() >= anchor.top(),
         "stack fits actual content height"
     );
-    for id in [
-        "sidebar-clip",
-        "conflict-sidebar-clip",
-        "settings-titlebar",
-        "right-pane-clip",
-        "toolbar-row",
-    ] {
+    for id in chrome_ids {
         if let Some(chrome) = e2e::control_bounds(window.window_id(), id) {
             assert!(
                 container.right() <= chrome.left()
                     || container.left() >= chrome.right()
                     || container.bottom() <= chrome.top()
                     || container.top() >= chrome.bottom(),
-                "notification stack never intersects {id}"
+                "notification stack never intersects {id}: stack {container:?}, chrome {chrome:?}"
             );
         }
     }

@@ -167,10 +167,12 @@ fn exercise_lane(
             .collect()
     });
     cx.run_until_parked();
+    // Native accessibility is lazy: activate before painting the tree that
+    // supplies the real disclosure Press action.
+    crate::native_ax::activate(cx);
     draw(cx, window);
     let lane = assert_safe_lane(window, layout);
     let collapsed = bounds(window, "toast-container");
-    crate::native_ax::activate(cx);
     let more = i18n::Msg::ToastMore.t().replace("{count}", "2");
     assert!(
         crate::native_ax::press(cx, window, &more),
@@ -178,9 +180,35 @@ fn exercise_lane(
     );
     cx.run_until_parked();
     draw(cx, window);
+    assert_eq!(
+        crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]["expanded"],
+        true,
+        "native disclosure expands the shared Conflict stack"
+    );
     let expanded = bounds(window, "toast-container");
     assert!((expanded.bottom() - collapsed.bottom()).abs() <= px(1.));
     assert!(expanded.top() <= collapsed.top());
+    assert_eq!(assert_safe_lane(window, layout), lane);
+    // Expansion must expose actual older cards, not only flip aria-expanded.
+    // Reach the oldest card through the bounded scroll viewport.
+    let oldest_message = format!("toast-message-{}", errors[0]);
+    e2e::clear_control_bounds(window.window_id(), &oldest_message);
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: gpui::point(expanded.center().x, expanded.bottom() - px(2.)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-600.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    draw(cx, window);
+    let oldest = bounds(window, &oldest_message);
+    assert!(
+        oldest.bottom() > expanded.top() && oldest.top() < expanded.bottom(),
+        "expanded Conflict stack exposes the oldest card through its bounded viewport"
+    );
+    crate::native_ax::node(cx, window, ("toast-dismiss", errors[0]).into());
     assert_eq!(assert_safe_lane(window, layout), lane);
     let shifted = control_bounds(window, layout);
     assert_eq!(
@@ -252,14 +280,48 @@ fn exercise_lane(
     assert_eq!(control_bounds(window, layout), shifted);
     assert_eq!(assert_safe_footer(window, layout), original_footer);
     assert!(bounds(window, "busy-snackbar").size.height > px(0.));
+    let read = kagi_ui_core::slow_read::SlowRead::AheadBehind;
+    assert_eq!(
+        crate::native_ax::node(cx, window, "busy-snackbar-caption".into())["aria"]["label"],
+        i18n::slow_read_label(read),
+        "bounded paint preserves the complete accessible busy caption"
+    );
+    assert_eq!(
+        crate::native_ax::node(cx, window, "busy-snackbar-advice-text".into())["aria"]["label"],
+        i18n::slow_read_advice(read),
+        "bounded paint preserves the complete accessible advice"
+    );
     for id in ["busy-snackbar-skip", "busy-snackbar-dismiss"] {
         let control = bounds(window, id);
         assert!(control.size.width > px(0.) && control.size.height > px(0.));
         let container = bounds(window, "toast-container");
         assert!(
-            control.top() >= container.top() && control.bottom() <= container.bottom(),
-            "{id} fits the shared content stack"
+            control.top() >= container.top()
+                && control.bottom() <= container.bottom()
+                && control.left() >= container.left()
+                && control.right() <= container.right(),
+            "{layout}/{:?}/{:.2}x: {id} fits the shared content stack: control {control:?}, container {container:?}",
+            i18n::lang(),
+            theme::zoom()
         );
+    }
+    // Opt-in native fixture frames for the narrow/zoom HIG review. These are
+    // held-read Tier A evidence, not plain-application Tier B captures.
+    if std::env::var_os("KAGI_GUI_E2E_ONSCREEN").is_some()
+        && i18n::lang() == i18n::Lang::Ja
+        && (theme::zoom() - 1.67).abs() < 0.01
+        && matches!(layout, "text" | "saved")
+    {
+        let width = cx
+            .update_window(window, |_, window, _| {
+                f32::from(window.viewport_size().width)
+            })
+            .unwrap();
+        let tag = format!(
+            "toast-conflict-{layout}-ja167-{}-{width}",
+            theme::theme().slug
+        );
+        crate::macos::capture_screenshot_best_effort(cx, window, &tag);
     }
     let control = if matches!(layout, "text" | "raw") {
         "busy-snackbar-skip"

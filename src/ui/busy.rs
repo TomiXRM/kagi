@@ -360,42 +360,51 @@ impl KagiApp {
             .flex()
             .flex_col()
             .child(caption);
-        if let Some((kind, elapsed)) = write {
+        let advice = if let Some((kind, elapsed)) = write {
             let advice = i18n::slow_write_advice(kind, elapsed);
             #[cfg(feature = "gui-e2e")]
             super::e2e::record_busy_advice(&advice);
+            Some(SharedString::from(advice))
+        } else {
+            slow.map(|read| SharedString::from(i18n::slow_read_advice(read)))
+        };
+        if let Some(advice) = advice {
+            let tooltip = advice.clone();
             text = text.child(super::e2e::measure_control(
                 "busy-snackbar-advice",
                 div()
+                    .id("busy-snackbar-advice-text")
+                    .role(gpui::Role::Label)
+                    .aria_label(advice.clone())
                     .text_sm()
+                    .line_height(theme::scaled_px(18.))
+                    .max_h(theme::scaled_px(18.))
+                    .line_clamp(1)
+                    .text_ellipsis()
                     .text_color(rgb(theme().text_sub))
-                    .child(SharedString::from(advice)),
+                    .child(advice)
+                    .hover_tooltip_builder("busy-snackbar-advice-help", move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    }),
             ));
-        }
-        if write.is_none() {
-            if let Some(read) = slow {
-                text = text.child(super::e2e::measure_control(
-                    "busy-snackbar-advice",
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(i18n::slow_read_advice(read))),
-                ));
-            }
         }
         let skip = slow
             .filter(|read| read.skippable())
             .map(|_| self.render_busy_skip(cx));
+        let clone_action = if show_clone_action && !self.busy_progress_hidden() {
+            self.render_clone_progress_action(cx)
+        } else {
+            None
+        };
+        let has_actions = skip.is_some() || clone_action.is_some();
         div()
             .relative()
             .child(super::e2e::measure_inside("busy-snackbar"))
             .w_full()
+            .flex_shrink_0()
             .flex()
-            .flex_row()
-            .items_center()
-            // 1.5× the toast gap (8px → 12px) so the larger sync icon breathes
-            // a bit more from the label (user request).
-            .gap_3()
+            .flex_col()
+            .gap_2()
             .px_4()
             .py_3()
             .rounded(theme::scaled_px(8.))
@@ -404,19 +413,45 @@ impl KagiApp {
             .border_color(rgb(theme().elevated_border(accent)))
             .text_base()
             .text_color(rgb(theme().text_main))
-            .child(div().flex_shrink_0().child(icon))
-            .child(text)
-            .children(skip)
-            .when(show_clone_action && !self.busy_progress_hidden(), |el| {
-                el.children(self.render_clone_progress_action(cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    // Keep breathing room around the larger sync icon.
+                    .gap_3()
+                    .child(div().flex_shrink_0().child(icon))
+                    .child(text)
+                    .child(self.render_busy_dismiss(cx)),
+            )
+            .when(has_actions, |card| {
+                card.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap_2()
+                        .children(skip)
+                        .children(clone_action),
+                )
             })
-            .child(self.render_busy_dismiss(cx))
             .into_any()
     }
 
     fn busy_caption(&self, label: SharedString) -> gpui::AnyElement {
         if self.home_github.cloning.is_none() || self.busy_progress_hidden() {
-            return div().child(label).into_any();
+            let tooltip = label.clone();
+            return div()
+                .id("busy-snackbar-caption")
+                .role(gpui::Role::Label)
+                .aria_label(label.clone())
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(label)
+                .hover_tooltip_builder("busy-snackbar-caption-help", move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                })
+                .into_any_element();
         }
         let role = gpui::Role::Status;
         #[cfg(feature = "gui-e2e")]

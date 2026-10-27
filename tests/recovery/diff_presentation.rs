@@ -225,6 +225,19 @@ pub fn scenario_conflict_image_zoom(cx: &mut VisualTestAppContext) {
 pub fn scenario_conflict_preview_no_render_io(cx: &mut VisualTestAppContext) {
     let restore = GlobalSettings::capture();
     theme::set_zoom(1.);
+    for preset in ["apple-light", "apple-dark"] {
+        for locale in ["en", "ja"] {
+            theme::set_active(preset);
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            assert_preview_no_render_io(cx);
+        }
+    }
+    drop(restore);
+    eprintln!("[gui-e2e] PASS conflict_preview_no_render_io");
+}
+
+fn assert_preview_no_render_io(cx: &mut VisualTestAppContext) {
     let fixture = conflict_image_fixture();
     let repo = fixture.path();
     let (hold, release) = deferred::<()>(cx);
@@ -280,8 +293,6 @@ pub fn scenario_conflict_preview_no_render_io(cx: &mut VisualTestAppContext) {
         i18n::lang(),
         theme::theme().slug
     );
-    drop(restore);
-    eprintln!("[gui-e2e] PASS conflict_preview_no_render_io");
 }
 
 pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext) {

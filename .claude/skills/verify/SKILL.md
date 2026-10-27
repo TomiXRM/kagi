@@ -69,6 +69,10 @@ compiler-artifact output and record its SHA-256 with the source head. Never
 reuse an executable basename from an earlier run: feature/dependency changes
 can leave a stale runner beside the current one in `target/debug/deps`.
 Record per-assertion locale/theme receipts when settling disputed coverage.
+The no-render-I/O acceptance case explicitly loops EN/JA × Apple Light/Dark;
+do not infer language coverage from launch environment alone. The folder-opener
+fixture publishes its captured argument atomically, so existence means completion,
+not merely that the child created an empty destination.
 
 `KAGI_GUI_E2E_ONLY` is not optional — every invocation names the scenarios it
 wants. There is deliberately no unfiltered example here to copy: without the

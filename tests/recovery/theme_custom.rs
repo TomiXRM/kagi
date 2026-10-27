@@ -551,7 +551,7 @@ pub fn scenario_theme_folder_controls(cx: &mut VisualTestAppContext) {
         let script = bin.join(name);
         std::fs::write(
             &script,
-            "#!/bin/sh\nprintf '%s' \"$1\" > \"$1/../opened.txt\"\n",
+            "#!/bin/sh\nprintf '%s' \"$1\" > \"$1/../opened.tmp\" && mv \"$1/../opened.tmp\" \"$1/../opened.txt\"\n",
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();

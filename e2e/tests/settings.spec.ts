@@ -131,6 +131,57 @@ async function paintedRgb(page: Page, x: number, y: number) {
   }, png.toString("base64"));
 }
 
+test("pale accent focus paint contrasts on unselected themes and ON switches and clears when inactive", async ({ page }, info) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 900, height: 740 });
+  await boot(page);
+  const luminance = (rgb: number[]) => rgb.reduce((sum, value, channel) => {
+    const s = value / 255;
+    return sum + (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][channel];
+  }, 0);
+  for (const appearance of ["apple-light", "apple-dark"]) {
+    await host(page, "appearance", appearance);
+    await host(page, "accent", "yellow");
+    await pane(page, "appearance");
+    await click(page, `settings-theme-${appearance}`);
+    await page.keyboard.press("ArrowRight");
+    await frames(page);
+    const theme = (await observed(page)).controls.find(control => control.id.startsWith("settings-theme-") && control.focused)!;
+    expect(theme.selected).toBe(false);
+    for (const kind of ["unselected-theme", "on-switch"]) {
+      let control = theme;
+      if (kind === "on-switch") {
+        await pane(page, "graph");
+        await click(page, "compact-toggle");
+        if (!(await observed(page)).graphCompact) await click(page, "compact-toggle");
+        control = await probe(page, "compact-toggle");
+        expect(control.selected).toBe(true);
+      }
+      expect(control.focused).toBe(true);
+      expect(await page.evaluate(() => document.hasFocus())).toBe(true);
+      const background = await paintedRgb(page, control.x - 8, control.y + control.height / 2);
+      const ring = await paintedRgb(page, control.x - 4, control.y + control.height / 2);
+      const a = luminance(background), b = luminance(ring);
+      expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toBeGreaterThanOrEqual(3);
+      await info.attach(`${appearance}-${kind}-yellow-active.png`, { body: await page.screenshot(), contentType: "image/png" });
+      const other = await page.context().newPage();
+      try {
+        await other.bringToFront();
+        await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
+        await frames(page);
+        const inactive = await paintedRgb(page, control.x - 4, control.y + control.height / 2);
+        inactive.forEach((value, channel) => expect(Math.abs(value - background[channel])).toBeLessThanOrEqual(2));
+        await info.attach(`${appearance}-${kind}-yellow-inactive.png`, { body: await page.screenshot(), contentType: "image/png" });
+      } finally {
+        await other.close();
+        await page.bringToFront();
+        await frames(page);
+      }
+      expect((await probe(page, control.id)).selected).toBe(control.selected);
+    }
+  }
+});
+
 test("selected hover paint and segmented visible geometry remain distinct from hit targets", async ({ page }, info) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 900, height: 740 });

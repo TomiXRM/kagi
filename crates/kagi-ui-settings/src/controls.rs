@@ -7,6 +7,53 @@ use kagi_ui_core::theme::{self, theme};
 pub(crate) fn pt(n: f32) -> Pixels {
     theme::scaled_px(n * 16. / theme::BASE_REM_PX)
 }
+
+fn focus_ring_color(accent: u32, background: u32) -> Hsla {
+    let base: Hsla = rgb(accent).into();
+    let surface: Hsla = rgb(background).into();
+    let candidate = |lightness| Hsla {
+        l: lightness,
+        a: 0.75,
+        ..base
+    };
+    let contrast =
+        |ring| theme::contrast_ratio(u32::from(surface.blend(ring).to_rgb()) >> 8, background);
+    let initial = candidate(base.l);
+    // Leave rounding headroom for the final composited native/browser pixels.
+    if contrast(initial) >= 3.1 {
+        return initial;
+    }
+    let endpoint = if contrast(candidate(0.)) >= contrast(candidate(1.)) {
+        0.
+    } else {
+        1.
+    };
+    for step in 1..=32 {
+        let ring = candidate(base.l + (endpoint - base.l) * step as f32 / 32.);
+        if contrast(ring) >= 3.1 {
+            return ring;
+        }
+    }
+    candidate(endpoint)
+}
+
+#[cfg(test)]
+#[test]
+fn focus_ring_is_translucent_and_contrasts_after_compositing() {
+    for background in [0xf7f7f7, 0xffffff, 0xe5e5e5, 0x1e1e1e, 0x29292c, 0x444444] {
+        for accent in [0xffcc00, 0x007aff, 0x0a84ff, 0xaf52de, 0xffffff, 0x000000] {
+            let ring = focus_ring_color(accent, background);
+            let surface: Hsla = rgb(background).into();
+            let base: Hsla = rgb(accent).into();
+            assert_eq!(ring.a, 0.75);
+            assert_eq!(ring.h, base.h);
+            assert_eq!(ring.s, base.s);
+            let painted = u32::from(surface.blend(ring).to_rgb()) >> 8;
+            assert!(theme::contrast_ratio(painted, background) >= 3.0);
+        }
+    }
+}
+
 pub(crate) fn section(title: Msg, content: impl IntoElement) -> AnyElement {
     div()
         .min_w_0()
@@ -178,6 +225,7 @@ impl SettingsView {
         selected: bool,
         enabled: bool,
         role: Role,
+        focus_background: u32,
         intent: SettingsIntent,
         roving: Option<(String, usize, Vec<String>)>,
         window: &Window,
@@ -195,7 +243,11 @@ impl SettingsView {
         let revealed = self.revealed.entry(id.clone()).or_default().clone();
         let scroll = self.scroll.clone();
         let in_detail = !id.starts_with("settings-pane-");
-        let ring_color: Hsla = rgb(self.snapshot.effective_accent).into();
+        let ring_color = if focused {
+            focus_ring_color(self.snapshot.effective_accent, focus_background)
+        } else {
+            transparent_black()
+        };
         let probe = self.measured(
             id.clone(),
             role,
@@ -314,11 +366,13 @@ impl SettingsView {
                 }
             }))
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn button(
         &mut self,
         id: &str,
         label: SharedString,
         enabled: bool,
+        focus_background: u32,
         intent: SettingsIntent,
         window: &Window,
         cx: &mut Context<Self>,
@@ -329,6 +383,7 @@ impl SettingsView {
             false,
             enabled,
             Role::Button,
+            focus_background,
             intent,
             None,
             window,
@@ -360,6 +415,7 @@ impl SettingsView {
             false,
             enabled,
             Role::Button,
+            theme().bg_base,
             intent,
             None,
             window,
@@ -388,6 +444,7 @@ impl SettingsView {
             checked,
             true,
             Role::Switch,
+            theme().bg_base,
             intent,
             None,
             window,
@@ -482,6 +539,7 @@ impl SettingsView {
                     selected,
                     enabled,
                     Role::RadioButton,
+                    theme().bg_base,
                     intent,
                     Some((group.into(), index, ids.clone())),
                     window,
@@ -574,6 +632,7 @@ impl SettingsView {
                     selected,
                     true,
                     Role::Tab,
+                    theme().surface,
                     SettingsIntent::Pane(pane),
                     Some(("sidebar".into(), index, ids.clone())),
                     window,

@@ -50,6 +50,12 @@ at both zoom levels. Wrapped labels may increase height; the 18-point mini
 switch is a separate, unchanged control.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
+Run the focused browser paint/geometry tests before heavy native gates.
+The pale-accent regression injects an effective Yellow snapshot, uses real
+keyboard focus on an unselected theme and an ON switch, and measures screenshot
+contrast against adjacent background pixels. A second actual browser tab tests
+inactive ring removal without clearing selection. This does not claim an OS
+Increase Contrast bridge: the shared ring always adjusts its composited contrast.
 
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.

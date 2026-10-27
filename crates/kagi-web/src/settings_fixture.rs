@@ -61,6 +61,7 @@ pub struct SettingsFixture {
     view: Entity<SettingsView>,
     input: Entity<InputState>,
     snapshot: SettingsSnapshot,
+    accent_override: Option<u32>,
     focus: gpui::FocusHandle,
     requests: Vec<String>,
     unsupported: Vec<String>,
@@ -159,6 +160,7 @@ impl SettingsFixture {
             view,
             input,
             snapshot,
+            accent_override: None,
             focus,
             requests: Vec::new(),
             unsupported: Vec::new(),
@@ -172,7 +174,9 @@ impl SettingsFixture {
     }
 
     fn seed(&mut self, cx: &mut Context<Self>) {
-        self.snapshot.effective_accent = theme::theme().ui_accent();
+        self.snapshot.effective_accent = self
+            .accent_override
+            .unwrap_or_else(|| theme::theme().ui_accent());
         self.view.update(cx, |view, cx| {
             view.seed_effective(self.snapshot.clone(), cx)
         });
@@ -332,6 +336,13 @@ impl SettingsFixture {
                 self.snapshot.theme_slug = slug.to_owned().into();
                 self.snapshot.accent_applicable = slug.starts_with("apple-");
                 theme::sync_gpui_component_theme(cx);
+            }
+            "accent" => {
+                self.accent_override = match value {
+                    Some("yellow") => Some(0xffcc00),
+                    Some("default") => None,
+                    _ => return Err("Unknown fixture accent".into()),
+                };
             }
             "language" => {
                 self.snapshot.language = match value {

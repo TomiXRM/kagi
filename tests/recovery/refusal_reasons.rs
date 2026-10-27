@@ -118,7 +118,8 @@ fn delete_current_branch(cx: &mut VisualTestAppContext) {
     let notes = blocked_plan(cx, &app, "delete-branch", |app| {
         app.delete_branch_modal().map(|m| m.plan.blockers.clone())
     });
-    // #1270: root Return cancels danger dialogs. Exercise the guarded
+    crate::destructive_modal_return::root_return_keeps_modal(cx, &app, window, &repo);
+    // Root Return leaves danger dialogs unchanged. Exercise the guarded
     // confirmation boundary explicitly; the disabled button remains inert.
     app.update(cx, |app, cx| app.start_delete_branch(cx));
     wait_idle(cx, &app);

@@ -79,11 +79,14 @@ fn image_scale(extent: (u32, u32), viewport: (f32, f32)) -> f32 {
 type ImageViewports = std::rc::Rc<std::cell::Cell<[Option<gpui::Bounds<gpui::Pixels>>; 2]>>;
 type SizedImage = (std::sync::Arc<gpui::RenderImage>, (u32, u32));
 
+/// Conflict hosts keep the shared headers above their in-flow notification lane;
+/// ordinary diff hosts render them inline with `show_headers`.
 pub(crate) fn side_pair(
     pair: SidePair,
     actions: [Option<gpui::AnyElement>; 2],
     pdfs: Option<&DiffPdfViewers>,
     probes: [&'static str; 2],
+    show_headers: bool,
 ) -> gpui::AnyElement {
     let extent = image_extent([&pair.left, &pair.right].map(|side| match side {
         SideContent::Image { dimensions, .. } => *dimensions,
@@ -159,11 +162,13 @@ pub(crate) fn side_pair(
             .flex_col()
             .overflow_hidden()
             .child(super::super::e2e::measure_inside(format!("{probe}-column")))
-            .child(
-                side_header(header.label, header.accent)
-                    .relative()
-                    .child(super::super::e2e::measure_inside(format!("{probe}-header"))),
-            );
+            .when(show_headers, |column| {
+                column.child(
+                    side_header(header.label, header.accent)
+                        .relative()
+                        .child(super::super::e2e::measure_inside(format!("{probe}-header"))),
+                )
+            });
         if action_row {
             column = column.child(
                 div()

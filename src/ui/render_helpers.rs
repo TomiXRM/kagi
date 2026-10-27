@@ -696,6 +696,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 } else {
                     ["main-diff-image-old-body", "main-diff-image-new-body"]
                 },
+                true,
             ))
             .into_any_element()
     });

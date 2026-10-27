@@ -242,16 +242,20 @@ fn dismissal_keeps_settings_commands(
             .find(|w| w.window_id() != window.window_id())
             .unwrap()
     });
-    // Each host must retain its own close handle for the removal event.
+    // A Settings-owned notice must never acquire a repository-host control.
     draw(cx, repo);
     assert!(
         cx.read(|cx| {
             let stack = app.read(cx).toast_stack.as_ref().unwrap().read(cx);
-            let hosts = stack.toasts().last().unwrap().close_focus.borrow();
+            let toast = stack.toasts().last().unwrap();
+            assert_eq!(toast.subject, kagi::ui::toast_stack::ToastSubject::Settings);
+            let hosts = toast.close_focus.borrow();
             hosts.iter().any(|(id, _)| *id == window.window_id())
-                && hosts.iter().any(|(id, _)| *id == repo.window_id())
+                && hosts.iter().all(|(id, _)| *id != repo.window_id())
+                && e2e::control_bounds(repo.window_id(), &format!("toast-dismiss-{}", toast.id))
+                    .is_none()
         }),
-        "shared toast retains both host close controls"
+        "Settings notice retains only its owning host's close control"
     );
     for _ in 0..20 {
         if cx

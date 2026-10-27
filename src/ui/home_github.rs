@@ -376,7 +376,8 @@ impl KagiApp {
             Err(error) => {
                 klog!("home: github failed: {error}");
                 if self.home_github.refreshing {
-                    self.push_toast(
+                    self.push_toast_for(
+                        crate::ui::toast_stack::ToastSubject::App,
                         super::ToastKind::Error,
                         Msg::HomeGithubRefreshFailed.t().replace(
                             "{}",

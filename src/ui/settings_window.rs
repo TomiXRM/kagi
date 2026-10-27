@@ -13,6 +13,12 @@ use gpui_component::Root;
 struct SettingsWindowHandle(Option<WindowHandle<Root>>);
 impl Global for SettingsWindowHandle {}
 
+pub(super) fn owns_window(id: gpui::WindowId, cx: &App) -> bool {
+    cx.try_global::<SettingsWindowHandle>()
+        .and_then(|handle| handle.0)
+        .is_some_and(|handle| handle.window_id() == id)
+}
+
 pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
     let existing = cx.default_global::<SettingsWindowHandle>().0;
     if let Some(handle) = existing {
@@ -38,7 +44,12 @@ pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
         Err(error) => {
             eprintln!("Settings window: {error}");
             error_owner.update(cx, |app, cx| {
-                app.push_toast(super::ToastKind::Error, Msg::SettingsWindowFailed.t(), cx);
+                app.push_toast_for(
+                    super::toast_stack::ToastSubject::App,
+                    super::ToastKind::Error,
+                    Msg::SettingsWindowFailed.t(),
+                    cx,
+                );
             });
             cx.default_global::<SettingsWindowHandle>().0 = None;
         }
@@ -136,6 +147,7 @@ impl SettingsWindow {
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
         let release = cx.observe_release_in(&owner, window, |_, _, window, cx| close(window, cx));
         let toast_removed = owner.read(cx).toast_stack.clone().map(|stack| {
+            cx.observe(&stack, |_, _, cx| cx.notify()).detach();
             cx.subscribe_in(
                 &stack,
                 window,
@@ -278,11 +290,33 @@ impl SettingsWindow {
         }
     }
 
-    fn page_body(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::Div {
+    fn page_body(
+        &self,
+        owner: &Entity<KagiApp>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let chrome = 46. + f32::from(theme::scaled_px(48.));
         let host = cx.entity().downgrade();
         let pane = self.pane;
         let zoom = theme::zoom();
+        let persistent_lane = owner.read(cx).toast_stack.as_ref().is_some_and(|stack| {
+            stack
+                .read(cx)
+                .persistent_lane_open(super::toast_stack::ToastAudience::Settings)
+        });
+        let notifications = persistent_lane
+            .then(|| {
+                owner.update(cx, |app, cx| {
+                    app.render_toasts(
+                        window,
+                        super::busy::ToastPlacement::PersistentLane,
+                        crate::ui::toast_stack::ToastAudience::Settings,
+                        cx,
+                    )
+                })
+            })
+            .flatten();
         div()
             .relative()
             .flex()
@@ -290,7 +324,21 @@ impl SettingsWindow {
             .flex_shrink_0()
             .px_5()
             .py_4()
-            .child(self.page(owner, cx))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .justify_end()
+                    .flex_shrink_0()
+                    .child(super::e2e::measure_inside("toast-content-anchor"))
+                    .children(notifications),
+            )
+            .child(
+                div()
+                    .relative()
+                    .child(super::e2e::measure_inside("settings-page-controls"))
+                    .child(self.page(owner, cx)),
+            )
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -328,7 +376,7 @@ impl Render for SettingsWindow {
         window.set_window_title(Msg::SettingsTitle.t());
         window.set_rem_size(theme::scaled_px(16.));
         let tabs = self.pane_tabs(cx);
-        let body = self.page_body(&owner, cx);
+        let body = self.page_body(&owner, window, cx);
         owner.update(cx, |app, cx| {
             let models_shown = self.pane == 2
                 && matches!(
@@ -433,7 +481,16 @@ impl Render for SettingsWindow {
                     .child(body),
                 cx,
             ))
-            .children(owner.update(cx, |app, cx| app.render_toasts(None, false, cx)))
+            .map(|el| {
+                el.children(owner.update(cx, |app, cx| {
+                    app.render_toasts(
+                        window,
+                        super::busy::ToastPlacement::Transient,
+                        crate::ui::toast_stack::ToastAudience::Settings,
+                        cx,
+                    )
+                }))
+            })
             .when_some(
                 owner.read(cx).analyze_reset_alert().cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),

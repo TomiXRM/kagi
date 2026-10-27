@@ -777,3 +777,23 @@ fn recovery_sentences_exclude_display_commands_in_both_languages() {
         assert!(!text.contains("操作記録の backup ref"));
     }
 }
+
+#[cfg(test)]
+#[test]
+fn abort_heading_preserves_operation_chip_and_full_title() {
+    let _guard = super::tests::LOCK.lock();
+    let previous = lang();
+    let title = PlanTitle::Conflicts(ConflictsTitle::Abort { op: "merge".into() });
+    for (language, heading, full_title) in [
+        (Lang::En, "Abort", "Abort merge"),
+        (Lang::Ja, "中止", "merge を中止"),
+    ] {
+        super::set_lang_no_persist(language);
+        let (label, chips) = plan_heading_text(&title);
+        assert_eq!(label, heading);
+        assert_eq!(chips[0].as_deref(), Some("merge"));
+        assert_eq!(chips[1], None);
+        assert_eq!(plan_title_text(&title), full_title);
+    }
+    super::set_lang_no_persist(previous);
+}

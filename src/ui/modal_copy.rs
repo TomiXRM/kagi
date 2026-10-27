@@ -38,15 +38,19 @@ pub(crate) fn modal_copy_button_lazy(
     text: impl Fn() -> String + 'static,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let copy = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        cx.stop_propagation();
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text()));
-        this.push_toast(
-            ToastKind::Info,
-            SharedString::from(Msg::ModalCopied.t()),
-            cx,
-        );
-    });
+    let copy = cx.listener(
+        move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+            cx.stop_propagation();
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text()));
+            let subject = this.toast_subject_for_window(window, cx);
+            this.push_toast_for(
+                subject,
+                ToastKind::Info,
+                SharedString::from(Msg::ModalCopied.t()),
+                cx,
+            );
+        },
+    );
     super::keyboard_nav::focusable(
         div()
             .id(id)

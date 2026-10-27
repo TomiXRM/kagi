@@ -213,12 +213,15 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
         "Command-Period preserves the unsaved draft"
     );
     click(cx, window, "settings-analyze-reset");
-    cx.simulate_keystrokes(window, "enter");
-    draw(cx, window);
-    assert!(
-        e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none(),
-        "Return cancels destructive alert"
-    );
+    for _ in 0..2 {
+        cx.simulate_keystrokes(window, "enter");
+        draw(cx, window);
+        assert!(
+            e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some(),
+            "Return retains the destructive alert without a default action"
+        );
+        assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    }
     assert_eq!(
         cx.read(|cx| app
             .read(cx)
@@ -230,6 +233,13 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
             .to_string()),
         "unsaved-pattern\n"
     );
+    cx.simulate_keystrokes(window, "escape");
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none(),
+        "Escape explicitly cancels the unchanged reset alert"
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
     let window = reopen(cx, app, window);
     assert_eq!(
         cx.read(|cx| app
@@ -260,7 +270,23 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
         e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some(),
         "Tab cannot dismiss alert"
     );
-    click(cx, window, "settings-analyze-reset-confirm");
+    let mut confirm_focused = false;
+    for _ in 0..6 {
+        kagi::ui::button_style::modal_focus_probe();
+        cx.simulate_keystrokes(window, "tab");
+        draw(cx, window);
+        cx.simulate_keystrokes(window, "f19");
+        if kagi::ui::button_style::modal_focus_probe() == Some("settings-reset-confirm") {
+            confirm_focused = true;
+            break;
+        }
+    }
+    assert!(
+        confirm_focused,
+        "Reset must be explicitly keyboard reachable"
+    );
+    crate::keyboard_nav::keys(cx, window, "enter");
+    draw(cx, window);
     assert_eq!(
         settings::read_analyze_ignore_text(),
         settings::DEFAULT_ANALYZE_IGNORE
@@ -446,6 +472,10 @@ fn portable_reset_leg(
     cx.simulate_keystrokes(window, "enter");
     draw(cx, window);
     assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some());
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    cx.simulate_keystrokes(window, "escape");
+    draw(cx, window);
     assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none());
     assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
     portable_yields_to_plan(cx, app, window);

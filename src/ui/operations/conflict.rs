@@ -212,7 +212,14 @@ impl KagiApp {
                         &owner.path,
                     );
                     let recording = kagi_git::backend::recording::finalize(entry);
-                    app.present_operation_completion(&recording, true, false, Some(message), cx);
+                    app.present_operation_completion(
+                        &recording,
+                        true,
+                        false,
+                        Some(message),
+                        None,
+                        cx,
+                    );
                 }
                 cx.notify();
             });
@@ -654,6 +661,7 @@ impl KagiApp {
                             current && result.is_err(),
                             false,
                             None,
+                            None,
                             cx,
                         );
                         if result.is_ok() {
@@ -850,7 +858,9 @@ impl KagiApp {
                         klog!("executed: {}", op_name);
                         let stopped = !is_stash
                             && matches!(&result.outcome, kagi_git::ContinueOutcome::Staged);
-                        app.present_operation_completion(&recording, current, stopped, None, cx);
+                        app.present_operation_completion(
+                            &recording, current, stopped, None, None, cx,
+                        );
                         if modal_matches {
                             app.clear_conflict_continue_modal();
                         }
@@ -874,7 +884,9 @@ impl KagiApp {
                             _ => None,
                         };
                         klog!("{} failed: {}", op_name, err_msg);
-                        app.present_operation_completion(&recording, current, false, None, cx);
+                        app.present_operation_completion(
+                            &recording, current, false, None, None, cx,
+                        );
                         if modal_matches {
                             // This admitted request is terminal. Retire only
                             // its frozen confirmation so its result/required

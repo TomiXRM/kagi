@@ -17,7 +17,7 @@ use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
-use gpui_component::{Icon, IconName};
+use gpui_component::IconName;
 use kagi_domain::plan::OperationPlan;
 use kagi_domain::plan_note::{PlanNote, ShellKind, StashNote};
 use kagi_ui_core::i18n::{
@@ -182,11 +182,10 @@ pub(crate) fn render_stash_push_modal(
 
         // ── Warnings ──────────────────────────────────────
         if !p.warnings.is_empty() {
-            let t = current_theme();
-            let warning_color =
-                gpui::rgba((t.change_modified << 8) | if t.dark { 0xd9 } else { 0xff });
             let mut warn_col = div().flex().flex_col().gap_1();
             for (index, w) in p.warnings.iter().enumerate() {
+                let (glyph, color) =
+                    super::plan_card_rows::note_presentation(w.kind(), &current_theme());
                 let full = SharedString::from(plan_note_text(w));
                 let short = match w {
                     PlanNote::Stash(StashNote::UntrackedIncluded { count }) => SharedString::from(
@@ -199,19 +198,16 @@ pub(crate) fn render_stash_push_modal(
                 warn_col = warn_col.child(
                     div()
                         .id(("stash-push-warning", index))
-                        .role(gpui::Role::Alert)
+                        .role(gpui::Role::Note)
                         .aria_label(full.clone())
                         .flex()
                         .items_start()
                         .gap_2()
                         .text_sm()
-                        .text_color(warning_color)
-                        .child(
-                            Icon::new(IconName::TriangleAlert)
-                                .size_4()
-                                .flex_shrink_0()
-                                .mt(theme::scaled_px(3.)),
-                        )
+                        .text_color(rgb(color))
+                        .when(!glyph.is_empty(), |row| {
+                            row.child(div().flex_shrink_0().mt(theme::scaled_px(3.)).child(glyph))
+                        })
                         .child(short)
                         .hover_tooltip_builder(
                             ("stash-push-warning-help", index),
@@ -458,7 +454,8 @@ pub(crate) fn render_stash_apply_modal(
     if !plan.warnings.is_empty() {
         let mut warnings = div().flex().flex_col().gap_1().flex_shrink_0();
         for (index, warning) in plan.warnings.iter().enumerate() {
-            let glyph = "\u{26a0}";
+            let (glyph, color) =
+                super::plan_card_rows::note_presentation(warning.kind(), &current_theme());
             #[cfg(feature = "gui-e2e")]
             WARNING_GLYPH.with(|value| *value.borrow_mut() = Some(glyph));
             warnings = warnings.child(
@@ -471,7 +468,7 @@ pub(crate) fn render_stash_apply_modal(
                         format!("stash-apply-warning-{index}").into(),
                         false,
                         glyph,
-                        current_theme().color_warning,
+                        color,
                         &plan_note_text(warning),
                         false,
                     )),

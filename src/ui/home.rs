@@ -209,6 +209,12 @@ impl KagiApp {
         } else {
             normal_sidebar
         };
+        let persistent_lane = self.toast_stack.as_ref().is_some_and(|stack| {
+            stack
+                .read(cx)
+                .persistent_lane_open(crate::ui::toast_stack::ToastAudience::Repository)
+        });
+        let home_controls = self.render_home_main(sidebar, compact, window, cx);
         let body = div()
             .id("home-tab-panel")
             .flex()
@@ -216,7 +222,16 @@ impl KagiApp {
             .flex_1()
             .min_h(px(0.))
             .child(self.render_home_sidebar(sidebar, window, cx))
-            .child(self.render_home_main(sidebar, compact, window, cx));
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .child(super::e2e::measure_inside("home-page-controls"))
+                    .child(home_controls),
+            );
         // Home is a document even when it is the window's only tab.
         let body = super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t());
         // Receipts outlive their repository tab. A detail action can reveal
@@ -268,6 +283,22 @@ impl KagiApp {
                     )
                     .child(self.render_chrome_spacer("home-drag-region", cx)),
             )
+            .when(persistent_lane, |home| {
+                home.child(
+                    div()
+                        .relative()
+                        .flex()
+                        .justify_end()
+                        .flex_shrink_0()
+                        .child(super::e2e::measure_inside("toast-content-anchor"))
+                        .children(self.render_toasts(
+                            window,
+                            super::busy::ToastPlacement::PersistentLane,
+                            crate::ui::toast_stack::ToastAudience::Repository,
+                            cx,
+                        )),
+                )
+            })
             .child(body)
             .children(operation_log);
         // A flex box, as the Welcome screen's root was: the window-global
@@ -307,7 +338,14 @@ impl KagiApp {
         // clone) says so here, with its details in Operation Log.
         let content = self
             .attach_modal_layer(home, false, window, cx)
-            .children(self.render_toasts(None, true, cx))
+            .map(|home| {
+                home.children(self.render_toasts(
+                    window,
+                    super::busy::ToastPlacement::Transient,
+                    crate::ui::toast_stack::ToastAudience::Repository,
+                    cx,
+                ))
+            })
             .into_any();
         self.attach_active_modal_key_routing(content, false, cx)
     }

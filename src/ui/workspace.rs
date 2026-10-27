@@ -280,7 +280,7 @@ impl WorkspaceItem for EditorWorkspaceItem {
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().editor_workspace.clone()?;
@@ -301,7 +301,14 @@ impl WorkspaceItem for EditorWorkspaceItem {
                 .min_w(px(0.))
                 .h_full()
                 .child(super::editor_workspace::EditorWorkspaceElement::new(
-                    ev, panel,
+                    ev,
+                    panel,
+                    app.render_toasts(
+                        window,
+                        super::busy::ToastPlacement::Repository,
+                        crate::ui::toast_stack::ToastAudience::Repository,
+                        cx,
+                    ),
                 ))
                 .when(cfg!(feature = "gui-e2e"), |el| {
                     el.child(super::e2e::measure_inside("editor-workspace-slot"))

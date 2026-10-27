@@ -361,6 +361,48 @@ impl Theme {
         self.readable_text_on(self.color_blocker, backgrounds, 4.6)
     }
 
+    /// Hue-preserving caption and outline ink against the row and its hover fill.
+    /// Cache both semantic roles: long file lists reuse these exact backgrounds.
+    pub fn status_label_text_on(&self, color: u32, background: u32, hover: u32) -> u32 {
+        #[derive(Clone, Copy)]
+        struct CachedInk {
+            key: [u32; 4],
+            ink: u32,
+        }
+        thread_local! {
+            static LAST: std::cell::Cell<[CachedInk; 2]> =
+                const { std::cell::Cell::new([CachedInk { key: [u32::MAX, 0, 0, 0], ink: 0 }; 2]) };
+        }
+        let key = [color, background, hover, self.text_main];
+        LAST.with(|cache| {
+            let entries = cache.get();
+            if let Some(entry) = entries.iter().find(|entry| entry.key == key) {
+                return entry.ink;
+            }
+            let ink = self.readable_text_on(color, &[background, hover], 4.6);
+            // Near middle luminance, even black/white can fall just below the
+            // rounding margin. Keep the AA requirement rather than that margin.
+            let ink = if contrast_ratio(ink, background) >= 4.5 && contrast_ratio(ink, hover) >= 4.5
+            {
+                ink
+            } else {
+                self.readable_text_on(color, &[background, hover], 4.5)
+            };
+            cache.set([CachedInk { key, ink }, entries[0]]);
+            ink
+        })
+    }
+
+    /// Caption ink for an opaque destructive button across its actual fills.
+    /// Compute when syncing the palette, never in the button render path.
+    pub fn destructive_fill_text_on(&self, backgrounds: &[u32]) -> u32 {
+        self.readable_text_on(
+            filled_button_foreground(self.color_blocker, self),
+            backgrounds,
+            4.5,
+        )
+    }
+
     /// Field instructions must read on both modal and the card's painted panel.
     pub fn input_field_error_text(&self) -> u32 {
         self.destructive_text_on(&[self.modal, self.elevated_surface(self.panel)])
@@ -375,9 +417,16 @@ impl Theme {
         if readable(color) {
             return color;
         }
-        let background = backgrounds[0];
         let base = to_hsla(color);
-        let step = if relative_luminance(background) > 0.5 {
+        // Mid-luminance fills can need dark ink even in a dark theme. Choose
+        // the endpoint with the best worst-state contrast, not theme mode.
+        let endpoint_contrast = |ink| {
+            backgrounds
+                .iter()
+                .map(|&bg| contrast_ratio(ink, bg))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let step = if endpoint_contrast(0x000000) >= endpoint_contrast(0xffffff) {
             -0.005
         } else {
             0.005
@@ -1472,8 +1521,13 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.button_secondary_hover = to_hsla(k.selected);
     gc.colors.button_secondary_active = to_hsla(k.surface);
     let danger_foreground = filled_button_foreground(k.color_blocker, k);
-    let (danger_foreground, danger_hover, danger_active) =
+    let (_, danger_hover, danger_active) =
         filled_button_interaction_colors(k.color_blocker, danger_foreground);
+    let danger_foreground = k.destructive_fill_text_on(&[
+        k.color_blocker,
+        u32::from(danger_hover.to_rgb()) >> 8,
+        u32::from(danger_active.to_rgb()) >> 8,
+    ]);
     gc.colors.button_danger = to_hsla(k.color_blocker);
     gc.colors.button_danger_foreground = to_hsla(danger_foreground);
     gc.colors.button_danger_hover = danger_hover;
@@ -1740,6 +1794,68 @@ mod nagi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readable_ink_uses_all_fill_states_not_theme_mode() {
+        for palette in [
+            &crate::theme_apple_light::APPLE_LIGHT,
+            &crate::theme_apple_dark::APPLE_DARK,
+        ] {
+            for backgrounds in [
+                [0x888888, 0x999999, 0xaaaaaa],
+                [0x333333, 0x444444, 0x555555],
+            ] {
+                let ink = palette.readable_text_on(0x777777, &backgrounds, 4.5);
+                for background in backgrounds {
+                    assert!(contrast_ratio(ink, background) >= 4.5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn status_label_ink_reads_on_rows_and_keeps_semantic_hues() {
+        for t in THEMES {
+            for color in [t.color_blocker, t.color_warning] {
+                for (background, hover) in [
+                    (t.panel, t.surface),
+                    (t.inactive_selected, t.inactive_selected),
+                    (t.diff_removed_bg, t.diff_removed_bg),
+                ] {
+                    let ink = t.status_label_text_on(color, background, hover);
+                    for fill in [background, hover] {
+                        assert!(
+                            contrast_ratio(ink, fill) >= 4.5,
+                            "{} status #{color:06x} on #{fill:06x}",
+                            t.slug
+                        );
+                    }
+                    let original = to_hsla(color);
+                    let adjusted = to_hsla(ink);
+                    let hue_delta = (original.h - adjusted.h).abs();
+                    assert!(hue_delta.min(1.0 - hue_delta) < 0.02, "{}", t.slug);
+                    assert!((original.s - adjusted.s).abs() < 0.03, "{}", t.slug);
+                    assert_eq!(t.status_label_text_on(color, background, hover), ink);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn status_label_selected_ink_preserves_on_accent_semantics_and_aa() {
+        let t = &crate::theme_apple_light::APPLE_LIGHT;
+        for channel in 0..=255 {
+            let background = channel * 0x010101;
+            let primary = on_accent_foreground(background);
+            let ink = t.status_label_text_on(primary, background, background);
+            assert!(contrast_ratio(ink, background) >= 4.5);
+            assert_eq!((ink >> 16) & 255, (ink >> 8) & 255);
+            assert_eq!((ink >> 8) & 255, ink & 255);
+            if contrast_ratio(primary, background) >= 4.6 {
+                assert_eq!(ink, primary);
+            }
+        }
+    }
 
     #[test]
     fn input_field_error_ink_meets_aa_on_all_theme_modal_surfaces() {
@@ -2061,6 +2177,35 @@ mod tests {
             apply_gpui_component_theme(t, &mut gc);
             assert_eq!(gc.colors.button_danger, to_hsla(t.color_blocker));
             let foreground = u32::from(gc.colors.button_danger_foreground.to_rgb()) >> 8;
+            let backgrounds = [
+                gc.colors.button_danger,
+                gc.colors.button_danger_hover,
+                gc.colors.button_danger_active,
+            ]
+            .map(|fill| u32::from(fill.to_rgb()) >> 8);
+            // Match the palette's HSL conversion, not a lossy RGB round-trip
+            // of either the original fill or the generated caption.
+            assert_eq!(
+                gc.colors.button_danger_foreground,
+                to_hsla(t.destructive_fill_text_on(&[
+                    t.color_blocker,
+                    backgrounds[1],
+                    backgrounds[2],
+                ])),
+            );
+            // The pinned Danger Button paints tokens, not just ThemeColor.
+            assert_eq!(
+                gpui::Background::from(gc.tokens.button_danger),
+                gpui::Background::from(gc.colors.button_danger),
+            );
+            assert_eq!(
+                gpui::Background::from(gc.tokens.button_danger_hover),
+                gpui::Background::from(gc.colors.button_danger_hover),
+            );
+            assert_eq!(
+                gpui::Background::from(gc.tokens.button_danger_active),
+                gpui::Background::from(gc.colors.button_danger_active),
+            );
             for (state, background) in [
                 ("rest", gc.colors.button_danger),
                 ("hover", gc.colors.button_danger_hover),

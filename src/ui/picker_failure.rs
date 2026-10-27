@@ -36,7 +36,12 @@ impl KagiApp {
             self.record_op_impl(entry, cx, true, Some(display));
         } else {
             eprintln!("{op}: {error}");
-            self.push_toast(ToastKind::Error, display, cx);
+            self.push_toast_for(
+                super::toast_stack::ToastSubject::App,
+                ToastKind::Error,
+                display,
+                cx,
+            );
         }
         cx.notify();
     }

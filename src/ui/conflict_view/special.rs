@@ -46,6 +46,7 @@ fn render_dir_file_center(
     };
 
     let choose_row = div()
+        .relative()
         .flex()
         .flex_row()
         .flex_wrap()
@@ -54,6 +55,9 @@ fn render_dir_file_center(
         .py(theme::scaled_px(8.))
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .child(super::e2e::measure_inside(
+            "conflict-directory-file-choices",
+        ))
         .child(super::e2e::measure_control(
             "conflict-keep-directory",
             super::toolbar::compact_button(
@@ -256,6 +260,7 @@ pub(super) fn render_center(
     );
 
     let mut choose_row = div()
+        .relative()
         .flex()
         .flex_row()
         .flex_wrap()
@@ -264,6 +269,7 @@ pub(super) fn render_center(
         .py(theme::scaled_px(8.))
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .child(super::e2e::measure_inside("conflict-raw-choices"))
         .child(
             choose_button(
                 keep_current_label,

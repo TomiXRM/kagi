@@ -68,6 +68,20 @@ impl ConflictView {
             .child(e2e::measure_inside("conflict-sidebar-clip"))
         });
         let header = self.render_file_header(cx);
+        let source_headers = if self.selected_saved.is_some() {
+            Some(self.render_saved_header())
+        } else {
+            self.mode.as_ref().and_then(|mode| {
+                crate::ui::conflict_editor::source_headers(mode).or_else(|| {
+                    let file = mode
+                        .selected_file
+                        .and_then(|index| mode.session.files.get(index))?;
+                    file.kind
+                        .is_raw()
+                        .then(|| conflict_binary_view::render_raw_headers(&mode.labels()))
+                })
+            })
+        };
         let chrome = self.editor_chrome();
         let body = if self.selected_saved.is_some() {
             self.render_saved(&chrome, cx)
@@ -89,8 +103,35 @@ impl ConflictView {
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(0.))
-                    .child(header)
-                    .child(body),
+                    .child(
+                        div()
+                            .relative()
+                            .flex_shrink_0()
+                            .child(e2e::measure_inside("conflict-content-header"))
+                            .child(header),
+                    )
+                    .children(source_headers)
+                    .children(self.notification_lane.take().map(|lane| {
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_shrink_0()
+                            .justify_end()
+                            .child(e2e::measure_inside("conflict-notification-lane"))
+                            .child(e2e::measure_inside("toast-content-anchor"))
+                            .child(lane)
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .min_h(px(0.))
+                            .child(e2e::measure_inside("conflict-pane-content"))
+                            .child(body),
+                    ),
             )
             .child(
                 gpui::canvas(

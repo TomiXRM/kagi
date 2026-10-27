@@ -482,6 +482,33 @@ fn drag_three_lines(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle
         .unwrap();
 }
 
+pub(super) fn assert_prominence(expected: usize) {
+    use kagi::ui::button_style::ButtonRole;
+    let roles = kagi::ui::conflict_editor_a11y::button_roles();
+    assert!(
+        !roles.is_empty(),
+        "inspect roles from the rendered conflict view"
+    );
+    let primary: Vec<_> = roles
+        .iter()
+        .filter(|(_, role)| **role == ButtonRole::Primary)
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let continue_primary =
+        usize::from(kagi::ui::conflict_view::continue_primary_for_e2e() == Some(true));
+    assert_eq!(primary.len() + continue_primary, expected);
+    assert!(expected <= 1, "at most one prominent control per view");
+    assert!(
+        primary.iter().all(|id| *id == "conflict-save"),
+        "only available Save may be prominent while resolving: {primary:?}"
+    );
+    for (id, role) in roles {
+        if id.starts_with("conflict-hunk-") {
+            assert_eq!(role, ButtonRole::NeutralTinted, "{id}: quiet inline action");
+        }
+    }
+}
+
 fn assert_action_rows(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, lang: Lang) {
     crate::native_ax::activate(cx);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
@@ -528,6 +555,10 @@ fn assert_action_rows(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHand
         assert_eq!(node["aria"]["label"], label);
         assert_eq!(node["aria"]["role"], "Button");
         assert!(e2e::control_bounds(window.window_id(), id).is_some());
+        assert_eq!(
+            kagi::ui::conflict_editor_a11y::button_roles()[id],
+            kagi::ui::button_style::ButtonRole::NeutralTinted
+        );
     }
     for side in ["current", "incoming"] {
         let use_button =
@@ -545,6 +576,7 @@ fn assert_action_rows(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHand
             "commands share one action row"
         );
     }
+    assert_prominence(0);
     let gutter = e2e::control_bounds(window.window_id(), "resolver-gutter-viewport").unwrap();
     assert!((f32::from(gutter.size.width) - f32::from(theme::scaled_px(12.))).abs() <= 1.);
     assert!(

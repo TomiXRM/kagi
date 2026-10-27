@@ -133,12 +133,16 @@ pub(super) fn reset_alert(
         action_cancel(window, cx);
         cx.stop_propagation();
     })
-    .on_key_down(move |event, window, cx| {
-        if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
-            key_cancel(window, cx);
-            cx.stop_propagation();
-        }
-    })
+    .on_key_down(
+        move |event, window, cx| match event.keystroke.key.as_str() {
+            "enter" => cx.stop_propagation(),
+            "escape" => {
+                key_cancel(window, cx);
+                cx.stop_propagation();
+            }
+            _ => {}
+        },
+    )
     .child(card);
     super::modal_renderers::modal_overlay(super::e2e::measure_control(
         "settings-analyze-reset-alert",

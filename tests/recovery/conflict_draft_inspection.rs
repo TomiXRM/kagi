@@ -3,7 +3,7 @@ use crate::app_conflict::{click_control, content_fixture};
 use crate::conflict_draft_revision::{
     advance_first, assert_unresolved, detect, RebaseFixture, FILE, FIRST,
 };
-use crate::macos::{mount, unmount};
+use crate::macos::{build_fixture, mount, unmount};
 use crate::repository_state::RepositoryState;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, oplog_panel::entry_clipboard_text, BottomTab, KagiApp};
@@ -458,21 +458,50 @@ pub fn scenario_conflict_draft_corrupt_restore(cx: &mut VisualTestAppContext) {
         let torn = b"{\"files\":[damaged legacy draft";
         std::fs::write(&store, torn).unwrap();
         let before = RepositoryState::read(&repo);
-        detect(cx, &app, window);
+        let owner = attachment(cx, &app);
+        let payload = e2e::detect_payload_for_test(&repo, "main");
+        let other = build_fixture();
+        let other_repo = other.path().canonicalize().unwrap();
+        app.update(cx, |app, cx| {
+            assert!(app.open_repository(other_repo.clone(), cx));
+        });
+        cx.run_until_parked();
+        app.update(cx, |app, cx| {
+            assert_eq!(app.repo_path.as_ref(), Some(&other_repo));
+            app.apply_conflict_detect(owner.clone(), payload, cx);
+        });
+        cx.run_until_parked();
         let aside = store.with_file_name("buffer.json.corrupt");
         assert_eq!(std::fs::read(&aside).unwrap(), torn);
-        assert_unresolved(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
         cx.read(|cx| {
             let state = app.read(cx);
             let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
-            let message = kagi_ui_core::i18n::Msg::conflict_draft_rescued("buffer.json.corrupt");
+            assert_eq!(state.repo_path.as_ref(), Some(&other_repo));
+            let message = format!(
+                "{}\n{}",
+                kagi_ui_core::i18n::Msg::conflict_draft_rescued(),
+                kagi_ui_core::i18n::Msg::conflict_draft_repository(
+                    repo.file_name().unwrap().to_str().unwrap()
+                )
+            );
             assert!(
                 toasts.iter().any(|toast| {
-                    toast.kind == kagi::ui::ToastKind::Error && toast.message.as_ref() == message
+                    toast.kind == kagi::ui::ToastKind::Error
+                        && toast.message.as_ref() == message
+                        && !toast.message.contains("buffer.json")
+                        && !toast.message.contains(".corrupt")
                 }),
-                "a damaged draft must announce its preserved file in {language:?}"
+                "a damaged draft must explain preservation and point to the log in {language:?}"
             );
         });
+        app.update(cx, |app, cx| app.switch_repo(0, cx));
+        cx.run_until_parked();
+        detect(cx, &app, window);
+        assert_unresolved(cx, &app);
+        crate::toast_stack_budget::conflict_lane::assert_settings_subject_isolation(
+            cx, &app, window,
+        );
         let entries = kagi_git::oplog::read_oplog_tail(100);
         let rescues: Vec<_> = entries
             .iter()
@@ -498,6 +527,9 @@ pub fn scenario_conflict_draft_corrupt_restore(cx: &mut VisualTestAppContext) {
             "quarantine may append exactly its asserted receipt, but may not mutate Git"
         );
         drop(input);
+        crate::toast_stack_budget::conflict_lane::assert_rescue_recording_failure(
+            cx, &app, &repo, &store, torn,
+        );
         unmount(cx, app, window);
     }
 }

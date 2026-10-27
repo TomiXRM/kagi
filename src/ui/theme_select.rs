@@ -115,7 +115,13 @@ pub(super) fn install(kagi: &Entity<KagiApp>, window: &mut Window, cx: &mut App)
         .detach();
         app.theme_select = Some(theme_select);
         // Drained once per process: a second window does not repeat them.
-        app.report_theme_load_errors(theme::take_theme_load_errors(), cx);
+        let subject = match app.toast_subject_for_window(window, cx) {
+            crate::ui::toast_stack::ToastSubject::Settings => {
+                crate::ui::toast_stack::ToastSubject::Settings
+            }
+            _ => crate::ui::toast_stack::ToastSubject::App,
+        };
+        app.report_theme_load_errors(theme::take_theme_load_errors(), subject, cx);
     });
 }
 
@@ -124,7 +130,8 @@ impl KagiApp {
     /// manager. The filesystem call and process launch stay off GPUI's UI thread.
     pub(crate) fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
         let Some(dir) = theme::themes_dir() else {
-            self.push_toast(
+            self.push_toast_for(
+                crate::ui::toast_stack::ToastSubject::Settings,
                 ToastKind::Error,
                 i18n::Msg::SettingsThemesFolderUnavailable.t(),
                 cx,
@@ -140,7 +147,8 @@ impl KagiApp {
             let _ = this.update(cx, |app, cx| {
                 if let Err(error) = result {
                     eprintln!("theme folder: {error}");
-                    app.push_toast(
+                    app.push_toast_for(
+                        crate::ui::toast_stack::ToastSubject::Settings,
                         ToastKind::Error,
                         i18n::themes_folder_failed_fmt(&bounded(&error.to_string())),
                         cx,
@@ -155,6 +163,7 @@ impl KagiApp {
     /// requested generation on the foreground, including the Settings picker,
     /// native / Linux menus, gpui-component colours and running terminals.
     pub(crate) fn reload_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let subject = self.toast_subject_for_window(window, cx);
         let generation = THEME_RELOAD_GENERATION
             .fetch_add(1, Ordering::Relaxed)
             .wrapping_add(1);
@@ -181,7 +190,7 @@ impl KagiApp {
                     Err(error) => {
                         let kept = theme::all_themes().iter().filter(|t| t.is_custom()).count();
                         klog!("theme: reload kept custom={kept}");
-                        app.report_theme_load_errors(vec![error], cx);
+                        app.report_theme_load_errors(vec![error], subject, cx);
                         cx.notify();
                         return;
                     }
@@ -204,8 +213,13 @@ impl KagiApp {
                         state.set_selected_value(&active, window, cx);
                     });
                 }
-                app.push_toast(ToastKind::Success, i18n::themes_reloaded_fmt(custom), cx);
-                app.report_theme_load_errors(errors, cx);
+                app.push_toast_for(
+                    subject,
+                    ToastKind::Success,
+                    i18n::themes_reloaded_fmt(custom),
+                    cx,
+                );
+                app.report_theme_load_errors(errors, subject, cx);
                 cx.notify();
             });
         })
@@ -213,13 +227,18 @@ impl KagiApp {
     }
 
     /// Log every rejected theme file and show one bounded toast per file.
-    fn report_theme_load_errors(&mut self, errors: Vec<ThemeLoadError>, cx: &mut Context<Self>) {
+    fn report_theme_load_errors(
+        &mut self,
+        errors: Vec<ThemeLoadError>,
+        subject: crate::ui::toast_stack::ToastSubject,
+        cx: &mut Context<Self>,
+    ) {
         for error in errors {
             let detail = error.to_string();
             klog!("theme: load error {}", detail);
             let display = i18n::op::user_text::theme_load_error(&error);
             let message = i18n::theme_load_failed_fmt(&bounded(&display));
-            self.push_toast(ToastKind::Error, message, cx);
+            self.push_toast_for(subject, ToastKind::Error, message, cx);
         }
     }
 }

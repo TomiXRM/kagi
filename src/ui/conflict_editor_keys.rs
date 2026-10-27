@@ -383,7 +383,7 @@ fn state_description(state: TriState) -> (&'static str, SharedString) {
     };
     (key, message.t().into())
 }
-/// The pinned Button owns pointer feedback; its enclosing roving owner handles
+/// The pointer control owns feedback; its enclosing roving owner handles
 /// keyboard clicks. Both call the very same listener, never duplicate mutation.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn adoption(
@@ -392,6 +392,7 @@ pub(crate) fn adoption(
     state: TriState,
     content: &'static str,
     role: ButtonRole,
+    background: u32,
     hunk: Option<usize>,
     enabled: bool,
     owner: &Rc<RefCell<ResolverKeyboard>>,
@@ -403,26 +404,33 @@ pub(crate) fn adoption(
     let (_state, description) = state_description(state);
     #[cfg(feature = "gui-e2e")]
     super::conflict_editor_a11y::record(&id, &name, _state, &description);
-    let button = KagiButton::styled(
-        SharedString::from(format!("{id}-button")),
-        content,
-        role,
-        cx,
-    )
-    .when(role == ButtonRole::NeutralTinted, |button| button.outline())
-    .small()
-    .h(super::theme::scaled_px(20.))
-    .rounded(super::theme::scaled_px(5.))
-    .text_size(super::theme::scaled_px(11.5))
-    .tab_stop(false)
-    .disabled(!enabled)
-    .aria_label(SharedString::from(name.clone()))
-    .on_click(move |event, window, cx| {
+    #[cfg(feature = "gui-e2e")]
+    super::conflict_editor_a11y::record_button_role(&id, role);
+    let pointer_click = move |event: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
         cx.stop_propagation();
         if enabled {
             pointer(event, window, cx);
         }
-    });
+    };
+    let button_id = SharedString::from(format!("{id}-button"));
+    let button = if enabled && role == ButtonRole::NeutralTinted {
+        super::button_style::readable_adoption_button(button_id, content, background)
+            .aria_label(SharedString::from(name.clone()))
+            .on_click(pointer_click)
+            .into_any_element()
+    } else {
+        KagiButton::styled(button_id, content, role, cx)
+            .when(role == ButtonRole::NeutralTinted, |button| button.outline())
+            .small()
+            .h(super::theme::scaled_px(20.))
+            .rounded(super::theme::scaled_px(5.))
+            .text_size(super::theme::scaled_px(11.5))
+            .tab_stop(false)
+            .disabled(!enabled)
+            .aria_label(SharedString::from(name.clone()))
+            .on_click(pointer_click)
+            .into_any_element()
+    };
     let mut el = gpui::div()
         .id(SharedString::from(id.clone()))
         .role(Role::Button)

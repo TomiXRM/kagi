@@ -94,6 +94,8 @@ impl KagiApp {
                 recording_failed,
                 None,
                 Some(contract),
+                None,
+                None,
             );
         } else {
             // The receipt remains inspectable without collapsing another
@@ -105,7 +107,12 @@ impl KagiApp {
                 });
             }
             if let Some((kind, message)) = notice {
-                let _ = self.push_operation_result(entry, &entry.op, kind, message, cx);
+                let _ = self.push_operation_result(
+                    entry,
+                    &entry.op,
+                    crate::ui::toast_stack::ToastSpec::operation(entry, kind, message),
+                    cx,
+                );
             }
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {

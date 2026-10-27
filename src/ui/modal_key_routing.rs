@@ -98,9 +98,9 @@ impl KagiApp {
         }
     }
 
-    /// Return is the safe default, not an implicit selection of a danger action.
+    /// Danger sheets have no default action: root Return leaves them unchanged.
     /// Focused buttons consume their own Enter/Space before this root handler.
-    pub(super) fn active_modal_defaults_to_cancel(&self) -> bool {
+    pub(super) fn active_modal_has_no_default(&self) -> bool {
         use modals::ActiveModal as M;
         let danger_plan = |plan: &kagi_git::OperationPlan| {
             modal_renderers::plan_confirm_kind(plan.destructive, &plan.title, false)
@@ -118,6 +118,7 @@ impl KagiApp {
                 | M::Discard(_)
                 | M::OplogRestore(_)
                 | M::ConflictAbort(_)
+                | M::ConflictResolution(_)
                 | M::EditorDirtyGuard(_)
                 | M::EditorDeleteConfirm(_)
                 | M::RemoveWorktree(_)
@@ -163,7 +164,6 @@ impl KagiApp {
                 | M::StashPush(_)
                 | M::StashApply(_)
                 | M::ConflictContinue(_)
-                | M::ConflictResolution(_)
                 | M::EditorFsPrompt(_)
                 | M::TrustRepo(_),
             ) => false,
@@ -173,9 +173,7 @@ impl KagiApp {
     /// Alert-style confirmations have no text field to take focus for them.
     /// Share the named-dialog focus trap, including the owner-trust prompt.
     pub(super) fn active_modal_needs_alert_trap(&self) -> bool {
-        self.active_modal_defaults_to_cancel()
-            || self.conflict_resolution_modal().is_some()
-            || self.trust_repo_modal().is_some()
+        self.active_modal_has_no_default() || self.trust_repo_modal().is_some()
     }
 
     /// Cards rendered through input_dialog_frame own their replacement focus,
@@ -275,11 +273,15 @@ impl KagiApp {
             if workspace_fallbacks && this.cancel_workspace_overlay(window, cx) {
                 return;
             }
-            if this
-                .toast_stack
-                .clone()
-                .is_some_and(|stack| stack.update(cx, |stack, cx| stack.dismiss_newest(cx)))
-            {
+            let audience = match this.toast_subject_for_window(window, cx) {
+                super::toast_stack::ToastSubject::Settings => {
+                    super::toast_stack::ToastAudience::Settings
+                }
+                _ => super::toast_stack::ToastAudience::Repository,
+            };
+            if this.toast_stack.clone().is_some_and(|stack| {
+                stack.update(cx, |stack, cx| stack.dismiss_newest(audience, cx))
+            }) {
                 return;
             }
             if workspace_fallbacks && super::compact_sidebar::is_open(window, cx) {
@@ -332,18 +334,9 @@ impl KagiApp {
                     cx.stop_propagation();
                     return;
                 }
-                // This destructive sheet has no default button, including Cancel.
-                // Deliberately focused buttons still own their Enter/Space action.
                 if this.front_layer(cx) == front_layer::FrontLayer::Modal
-                    && this.conflict_resolution_modal().is_some()
+                    && this.active_modal_has_no_default()
                 {
-                    cx.stop_propagation();
-                    return;
-                }
-                if this.front_layer(cx) == front_layer::FrontLayer::Modal
-                    && this.active_modal_defaults_to_cancel()
-                {
-                    this.cancel_active_modal(cx);
                     cx.stop_propagation();
                     return;
                 }

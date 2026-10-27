@@ -928,6 +928,7 @@ impl KagiApp {
                         app.active_session() == Some(owner.session),
                         false,
                         Some(super::i18n::Msg::conflict_draft_preserve_failed()),
+                        None,
                         cx,
                     );
                     if let Some(ui) = app.ui.get_mut(&owner.session) {

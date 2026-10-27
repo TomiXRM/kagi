@@ -374,6 +374,7 @@ fn progressive_add_add_with_comments(
         Some(false),
         "a ready but unsaved draft does not promote Continue"
     );
+    crate::conflict_controls::assert_prominence(1);
     assert_eq!(
         repo_fingerprint(repo),
         before,

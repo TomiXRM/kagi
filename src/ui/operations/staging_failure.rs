@@ -134,6 +134,8 @@ impl KagiApp {
             ),
             None,
             None,
+            None,
+            None,
         );
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());

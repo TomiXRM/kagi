@@ -477,16 +477,15 @@ fn dirty_editor_survives_merge_in_worktree(
     });
 
     // Leaving for the graph destroys the editor, so that path still prompts.
-    // Root Return cancels the destructive guard (ADR-0125 / #1277), preserving
+    // Root Return retains the destructive guard (ADR-0125 / #1767), preserving
     // the same dirty buffer; only explicitly focused Discard returns to Graph.
     app.update(cx, |app, cx| app.show_graph_mode(cx));
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
-    press_key(cx, app, window, "enter");
-    cx.run_until_parked();
+    crate::destructive_modal_return::root_return_keeps_modal(cx, app, window, &fixture.main);
     cx.read(|cx| {
         let app = app.read(cx);
-        assert!(app.editor_dirty_guard_modal().is_none());
+        assert!(app.editor_dirty_guard_modal().is_some());
         let retained = app.ui().editor_workspace.as_ref().unwrap();
         assert_eq!(retained.entity_id(), editor.entity_id());
         assert!(editor.read(cx).dirty, "Return must not discard the edit");
@@ -495,6 +494,8 @@ fn dirty_editor_survives_merge_in_worktree(
             kagi::ui::workspace_mode::WorkspaceMode::Editor
         );
     });
+    press_key(cx, app, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
     app.update(cx, |app, cx| app.show_graph_mode(cx));
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));

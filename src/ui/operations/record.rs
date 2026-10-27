@@ -120,6 +120,7 @@ impl KagiApp {
         current: bool,
         stopped: bool,
         display: Option<String>,
+        refresh_owner: Option<crate::app::Attachment>,
         cx: &mut Context<Self>,
     ) -> bool {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
@@ -150,6 +151,8 @@ impl KagiApp {
                     None,
                     recording_failed,
                     stopped.then(|| i18n::Msg::conflict_stopped(None).into()),
+                    None,
+                    refresh_owner,
                     None,
                 )
                 .recording_failed;
@@ -184,7 +187,10 @@ impl KagiApp {
                     display.unwrap_or_else(|| super::outcome_text(&op, &entry.outcome)),
                 )
             };
-            let _ = self.push_operation_result(entry, &op, kind, message.into(), cx);
+            let mut spec =
+                crate::ui::toast_stack::ToastSpec::operation(entry, kind, message.into());
+            spec.refresh_owner = refresh_owner;
+            let _ = self.push_operation_result(entry, &op, spec, cx);
         }
         recording_failed
     }
@@ -276,6 +282,8 @@ impl KagiApp {
                 report.recording,
                 kagi_git::backend::recording::Recording::Failed { .. }
             ),
+            None,
+            None,
             None,
             None,
         );

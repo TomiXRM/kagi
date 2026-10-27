@@ -117,7 +117,10 @@ fn clone_body(
             .plan
             .warnings
             .iter()
-            .map(|n| (false, "!", theme().color_warning, n))
+            .map(|n| {
+                let (glyph, color) = super::plan_card_rows::note_presentation(n.kind(), &theme());
+                (false, glyph, color, n)
+            })
             .chain(
                 target
                     .plan

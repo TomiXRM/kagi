@@ -307,7 +307,15 @@ impl KagiApp {
                     "success",
                 );
                 stack.update(cx, |stack, cx| {
-                    stack.push_keyed_notify(ToastKind::Sync, text, Some(key), cx);
+                    stack.push_keyed_notify(
+                        crate::ui::toast_stack::ToastSpec::new(
+                            crate::ui::toast_stack::ToastSubject::Repository,
+                            ToastKind::Sync,
+                            text,
+                        )
+                        .with_key(Some(key)),
+                        cx,
+                    );
                 });
             }
             self.status_footer = FooterStatus::Idle("".into());

@@ -2078,6 +2078,8 @@ impl FetchFailure {
             false,
             None,
             None,
+            None,
+            None,
         );
     }
 
@@ -2884,8 +2886,8 @@ impl KagiApp {
                             )
                             .with_ref_moves(ref_moves.take()),
                         );
-                        recording_failed =
-                            app.present_operation_completion(&recording, false, false, None, cx);
+                        recording_failed = app
+                            .present_operation_completion(&recording, false, false, None, None, cx);
                     }
                 }
                 // A visit is a stay in the same tab, not merely its session.
@@ -2962,12 +2964,15 @@ impl KagiApp {
                                     let _ = app.push_operation_result(
                                         entry,
                                         requested_op,
-                                        ToastKind::Error,
-                                        crate::ui::operations::outcome_text(
-                                            requested_op,
-                                            &entry.outcome,
-                                        )
-                                        .into(),
+                                        crate::ui::toast_stack::ToastSpec::operation(
+                                            entry,
+                                            ToastKind::Error,
+                                            crate::ui::operations::outcome_text(
+                                                requested_op,
+                                                &entry.outcome,
+                                            )
+                                            .into(),
+                                        ),
                                         cx,
                                     );
                                 }
@@ -3034,9 +3039,12 @@ impl KagiApp {
                                         format!("{}\0fetch\0success", repo_path_guard.display());
                                     stack.update(cx, |stack, cx| {
                                         stack.push_keyed_notify(
-                                            ToastKind::Success,
-                                            text,
-                                            Some(key),
+                                            crate::ui::toast_stack::ToastSpec::new(
+                                                super::toast_stack::ToastSubject::Repository,
+                                                ToastKind::Success,
+                                                text,
+                                            )
+                                            .with_key(Some(key)),
                                             cx,
                                         );
                                     });
@@ -3214,20 +3222,44 @@ impl KagiApp {
             } => Some(self.render_info_overlay(title, lines, (&scroll, &focus), window, cx)),
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
-            MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
-                cx.entity(),
-                self.theme_select.clone(),
-                self.settings_switches.clone(),
-                self.settings_focus.clone(),
-                self.smart_commit.clone(),
-                self.analyze_ignore_input.clone(),
-                &self.settings_controls,
-                self.analyze_ignore_dirty(cx),
-                self.analyze_reset_alert().cloned(),
-                self.settings_scroll.clone(),
-                window,
-                cx,
-            )),
+            MenuOverlay::Settings => {
+                let audience = super::toast_stack::ToastAudience::Settings;
+                let lane = self
+                    .toast_stack
+                    .as_ref()
+                    .is_some_and(|stack| stack.read(cx).persistent_lane_open(audience))
+                    .then(|| {
+                        self.render_toasts(
+                            window,
+                            super::busy::ToastPlacement::PersistentLane,
+                            audience,
+                            cx,
+                        )
+                    })
+                    .flatten();
+                let transient = self.render_toasts(
+                    window,
+                    super::busy::ToastPlacement::Transient,
+                    audience,
+                    cx,
+                );
+                Some(super::settings_view::render_settings_overlay(
+                    cx.entity(),
+                    self.theme_select.clone(),
+                    self.settings_switches.clone(),
+                    self.settings_focus.clone(),
+                    self.smart_commit.clone(),
+                    self.analyze_ignore_input.clone(),
+                    &self.settings_controls,
+                    self.analyze_ignore_dirty(cx),
+                    self.analyze_reset_alert().cloned(),
+                    self.settings_scroll.clone(),
+                    lane,
+                    transient,
+                    window,
+                    cx,
+                ))
+            }
             // Issue #352: command palette.
             MenuOverlay::CommandPalette => Some(self.render_command_palette(window, cx)),
         }

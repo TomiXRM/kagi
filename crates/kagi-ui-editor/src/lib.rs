@@ -614,6 +614,7 @@ pub struct EditorWorkspaceView {
     /// [`EditorWorkspaceElement`] immediately before it lays out this entity,
     /// then taken by `render` — never held across frames.
     pub(crate) bottom_panel: Option<AnyElement>,
+    pub(crate) notifications: Option<AnyElement>,
 }
 
 /// The revision-cached tree owns presentation, not virtual row mounts.
@@ -927,6 +928,7 @@ impl EditorWorkspaceView {
             mermaid: HashMap::new(),
             mermaid_render_in_flight: false,
             bottom_panel: None,
+            notifications: None,
         }
     }
 
@@ -2659,7 +2661,8 @@ impl Render for EditorWorkspaceView {
             self.ensure_preview_mermaids(preview, cx);
         }
         let bottom_panel = self.bottom_panel.take();
-        render_editor_workspace(self, bottom_panel, preview, window, cx)
+        let notifications = self.notifications.take();
+        render_editor_workspace(self, bottom_panel, notifications, preview, window, cx)
     }
 }
 
@@ -2675,6 +2678,7 @@ impl Render for EditorWorkspaceView {
 fn render_editor_workspace(
     view: &EditorWorkspaceView,
     bottom_panel: Option<AnyElement>,
+    notifications: Option<AnyElement>,
     preview: Option<markdown::Preview>,
     window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
@@ -2697,6 +2701,12 @@ fn render_editor_workspace(
     });
     let header = div()
         .id("ews-header")
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(view.hooks.pane_selectors.measure("ews-header"));
+            el
+        })
         .flex()
         .flex_row()
         .items_center()
@@ -2810,7 +2820,7 @@ fn render_editor_workspace(
                     el
                 })
                 .min_h(px(0.))
-                .child(render_center_pane(view, preview, cx))
+                .child(render_center_pane(view, notifications, preview, cx))
                 .children(bottom_panel),
         )
         .children(panes::render_details(view, hunks_width, cx))
@@ -3616,6 +3626,7 @@ fn render_tree_row(
 
 fn render_center_pane(
     view: &EditorWorkspaceView,
+    notifications: Option<AnyElement>,
     preview: Option<markdown::Preview>,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
@@ -3641,6 +3652,8 @@ fn render_center_pane(
     // early, same shape as the placeholder/image early-returns further down.
     if view.right_tab == RightPaneTab::History && view.selected_history_commit.is_some() {
         pane = pane.child(panes::render_middle_pane_tabs(view, cx));
+        let header = pane;
+        let mut pane = div().relative().flex().flex_col().flex_1().min_h(px(0.));
         pane = match view.middle_tab {
             MiddlePaneTab::Diff if view.is_pdf() => {
                 pane.child(pdf::status_message(Msg::EditorPdfNoDiff))
@@ -3658,7 +3671,9 @@ fn render_center_pane(
             },
             MiddlePaneTab::Snapshot => pane.child(snapshot::render(view, cx)),
         };
-        return pane.into_any_element();
+        return header
+            .child(pane.children(notifications))
+            .into_any_element();
     }
 
     // T-WS-EDITOR-002 §4: external-change banner — only when the buffer is
@@ -3675,6 +3690,12 @@ fn render_center_pane(
         pane = pane.child(
             div()
                 .id("ews-external-changed")
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el.child(view.hooks.pane_selectors.measure("ews-external-changed"));
+                    el
+                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -3721,6 +3742,30 @@ fn render_center_pane(
                 ),
         );
     }
+    pane.child(
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                #[cfg(feature = "gui-e2e")]
+                let el = el.child(view.hooks.pane_selectors.measure("toast-content-anchor"));
+                el
+            })
+            .child(render_center_content(view, preview, cx))
+            .children(notifications),
+    )
+    .into_any_element()
+}
+
+fn render_center_content(
+    view: &EditorWorkspaceView,
+    preview: Option<markdown::Preview>,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> AnyElement {
+    let mut pane = div().flex().flex_col().flex_1().min_h(px(0.));
 
     // T-WS-EDITOR-005 finding #6: deleted/missing and non-UTF-8 files used to
     // both fall through to the generic "select a file" placeholder even

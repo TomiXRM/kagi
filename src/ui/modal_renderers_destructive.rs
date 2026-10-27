@@ -247,11 +247,17 @@ pub(crate) fn render_amend_modal(
         let mut warn_col = div().flex().flex_col().gap_1();
         for (wi, w) in plan.warnings.iter().enumerate() {
             let text = plan_note_text(w);
+            let (glyph, color) =
+                super::plan_card_rows::note_presentation(w.kind(), &current_theme());
             let row = div()
                 .flex_shrink_0()
                 .text_sm()
-                .text_color(rgb(current_theme().color_warning))
-                .child(SharedString::from(format!("\u{26a0} {text}")));
+                .text_color(rgb(color))
+                .child(SharedString::from(if glyph.is_empty() {
+                    text.clone()
+                } else {
+                    format!("{glyph} {text}")
+                }));
             let row = if open.is_open() {
                 let id: SharedString = format!("amend-warning-{wi}").into();
                 apply_note(id.clone(), row.id(id), false, &text).into_any_element()
@@ -707,12 +713,18 @@ pub(crate) fn render_discard_modal(
         let mut warn_col = div().flex().flex_col().gap_px();
         for (wi, w) in plan.warnings.iter().enumerate() {
             let text = plan_note_text(w);
+            let (glyph, color) =
+                super::plan_card_rows::note_presentation(w.kind(), &current_theme());
             let row = div()
                 .flex_shrink_0()
                 .text_xs()
-                .text_color(rgb(current_theme().color_warning))
+                .text_color(rgb(color))
                 .overflow_hidden()
-                .child(SharedString::from(format!("\u{26a0} {text}")));
+                .child(SharedString::from(if glyph.is_empty() {
+                    text.clone()
+                } else {
+                    format!("{glyph} {text}")
+                }));
             let row = if open.is_open() {
                 let id: SharedString = format!("discard-warning-{wi}").into();
                 apply_note(id.clone(), row.id(id), false, &text).into_any_element()

@@ -199,6 +199,7 @@ impl KagiApp {
 
     fn present_conflict_restore_warnings(
         &mut self,
+        repository: &Path,
         outcome: &mut ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
@@ -212,12 +213,17 @@ impl KagiApp {
             return;
         }
         for warning in warnings {
-            let name = warning.rescued_path.file_name().unwrap_or_default();
-            let message = Msg::conflict_draft_rescued(&name.to_string_lossy());
+            let repository = Msg::conflict_draft_repository(
+                repository
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(""),
+            );
             if let Some(error) = warning.recording_error {
                 self.app_notices.push_back(
                     format!(
-                        "{message}\n\n{}",
+                        "{}\n{repository}\n\n{}",
+                        Msg::conflict_draft_rescued_detail(&warning.rescued_path.to_string_lossy()),
                         i18n::op_failed(i18n::Op::RecordOperation, error)
                     )
                     .into(),
@@ -225,7 +231,12 @@ impl KagiApp {
                 self.present_app_notice();
                 continue;
             }
-            self.push_toast(ToastKind::Error, SharedString::from(message), cx);
+            let preview = Msg::conflict_draft_rescued();
+            self.push_toast(
+                ToastKind::Error,
+                SharedString::from(format!("{preview}\n{repository}")),
+                cx,
+            );
         }
         cx.notify();
     }
@@ -247,7 +258,7 @@ impl KagiApp {
         mut outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
-        self.present_conflict_restore_warnings(&mut outcome, cx);
+        self.present_conflict_restore_warnings(&owner.path, &mut outcome, cx);
         // The result belongs to its frozen attachment. A completion from the
         // visit that just departed may refresh its inactive owner's retained
         // pane, but it cannot become authoritative after that owner is active
@@ -343,8 +354,11 @@ impl KagiApp {
             }
         }
         if let Some(ui) = self.ui.get_mut(&owner.session) {
-            ui.conflict_restore_failed =
-                matches!(&outcome, ConflictDetectOutcome::OpenFailed(Some(_)));
+            match &outcome {
+                ConflictDetectOutcome::OpenFailed(Some(_)) => ui.conflict_restore_failed = true,
+                ConflictDetectOutcome::OpenFailed(None) => {}
+                _ => ui.conflict_restore_failed = false,
+            }
         }
         match outcome {
             ConflictDetectOutcome::OpenFailed(error) => {
@@ -374,6 +388,7 @@ impl KagiApp {
                         active_owner && exact_visit,
                         false,
                         Some(Msg::conflict_draft_restore_failed()),
+                        Some(owner.clone()),
                         cx,
                     );
                 }
@@ -417,6 +432,9 @@ impl KagiApp {
                 }
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
                     ui.conflict = None;
+                }
+                if let Some(stack) = self.toast_stack.clone() {
+                    stack.update(cx, |stack, cx| stack.dismiss_restore_failure(&owner, cx));
                 }
             }
             ConflictDetectOutcome::Detected(detected) => {
@@ -532,6 +550,9 @@ impl KagiApp {
                             ui.conflict_hidden = false;
                         }
                     }
+                }
+                if let Some(stack) = self.toast_stack.clone() {
+                    stack.update(cx, |stack, cx| stack.dismiss_restore_failure(&owner, cx));
                 }
             }
         }
@@ -693,7 +714,7 @@ impl KagiApp {
                         .get(&owner.session)
                         .is_none_or(|ui| ui.conflict_detect_generation != generation)
                 {
-                    app.present_conflict_restore_warnings(&mut outcome, cx);
+                    app.present_conflict_restore_warnings(&owner.path, &mut outcome, cx);
                     return;
                 }
                 app.apply_conflict_detect(owner, outcome, cx);

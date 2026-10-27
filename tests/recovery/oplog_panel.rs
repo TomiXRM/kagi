@@ -969,7 +969,8 @@ fn check_blocked_restore(cx: &mut VisualTestAppContext) {
         .unwrap();
     assert!(copied.contains("refs/heads/checked-out"), "{copied}");
     assert!(!copied.contains("git update-ref --stdin"), "{copied}");
-    // Root Return now cancels a destructive dialog; exercise the blocked
+    crate::destructive_modal_return::root_return_keeps_modal(cx, &app, window, &blocked_repo);
+    // Root Return leaves a destructive dialog unchanged; exercise the blocked
     // approval boundary explicitly to retain the durable-refusal oracle.
     app.update(cx, |app, cx| app.start_oplog_restore(cx));
     assert_eq!(

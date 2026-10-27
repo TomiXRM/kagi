@@ -1,13 +1,10 @@
-//! Host bottom-panel seam for the Editor workspace (PR #919 review).
+//! Host content slots for the Editor workspace.
 //!
-//! The panel belongs under the center code viewer only, but it is built by
-//! `KagiApp` (its listeners need `Context<KagiApp>`) while the tree, center,
-//! and hunks panes all render inside this one entity. [`EditorWorkspaceElement`]
-//! carries the host's element into the entity's own render without re-entering
-//! `KagiApp`: during layout it hands the panel to the entity and immediately
-//! lays out the ordinary (uncached) entity view, whose `render` takes it in the
-//! same call. Every frame redraws from the root, so the host supplies a fresh
-//! panel each time; nothing is retained across frames.
+//! KagiApp builds the bottom panel and notifications with its own listeners.
+//! This element passes them into the ordinary uncached entity render during
+//! layout, without re-entering the host. The panel sits below the center;
+//! notifications sit inside its content, below the header/tabs/banner and
+//! between the file tree and hunks. Neither slot is retained across frames.
 
 use gpui::{
     AnyElement, App, Bounds, ElementId, Entity, GlobalElementId, InspectorElementId, IntoElement,
@@ -16,16 +13,24 @@ use gpui::{
 
 use crate::EditorWorkspaceView;
 
-/// Embeds an [`EditorWorkspaceView`] with the host's bottom panel laid out
-/// beneath its center pane. Use in place of embedding the entity directly.
+/// Embeds the workspace with host-owned center content slots.
 pub struct EditorWorkspaceElement {
     view: Entity<EditorWorkspaceView>,
     bottom_panel: Option<AnyElement>,
+    notifications: Option<AnyElement>,
 }
 
 impl EditorWorkspaceElement {
-    pub fn new(view: Entity<EditorWorkspaceView>, bottom_panel: Option<AnyElement>) -> Self {
-        Self { view, bottom_panel }
+    pub fn new(
+        view: Entity<EditorWorkspaceView>,
+        bottom_panel: Option<AnyElement>,
+        notifications: Option<AnyElement>,
+    ) -> Self {
+        Self {
+            view,
+            bottom_panel,
+            notifications,
+        }
     }
 }
 
@@ -57,12 +62,18 @@ impl gpui::Element for EditorWorkspaceElement {
         cx: &mut App,
     ) -> (LayoutId, AnyElement) {
         let bottom_panel = self.bottom_panel.take();
-        self.view
-            .update(cx, |view, _| view.bottom_panel = bottom_panel);
+        let notifications = self.notifications.take();
+        self.view.update(cx, |view, _| {
+            view.bottom_panel = bottom_panel;
+            view.notifications = notifications;
+        });
         let mut element = self.view.clone().into_any_element();
         let layout_id = element.request_layout(window, cx);
         // `render` normally took it; never let a panel outlive this layout.
-        self.view.update(cx, |view, _| view.bottom_panel = None);
+        self.view.update(cx, |view, _| {
+            view.bottom_panel = None;
+            view.notifications = None;
+        });
         (layout_id, element)
     }
 

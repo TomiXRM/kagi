@@ -223,6 +223,34 @@ impl ConflictView {
 // Render
 // ────────────────────────────────────────────────────────────
 
+/// Side identities stay above the persistent notification lane and scroll body.
+pub(crate) fn render_raw_headers(labels: &SideLabels) -> gpui::AnyElement {
+    let header = |label: String, accent, probe| {
+        super::render_helpers::diff_state::side_header(label.into(), Some(accent))
+            .relative()
+            .flex_1()
+            .min_w(px(0.))
+            .child(super::e2e::measure_inside(probe))
+    };
+    div()
+        .relative()
+        .flex()
+        .flex_shrink_0()
+        .child(super::e2e::measure_inside("conflict-raw-headers"))
+        .child(header(
+            format!("{} — {}", labels.current.name, Msg::EditorCurrentSide.t()),
+            theme().color_branch,
+            "conflict-image-current-header",
+        ))
+        .child(div().w(px(1.)).flex_shrink_0().bg(rgb(theme().surface)))
+        .child(header(
+            format!("{} — {}", labels.incoming.name, Msg::EditorIncomingSide.t()),
+            theme().color_remote,
+            "conflict-image-incoming-header",
+        ))
+        .into_any_element()
+}
+
 /// Source presence determines whether adoption or the deletion confirmation owns
 /// a side's action. The latter is wired through #1734's frozen intent boundary.
 #[derive(Clone, Copy)]
@@ -292,6 +320,7 @@ pub(crate) fn render_raw_preview(
             actions,
             pdfs,
             ["conflict-image-current", "conflict-image-incoming"],
+            false,
         ))
         .when(show_external, |column| {
             column.child(

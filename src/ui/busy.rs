@@ -9,7 +9,8 @@ use kagi_ui_core::slow_read::{is_slow, SlowRead};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::{self, theme};
-use super::{render_overlay, KagiApp};
+use super::toast_stack::ToastAudience;
+use super::{render_overlay, FooterStatus, KagiApp, ToastKind};
 
 const TICK: Duration = Duration::from_millis(250);
 
@@ -27,6 +28,16 @@ impl BusyIdentity {
     pub(super) fn pull((owner, visit, started): (crate::app::SessionId, u64, Instant)) -> Self {
         Self::Pull(owner, visit, started)
     }
+}
+
+/// Match the footer's content box, excluding its unscaled dark-chrome border.
+fn footer_control_height() -> gpui::Pixels {
+    theme::scaled_px(super::STATUS_BAR_H)
+        - gpui::px(if theme().uses_neutral_dark_chrome() {
+            1.
+        } else {
+            0.
+        })
 }
 
 impl KagiApp {
@@ -263,53 +274,17 @@ impl KagiApp {
         is_slow(elapsed).then_some((name, elapsed.as_secs()))
     }
 
-    /// Render the toast / busy overlay as an absolute container (bottom-left,
-    /// above the status bar). The toast cards live in the `Entity<ToastStack>`
-    /// child, so a push / expire re-renders only that subtree instead of all of
-    /// `KagiApp` (ADR-0110 Phase 5). The busy snackbar stays here because it is
-    /// driven by KagiApp state: the write latch, and a read that has been slow
-    /// for two seconds (#355). Returns `None` before the window (and thus the
-    /// toast entity) exists.
-    pub(super) fn render_toasts(
-        &self,
-        repository_window: Option<&gpui::Window>,
-        show_clone_action: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        let toast_stack = self.toast_stack.clone()?;
-        let mut stack = toast_container();
-        if let Some(window) = repository_window
-            .filter(|window| super::compact::for_window(window) && self.bottom_panel_open)
-        {
-            // Keep compact panel tabs above the stack, without moving its
-            // status-bar anchor. The viewport's 30% cap still applies below.
-            let ui = self.ui();
-            let layout = super::workspace::resolve_workspace(
-                &self.workspace_inputs(
-                    ui.commit_panel_open,
-                    ui.commit_panel.is_some(),
-                    ui.selected
-                        .and_then(|index| self.view().details.get(index))
-                        .is_some(),
-                ),
-            );
-            let body = self.bottom_panel_body_height(
-                window,
-                matches!(layout.center, super::workspace::CenterPane::Editor),
-            );
-            stack = stack.max_h(theme::scaled_px((body - super::TOAST_INSET_PX).max(0.)));
-        }
+    pub(super) fn busy_feedback_visible(&self) -> bool {
+        (!self.busy_progress_hidden() && self.home_github.cloning.is_some())
+            || self.busy_snackbar_label().is_some()
+            || self.slow_read_shown().is_some()
+    }
 
-        // While an async op runs, show a busy snackbar with a spinning sync icon
-        // (user request) — a lighter alternative to a blocking popup. A slow
-        // read adds its explanation; with no write running it owns the label.
-        let slow = self.slow_read_shown();
-        let write = self.slow_write_shown(cx.background_executor().now());
-        let label = self
-            .home_github
+    fn busy_notice_label(&self, audience: ToastAudience) -> Option<SharedString> {
+        self.home_github
             .cloning
             .as_ref()
-            .filter(|_| !self.busy_progress_hidden())
+            .filter(|_| audience != ToastAudience::Settings && !self.busy_progress_hidden())
             .and_then(|card| card.target.as_ref())
             .map(|target| {
                 super::render_helpers::safe_text(
@@ -319,19 +294,140 @@ impl KagiApp {
                 )
             })
             .or_else(|| {
-                self.busy_snackbar_label()
-                    .or(slow.map(i18n::slow_read_label))
+                (audience == ToastAudience::Repository)
+                    .then(|| {
+                        self.busy_snackbar_label()
+                            .or(self.slow_read_shown().map(i18n::slow_read_label))
+                    })
+                    .flatten()
                     .map(SharedString::from)
+            })
+    }
+
+    /// Conflict feedback borrows the toast lifecycle, never a second queue or
+    /// timer. Its footer projection leaves every conflict action unobscured.
+    pub(super) fn conflict_footer_feedback(
+        &self,
+        fallback: FooterStatus,
+        cx: &Context<Self>,
+    ) -> (FooterStatus, Option<(u64, SharedString)>, bool) {
+        let stack = self.toast_stack.as_ref().map(|stack| stack.read(cx));
+        let routine = stack.and_then(|stack| {
+            stack.toasts().iter().rev().find(|toast| {
+                ToastAudience::Repository.includes(toast)
+                    && !toast.is_persistent()
+                    && toast.dismissing.is_none()
+            })
+        });
+        let arrival = stack.and_then(|stack| {
+            stack
+                .status()
+                .filter(|(id, _)| routine.is_some_and(|toast| toast.id == *id))
+                .map(|(id, label)| (id, label.clone()))
+        });
+        let slow = self.slow_read_shown();
+        let busy = self.busy_notice_label(ToastAudience::Repository);
+        if let Some(toast) = routine {
+            // New feedback replaces the caption, not the truth that an
+            // admitted operation is still running.
+            let status = if busy.is_some() || matches!(fallback, FooterStatus::Busy(_)) {
+                FooterStatus::Busy(toast.message.clone())
+            } else if toast.kind == ToastKind::Success {
+                FooterStatus::Success(toast.message.clone())
+            } else {
+                FooterStatus::Idle(toast.message.clone())
+            };
+            return (status, arrival, false);
+        }
+        if let Some(label) = busy {
+            let advice = self
+                .slow_write_shown(cx.background_executor().now())
+                .map(|(kind, elapsed)| i18n::slow_write_advice(kind, elapsed))
+                .or_else(|| slow.map(i18n::slow_read_advice));
+            let has_advice = advice.is_some();
+            let caption = match advice {
+                Some(advice) => {
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::record_busy_advice(&advice);
+                    if label.trim_end_matches('…') == advice {
+                        label
+                    } else {
+                        SharedString::from(format!("{label} · {advice}"))
+                    }
+                }
+                None => label,
+            };
+            return (FooterStatus::Busy(caption), arrival, has_advice);
+        }
+        (fallback, arrival, false)
+    }
+
+    /// Render notifications inside the surface's content anchor, or in a
+    /// persistent-only lane / transient overlay.
+    pub(super) fn render_toasts(
+        &self,
+        window: &gpui::Window,
+        placement: ToastPlacement,
+        audience: ToastAudience,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let toast_stack = self.toast_stack.clone()?;
+        let partition = match placement {
+            ToastPlacement::Repository => super::toast_stack::ToastPartition::All,
+            ToastPlacement::PersistentLane => super::toast_stack::ToastPartition::Persistent,
+            ToastPlacement::Transient => super::toast_stack::ToastPartition::Transient,
+        };
+        toast_stack.update(cx, |stack, _| {
+            stack.set_trailing_placement(
+                window.window_handle().window_id(),
+                audience,
+                partition,
+                placement != ToastPlacement::Transient,
+            );
+        });
+        let mut stack = toast_container(placement)
+            .max_h(gpui::px(f32::from(window.viewport_size().height) * 0.30))
+            .min_h(gpui::px(0.))
+            .when(placement == ToastPlacement::Transient, |el| {
+                el.child(super::e2e::measure_inside("toast-transient-overlay"))
             });
-        if let Some(label) = label {
-            stack =
-                stack.child(self.render_busy_snackbar(label, slow, write, show_clone_action, cx));
+        if placement == ToastPlacement::PersistentLane {
+            return Some(
+                stack
+                    .child(super::render_overlay::ToastHost {
+                        stack: toast_stack,
+                        partition,
+                        audience,
+                    })
+                    .into_any(),
+            );
         }
 
-        // The toast cards are an independently-rendered child entity.
-        stack = stack
-            .child(super::e2e::measure_inside("toast-stack"))
-            .child(toast_stack);
+        // While an async op runs, show a busy snackbar with a spinning sync icon
+        // (user request) — a lighter alternative to a blocking popup. A slow
+        // read adds its explanation; with no write running it owns the label.
+        let repository = audience == ToastAudience::Repository;
+        let slow = repository.then(|| self.slow_read_shown()).flatten();
+        let write = repository
+            .then(|| self.slow_write_shown(cx.background_executor().now()))
+            .flatten();
+        let label = self.busy_notice_label(audience);
+        if let Some(label) = label {
+            stack = stack.child(self.render_busy_snackbar(
+                label,
+                slow,
+                write,
+                audience != ToastAudience::Settings,
+                cx,
+            ));
+        }
+
+        // Both projections borrow the same lifecycle/action owner.
+        stack = stack.child(super::render_overlay::ToastHost {
+            stack: toast_stack,
+            partition,
+            audience,
+        });
         Some(stack.into_any())
     }
 
@@ -381,16 +477,9 @@ impl KagiApp {
                 ));
             }
         }
-        let skip = slow.filter(|read| read.skippable()).map(|_| {
-            super::e2e::measure_control(
-                "busy-snackbar-skip",
-                Button::new("busy-snackbar-skip")
-                    .label(i18n::slow_read_skip())
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
-            )
-        });
+        let skip = slow
+            .filter(|read| read.skippable())
+            .map(|_| self.render_busy_skip(None, cx));
         div()
             .relative()
             .child(super::e2e::measure_inside("busy-snackbar"))
@@ -413,9 +502,9 @@ impl KagiApp {
             .child(text)
             .children(skip)
             .when(show_clone_action && !self.busy_progress_hidden(), |el| {
-                el.children(self.render_clone_progress_action(cx))
+                el.children(self.render_clone_progress_action(None, cx))
             })
-            .child(self.render_busy_dismiss(cx))
+            .child(self.render_busy_dismiss(false, cx))
             .into_any()
     }
 
@@ -452,7 +541,35 @@ impl KagiApp {
         }
     }
 
-    fn render_busy_dismiss(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_busy_skip(
+        &self,
+        footer_width: Option<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        super::e2e::measure_control(
+            "busy-snackbar-skip",
+            Button::new("busy-snackbar-skip")
+                .label(i18n::slow_read_skip())
+                .small()
+                .ghost()
+                .when_some(footer_width, |button, width| {
+                    button
+                        .h(footer_control_height())
+                        .w(width)
+                        .px_0()
+                        .py_0()
+                        .text_xs()
+                })
+                .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
+        )
+        .into_any()
+    }
+
+    pub(super) fn render_busy_dismiss(
+        &self,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let owner = self.active_session();
         let identity = self.busy_identity();
         let app = cx.entity().downgrade();
@@ -461,6 +578,12 @@ impl KagiApp {
                 .ghost()
                 .small()
                 .flex_shrink_0()
+                .when(compact, |button| {
+                    button
+                        .h(footer_control_height())
+                        .w(theme::scaled_px(super::STATUS_BAR_H))
+                        .p_0()
+                })
                 .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.hide_busy_progress(owner, identity, cx);
@@ -478,8 +601,18 @@ impl KagiApp {
         super::e2e::measure_control("busy-snackbar-dismiss", control)
     }
 
-    fn render_clone_progress_action(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.home_github.cloning.is_none() || self.clone_modal().is_some() {
+    pub(super) fn clone_progress_available(&self) -> bool {
+        !self.busy_progress_hidden()
+            && self.home_github.cloning.is_some()
+            && self.clone_modal().is_none()
+    }
+
+    pub(super) fn render_clone_progress_action(
+        &self,
+        footer_width: Option<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.clone_progress_available() {
             return None;
         }
         let button = Button::new("clone-busy-show")
@@ -487,6 +620,14 @@ impl KagiApp {
             .small()
             .ghost()
             .flex_shrink_0()
+            .when_some(footer_width, |button, width| {
+                button
+                    .h(footer_control_height())
+                    .w(width)
+                    .px_0()
+                    .py_0()
+                    .text_xs()
+            })
             .disabled(self.has_active_modal())
             .on_click(cx.listener(|this, _, window, cx| {
                 // Restore the existing task, never construct or confirm a new clone.
@@ -557,14 +698,35 @@ mod tests {
     }
 }
 
-/// Shared out-of-flow toast placement for repository and Settings windows.
-pub(super) fn toast_container() -> gpui::Div {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ToastPlacement {
+    Repository,
+    PersistentLane,
+    Transient,
+}
+
+/// The repository parent is the actual center content, never the window.
+pub(super) fn toast_container(placement: ToastPlacement) -> gpui::Div {
     div()
-        .absolute()
-        .bottom(theme::scaled_px(
-            super::STATUS_BAR_H + super::TOAST_INSET_PX,
-        ))
-        .left(theme::scaled_px(super::TOAST_INSET_PX))
+        .when(placement == ToastPlacement::Repository, |el| {
+            el.absolute()
+                .top(theme::scaled_px(super::TOAST_INSET_PX))
+                .bottom(theme::scaled_px(super::TOAST_INSET_PX))
+                .right(theme::scaled_px(super::TOAST_INSET_PX))
+                .max_h(gpui::relative(1.0))
+        })
+        .when(placement == ToastPlacement::PersistentLane, |el| {
+            el.flex_shrink_0()
+                .my(theme::scaled_px(super::TOAST_INSET_PX))
+                .mr(theme::scaled_px(super::TOAST_INSET_PX))
+        })
+        .when(placement == ToastPlacement::Transient, |el| {
+            el.absolute()
+                .bottom(theme::scaled_px(
+                    super::STATUS_BAR_H + super::TOAST_INSET_PX,
+                ))
+                .left(theme::scaled_px(super::TOAST_INSET_PX))
+        })
         .w(theme::scaled_px(460.))
         .max_w(gpui::relative(0.45))
         .flex()

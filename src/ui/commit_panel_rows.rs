@@ -133,6 +133,30 @@ fn render_cp_file_row(
     };
     let ink = diffstat_bar::file_selection_ink(selection_wash, window_active, row_bg);
     let foreground = |normal| ink.map_or_else(|| rgb(normal).into(), |(primary, _)| primary);
+    let hoverable = !is_sel && !wip_hit && !is_conflicted && selection_wash == 0.;
+    let row_background = u32::from(row_bg.to_rgb()) >> 8;
+    let label_ink = |color| {
+        ink.map_or_else(
+            || {
+                theme().status_label_text_on(
+                    color,
+                    row_background,
+                    if hoverable {
+                        theme().surface
+                    } else {
+                        row_background
+                    },
+                )
+            },
+            |(primary, _)| {
+                theme().status_label_text_on(
+                    u32::from(primary.to_rgb()) >> 8,
+                    row_background,
+                    row_background,
+                )
+            },
+        )
+    };
     let mut file_row = div()
         .id((row_id, fi))
         .map(|el| {
@@ -173,10 +197,7 @@ fn render_cp_file_row(
                 if staged { "st" } else { "us" }
             )))
         })
-        .when(
-            !is_sel && !wip_hit && !is_conflicted && selection_wash == 0.,
-            |el| el.hover(|s| s.bg(rgb(theme().surface))),
-        )
+        .when(hoverable, |el| el.hover(|s| s.bg(rgb(theme().surface))))
         .on_click(file_click)
         .child(
             div()
@@ -195,7 +216,7 @@ fn render_cp_file_row(
         )
         .child(
             div()
-                .flex_1()
+                .flex_shrink(1.)
                 .min_w(px(0.))
                 .id((if staged { "cp-st-path" } else { "cp-us-path" }, fi))
                 .aria_label(full_path.clone())
@@ -233,6 +254,19 @@ fn render_cp_file_row(
                     },
                 ),
         )
+        .when(is_conflicted, |el| {
+            el.child(
+                super::button_style::status_badge(
+                    (conflict_id, fi),
+                    "cp-row-conflict",
+                    Msg::CommitPanelConflict.t(),
+                    row_background,
+                    label_ink(theme().color_blocker),
+                    cx,
+                )
+                .ml_1(),
+            )
+        })
         .when(convention, |el| {
             // issue #338: emphasis badge on a convention-body file — these steer
             // agent behaviour, so they are highlighted, never folded.
@@ -241,8 +275,8 @@ fn render_cp_file_row(
                     ("cp-convention-badge", fi),
                     "cp-row-convention",
                     Msg::AgentConventionBadge.t(),
-                    theme().color_warning,
-                    false,
+                    row_background,
+                    label_ink(theme().color_warning),
                     cx,
                 )
                 .ml_1()
@@ -251,6 +285,7 @@ fn render_cp_file_row(
                 .font_weight(gpui::FontWeight::BOLD),
             )
         })
+        .child(div().flex_1())
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
@@ -266,15 +301,8 @@ fn render_cp_file_row(
         cx,
     );
     if is_conflicted {
-        // A conflict is a status, not an unavailable Stage action.
-        return file_row.child(super::button_style::status_badge(
-            (conflict_id, fi),
-            "cp-row-conflict",
-            Msg::CommitPanelConflict.t(),
-            theme().color_blocker,
-            true,
-            cx,
-        ));
+        // The identity label selects its row; no index action is offered.
+        return file_row;
     }
     // #476 slice 3: offered on a linked worktree's panel too — Discard resolves
     // the panel's own repository now, and its confirm names that worktree.

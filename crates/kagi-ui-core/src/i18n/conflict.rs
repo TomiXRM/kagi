@@ -1,12 +1,32 @@
 //! Accessible conflict names use operation-dependent role/name labels (ADR-0058).
 use super::{lang, Lang, Msg};
 impl Msg {
-    pub fn conflict_draft_rescued(name: &str) -> String {
-        draft_rescued_for(lang(), name)
+    pub fn conflict_draft_rescued() -> String {
+        draft_rescued_for(lang()).to_owned()
+    }
+
+    pub fn conflict_draft_rescued_detail(path: &str) -> String {
+        draft_rescued_detail_for(lang(), path)
     }
 
     pub fn conflict_draft_restore_failed() -> String {
         draft_restore_failed_for(lang()).into()
+    }
+
+    pub fn conflict_draft_repository(name: &str) -> String {
+        match lang() {
+            Lang::En => format!("Repository: {name}"),
+            Lang::Ja => format!("リポジトリ: {name}"),
+        }
+    }
+
+    pub fn conflict_draft_refresh_unavailable() -> &'static str {
+        match lang() {
+            Lang::En => {
+                "The repository for these saved edits is no longer available in this window."
+            }
+            Lang::Ja => "この保存済み編集のリポジトリは、このウィンドウでは利用できません。",
+        }
     }
 
     pub fn conflict_draft_preserve_failed() -> String {
@@ -76,27 +96,24 @@ fn stopped_for(language: Lang, count: Option<usize>) -> String {
     }
 }
 
-fn draft_rescued_for(language: Lang, name: &str) -> String {
-    let name = kagi_domain::text_safety::sanitize_control_bytes(name);
-    let name = if name.contains('\n') {
-        std::borrow::Cow::Owned(name.replace('\n', "\\n"))
-    } else {
-        std::borrow::Cow::Borrowed(name.as_str())
-    };
+fn draft_rescued_for(language: Lang) -> &'static str {
     match language {
-        Lang::En => {
-            format!("Draft could not be read; the damaged file was moved aside as {name}")
-        }
-        Lang::Ja => {
-            format!("下書きを読めませんでした。破損したファイルを {name} に移しました")
-        }
+        Lang::En => "Saved conflict edits were damaged and weren't restored. The damaged copy was kept — see the Operation Log.",
+        Lang::Ja => "保存していた conflict 編集は破損していたため復元していません。破損したコピーは残してあります（詳細は操作ログ）。",
+    }
+}
+
+fn draft_rescued_detail_for(language: Lang, path: &str) -> String {
+    match language {
+        Lang::En => format!("Saved conflict edits were damaged and weren't restored. The damaged copy was kept at:\n{path}"),
+        Lang::Ja => format!("保存していた conflict 編集は破損していたため復元していません。破損したコピーは次の場所に残してあります:\n{path}"),
     }
 }
 
 fn draft_restore_failed_for(language: Lang) -> &'static str {
     match language {
-        Lang::En => "Could not read saved conflict edits. See Operation Log, then reload to try again.",
-        Lang::Ja => "保存した conflict の編集内容を読めませんでした。Operation Log を確認してから再読み込みしてください。",
+        Lang::En => "Could not read saved conflict edits.",
+        Lang::Ja => "保存した conflict の編集内容を読めませんでした。",
     }
 }
 
@@ -115,7 +132,7 @@ mod tests {
     fn failed_draft_restore_preview_is_bounded_in_both_languages() {
         for language in [Lang::En, Lang::Ja] {
             let preview = draft_restore_failed_for(language);
-            assert!(preview.contains("Operation Log"));
+            assert!(!preview.contains("Operation Log") && !preview.contains("reload"));
             assert!(preview.chars().count() < 100);
             assert!(!preview.contains('/') && !preview.contains('\n'));
         }
@@ -134,16 +151,40 @@ mod tests {
     }
 
     #[test]
-    fn damaged_draft_notice_names_the_preserved_file_in_both_languages() {
+    fn damaged_draft_notice_keeps_internal_file_identity_in_the_log_only() {
         assert_eq!(
-            draft_rescued_for(Lang::En, "buffer.json.corrupt.1"),
-            "Draft could not be read; the damaged file was moved aside as buffer.json.corrupt.1"
+            draft_rescued_for(Lang::En),
+            "Saved conflict edits were damaged and weren't restored. The damaged copy was kept — see the Operation Log."
         );
         assert_eq!(
-            draft_rescued_for(Lang::Ja, "buffer.json.corrupt.1"),
-            "下書きを読めませんでした。破損したファイルを buffer.json.corrupt.1 に移しました"
+            draft_rescued_for(Lang::Ja),
+            "保存していた conflict 編集は破損していたため復元していません。破損したコピーは残してあります（詳細は操作ログ）。"
         );
-        assert!(!draft_rescued_for(Lang::En, "buffer.json\n.corrupt").contains('\n'));
+        for language in [Lang::En, Lang::Ja] {
+            let preview = draft_rescued_for(language);
+            assert!(!preview.contains("buffer.json") && !preview.contains(".corrupt"));
+            assert!(!preview.contains('/') && !preview.contains('\n'));
+            assert!(!preview.contains("this repository") && !preview.contains("この repository"));
+            assert_ne!(preview, draft_restore_failed_for(language));
+        }
+    }
+
+    #[test]
+    fn damaged_draft_fallback_retains_detail_without_promising_a_log_entry() {
+        let path = "/repositories/owner/.git/kagi/buffer.json.corrupt.2";
+        assert_eq!(
+            draft_rescued_detail_for(Lang::En, path),
+            format!("Saved conflict edits were damaged and weren't restored. The damaged copy was kept at:\n{path}")
+        );
+        assert_eq!(
+            draft_rescued_detail_for(Lang::Ja, path),
+            format!("保存していた conflict 編集は破損していたため復元していません。破損したコピーは次の場所に残してあります:\n{path}")
+        );
+        for language in [Lang::En, Lang::Ja] {
+            let detail = draft_rescued_detail_for(language, path);
+            assert!(detail.contains(path));
+            assert!(!detail.contains("Operation Log") && !detail.contains("操作ログ"));
+        }
     }
 
     #[test]

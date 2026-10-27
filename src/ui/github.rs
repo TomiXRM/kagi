@@ -410,7 +410,13 @@ impl KagiApp {
 
     pub fn copy_pr_url(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(pr.url.clone()));
-        self.push_toast(
+        let subject = if self.home_in_front() {
+            super::toast_stack::ToastSubject::App
+        } else {
+            super::toast_stack::ToastSubject::Repository
+        };
+        self.push_toast_for(
+            subject,
             ToastKind::Info,
             SharedString::from(format!("#{} URL", pr.number)),
             cx,

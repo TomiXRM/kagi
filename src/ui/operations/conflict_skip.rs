@@ -195,7 +195,14 @@ impl KagiApp {
                     None => klog!("executed: {}", op_name),
                     Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
                 }
-                app.present_operation_completion(&recording, current, false, refusal_display, cx);
+                app.present_operation_completion(
+                    &recording,
+                    current,
+                    false,
+                    refusal_display,
+                    None,
+                    cx,
+                );
                 if current {
                     if let Some(evidence) = termination_unknown_evidence {
                         app.report_unknown_notice(&repo_path, evidence);

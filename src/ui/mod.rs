@@ -1727,11 +1727,20 @@ impl KagiApp {
 
     // ── W3-NOTIFY: toast helpers ──────────────────────────────
 
-    /// Queue a snackbar toast (bottom-left). Delegates to the `ToastStack`
-    /// entity, which (re)starts the auto-dismiss ticker and re-renders only the
-    /// overlay subtree (ADR-0110 Phase 5). No-op before the window exists.
+    /// Repository feedback stays with this root even after its tab departs.
+    /// Settings and app-level producers capture their subject explicitly.
     pub(crate) fn push_toast(
         &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.push_toast_for(toast_stack::ToastSubject::Repository, kind, message, cx);
+    }
+
+    pub(crate) fn push_toast_for(
+        &mut self,
+        subject: toast_stack::ToastSubject,
         kind: ToastKind,
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
@@ -1742,7 +1751,32 @@ impl KagiApp {
                 std::borrow::Cow::Borrowed(_) => message,
                 std::borrow::Cow::Owned(display) => display.into(),
             };
-            stack.update(cx, |stack, cx| stack.push_notify(kind, message, cx));
+            stack.update(cx, |stack, cx| {
+                stack.push_keyed_notify(
+                    crate::ui::toast_stack::ToastSpec::new(subject, kind, message),
+                    cx,
+                );
+            });
+        }
+    }
+
+    pub(super) fn toast_subject_for_window(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> toast_stack::ToastSubject {
+        let settings = matches!(self.menu_overlay, Some(commands::MenuOverlay::Settings));
+        #[cfg(target_os = "macos")]
+        let settings =
+            settings || settings_window::owns_window(window.window_handle().window_id(), cx);
+        #[cfg(not(target_os = "macos"))]
+        let _ = (window, cx);
+        if settings {
+            toast_stack::ToastSubject::Settings
+        } else if self.home_in_front() {
+            toast_stack::ToastSubject::App
+        } else {
+            toast_stack::ToastSubject::Repository
         }
     }
 
@@ -1762,13 +1796,12 @@ impl KagiApp {
         format!("{}\0{op}\0{result}", repo.components().as_path().display())
     }
 
-    /// One transient result per repository / requested operation / outcome.
+    /// One complete result per repository / requested operation / outcome.
     pub(crate) fn push_operation_result(
         &mut self,
         entry: &OpLogEntry,
         op: &str,
-        kind: ToastKind,
-        message: SharedString,
+        mut spec: toast_stack::ToastSpec,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         let result = match entry.outcome {
@@ -1782,24 +1815,24 @@ impl KagiApp {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        let message = if repository.is_empty() {
+        let message = spec.message;
+        spec.message = if repository.is_empty() {
             message
+        } else if op == "conflict-draft-restore" {
+            SharedString::from(format!(
+                "{message}\n{}",
+                Msg::conflict_draft_repository(repository)
+            ))
         } else {
             SharedString::from(format!("{message} — {repository}"))
         };
         self.toast_stack.clone().map(|stack| {
-            let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
-            stack.update(cx, |stack, cx| {
-                let id = stack.push_keyed_notify(kind, message, Some(key), cx);
-                if matches!(kind, ToastKind::Error | ToastKind::Info) {
-                    stack.set_action(
-                        id,
-                        types::ToastAction::OpenOperationLog(oplog_panel::EntryKey::of(entry)),
-                        cx,
-                    );
-                }
-                id
-            })
+            spec.result_key = Some(Self::operation_result_key(
+                Path::new(&entry.repo),
+                op,
+                result,
+            ));
+            stack.update(cx, |stack, cx| stack.push_keyed_notify(spec, cx))
         })
     }
 
@@ -1971,6 +2004,8 @@ impl KagiApp {
             recording_failed,
             None,
             None,
+            None,
+            None,
         )
         .recording_failed
     }
@@ -1994,6 +2029,8 @@ impl KagiApp {
         mut recording_failed: bool,
         stopped_notice: Option<SharedString>,
         footer_only_contract: Option<(SharedString, bool)>,
+        refresh_owner: Option<crate::app::Attachment>,
+        result_action: Option<types::ToastAction>,
     ) -> operations::RecordedPresentation {
         let op = entry.op.as_str();
         let before = &entry.before;
@@ -2060,13 +2097,17 @@ impl KagiApp {
         };
         let toast_id = if announce && !recording_failed {
             let receipt = shown.as_ref().unwrap_or(&entry);
-            self.push_operation_result(
-                receipt,
-                requested_op.unwrap_or(&receipt.op),
-                toast_kind,
-                display_footer_msg.clone(),
-                cx,
-            )
+            let op = requested_op.unwrap_or(&receipt.op);
+            let mut spec =
+                toast_stack::ToastSpec::operation(receipt, toast_kind, display_footer_msg.clone());
+            spec.refresh_owner = refresh_owner;
+            if op == "clone" {
+                spec.subject = toast_stack::ToastSubject::App;
+            }
+            if let Some(action) = result_action {
+                spec.action = Some(action);
+            }
+            self.push_operation_result(receipt, op, spec, cx)
         } else {
             None
         };
@@ -3278,10 +3319,10 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Explicit approval of the active modal. The root keyboard router selects
-    /// Cancel instead for destructive defaults. Returns `true` if a modal was
-    /// open, preventing fall-through to commit checkout. Each confirm method
-    /// self-guards on blockers and its own two-stage arming; approval can
+    /// Explicit approval of the active modal. No-default sheets stop root Return
+    /// before this router; their focused controls still dispatch approval.
+    /// Returns `true` when a modal was open, preventing commit-checkout fallback.
+    /// Each confirm method self-guards on blockers and two-stage arming; approval can
     /// neither execute a blocked plan nor skip a stage. View-only/multi-choice overlays (update,
     /// menu/settings) are consumed but not actioned.
     ///

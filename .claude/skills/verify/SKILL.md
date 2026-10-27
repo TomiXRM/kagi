@@ -63,6 +63,17 @@ checksum coverage as described in `docs/RELEASING.md`.
 `tests/gui_e2e_runner.rs` is an opt-in macOS main-thread runner. It needs both the
 `gui-e2e` feature and `KAGI_GUI_E2E=1`; use an exclusive target directory:
 
+For direct runner execution, select the executable from the **current**
+`cargo test --features gui-e2e --test gui_e2e_runner --no-run --message-format=json`
+compiler-artifact output and record its SHA-256 with the source head. Never
+reuse an executable basename from an earlier run: feature/dependency changes
+can leave a stale runner beside the current one in `target/debug/deps`.
+Record per-assertion locale/theme receipts when settling disputed coverage.
+The no-render-I/O acceptance case explicitly loops EN/JA × Apple Light/Dark;
+do not infer language coverage from launch environment alone. The folder-opener
+fixture publishes its captured argument atomically, so existence means completion,
+not merely that the child created an empty destination.
+
 `KAGI_GUI_E2E_ONLY` is not optional — every invocation names the scenarios it
 wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
@@ -575,6 +586,84 @@ focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
 These probes are not native VoiceOver or Full Keyboard Access evidence.
 Tier B inspects the live ComboBox and option names and both zoom button/value
 nodes at 100%, 70% and 167%, including disabled announcements.
+
+For #1772 include `commit_panel_density,commit_panel` in the native filter.
+Retain tree/flat, EN/JA, Apple Light/Dark and zoom coverage. Measure actual
+outline pixels: label interior matches its row, caption contrast is at least
+4.5:1 and border at least 3:1. Labels follow aligned filenames outside the
+trailing action column, keep shared height/radius and `Role::Label`, and lack
+independent focus/activation/disabled semantics. Conflict-label click now
+selects its row; require unchanged index/conflict bytes. Convention keeps Rule
+wording and warning hue, with selected on-accent label-only AA correction.
+Tier B captures the same states in EN/JA × Light/Dark.
+
+For #1766/#1767/#1768 include the conflict control/density/roles/progressive,
+danger-sheet, `toast_` and `conflict_draft_restore_io` scenarios. Count actual
+rendered button roles: unresolved Results have zero prominent controls, and a
+ready unsaved Result has exactly one, Save. Danger-sheet root Return preserves
+the same sheet/arm without executing or cancelling; Escape / ⌘. still cancel,
+and focused buttons retain Space / Return. Quiet adoption captions must meet
+4.5:1 and outlines 3:1 against the real conflict band and rest/hover/pressed fills.
+Measure persistent notification bounds against each actual center content, not
+the window: top-trailing below file/graph/editor controls, outside sidebar/
+Inspector, at most 45% of that column. Every conflict layout places persistent
+cards AND the N-more summary in an in-flow lane after its column/side/saved
+header and before the panes and choice controls. Measure nonintersection with
+the actual current/incoming Use/Both controls in text, the raw choose row plus
+both side headers, directory/file choices and saved previews.
+In Conflict Mode only, newest routine Info/Success uses the existing fixed-height
+footer's single truncated text line, not a pane card (owner ruling, #1768).
+Assert the actual rendered footer text and Role::Status arrival, unchanged full
+lane/control/footer bounds, no transient/busy card probes, and no intersection
+with hunk/whole-file controls. Exercise automatic four-second expiry and verify
+the prior footer returns without re-announcing an older persistent error. Busy
+uses the existing footer spinner; held slow-read Skip/Hide remain inside the
+trailing end of that line. Include `slow_write_conflict_continue`.
+Read the actual Success footer paint and require at least 4.5:1 against its
+chrome background, not merely a semantic colour token.
+Home/Settings/Graph retain their current placement; their lanes still contain
+only persistent cards. Scope all hosts by typed subject (owner, #1806): with a
+real repository draft-rescue card live, native Settings must show no repository
+card, its repository window must still show it, and a real theme JSON error
+invoked in Settings must appear only there. Include
+`conflict_draft_corrupt_restore`; its root Escape must dismiss only the
+repository rescue and leave newer invisible Settings notices untouched.
+Rescue copy must distinguish damaged/not-restored edits from a refreshable
+read failure and label the frozen repository even while another tab is current.
+Its ordinary card must exclude internal names. Hold the real append lock:
+the required acknowledgment must retain rescued-file detail and recording error
+without promising an Operation Log entry, and no extra receipt may appear.
+`toast_dismiss` also completes a held real Settings reload after Settings closes
+while a collapsed Repository notice owns focus. The original control must survive
+before repaint; the production removal subscriber must not focus root.
+`theme_custom` checks startup error visibility and palette Reload Themes error
+and success paint in the invoking repository/Home window with Settings closed.
+A repository root's same-window Home tab must retain its repository notices and
+captured-owner recovery; do not mistake a view switch for a new owning window.
+The centre saved-source header probe is `conflict-saved-source-header`; never
+reuse the sidebar's `conflict-saved-header`. Include `conflict_file_selection`.
+Keep Settings' last control reachable. The saved-conflict failure has separate
+repository identity and full Operation Log / Refresh Repository labels; failed
+refresh retains it, accepted successful recovery dismisses only its own card.
+Tier B repeats these on a plain binary with real text AND raw merge conflicts
+and a saved draft read failure: both source identities and all choice controls
+must remain visible, including with the persistent N-more summary. Include
+× / Escape, root Return, focused-button activation and actual destructive caption
+contrast in EN/JA and Light/Dark.
+For the footer correction, capture real EN Light and JA Dark conflict transients
+in the footer, then their automatic reversion; add a JA Dark Settings frame with
+a live draft-rescue card in the repository window, and a Settings-owned theme
+JSON error. A repository's draft warning is not valid Settings lane evidence.
+For focused activation evidence, inspect the actual focus-ring pixels before
+pressing Space: the header Copy control precedes Cancel in Tab order, so never
+assume the first Tab focuses Cancel or activate Copy during validation. Capture
+a selected **convention-file** row on opaque accent fill for Rule's local AA
+correction; conflict rows cannot supply that selected-state evidence.
+永続通知レーンは永続カードだけで測る。conflict の一時通知と処理中表示は
+固定高フッターへ置き、4 秒後の復帰と操作への非交差を確認する。通知は対象を
+所有するウィンドウにだけ表示し、下書き救済の内部ファイル名は操作ログに残す。
+フォーカス枠を確認してから Space を押し、Copy を作動させない。
+選択色の証跡には規約ファイルの行を使う。
 
 For #1591 use `KAGI_GUI_E2E_ONLY='toast_,toolbar_overflow,settings_groups'`
 with KEEP_GOING and `KAGI_GUI_E2E_TIMEOUT_SECS=300`.
@@ -1113,7 +1202,8 @@ must preserve keyboard entry; the test does not refocus the root. Cover the firs
 raw file, ready unsaved drafts, saved read-only inspection, and sidebar hide/show
 without selection loss. Inactive fill and selected AX option must agree.
 The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
-for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
+for Pop/Drop; danger sheets have no default button after #1767: root Return
+leaves the same sheet open and neither confirms nor cancels. Follow-up coverage
 checks that the retained stash has no write lease before explicit approval,
 confirmed Drop records exactly one successful receipt, and root Return leaves
 the stash/repository unchanged without a drop receipt. Duplicate-OID suppression

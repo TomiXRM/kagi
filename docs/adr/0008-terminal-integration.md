@@ -46,8 +46,8 @@ Bottom Panel に埋め込み terminal が必要(requirements-shell.md §1)。4�
   other payload bytes are unchanged. Raw keys never use this filtering path.
 - With bracketed paste disabled, text containing LF or CR is held in the single
   `active_modal` slot. The localized warning shows the clipboard contents;
-  only an explicit Paste button approves sending. Return defaults to Cancel,
-  and Escape/Cancel send no text. Approval freezes the owning session and shell
+  only an explicit Paste button approves sending. Root Return has no default
+  and retains the sheet; Escape/Cmd-./Cancel send no text and dismiss it. Approval freezes the owning session and shell
   spawn generation, so a restarted shell or switched/closed tab cannot inherit it.
   Confirmation consults the current mode again.
 - Control-Shift-Tab or Command-Shift-J in `Terminal` focuses its existing

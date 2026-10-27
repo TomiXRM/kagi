@@ -115,18 +115,64 @@ integrating status feedback into your interface." `[house]` An in-progress
 operation is a status label, not a button; its exit (中止) is visually separate
 from its advance. `(owner ruling, #1764)` 確認へ進む sits at the trailing edge
 of the file header, separated from the file-level 保存 by a divider.
+`(owner ruling, #1772)` Status labels are outline-only, after the aligned
+filename and outside the action column; clicking the label selects its row.
+状態ラベルは塗りなしの枠線表示とし、揃ったファイル名の後ろ・操作列の外に
+置く。クリックは行の選択に伝える。
 
 **Sheets and alerts** `[HIG]` — `alerts.md › Buttons`: "you don't want to make
 a Cancel button the default button… avoid making any button the default
 button"; "Use a caution symbol sparingly… when confirming an action that might
-result in unexpected loss of data." Escape cancels. **Conflict with a recorded
-decision:** Kagi's danger sheets route root Return to Cancel
-(`docs/decisions.md` 2026-10-12 #1292 / #1334, ADR-0046). Changing that to
-"Return does nothing" (#1767) needs an owner ruling; until it is recorded, a
-review reports the difference as a question, not as a P1.
+result in unexpected loss of data." `(owner ruling, #1767)` Return does
+nothing on danger sheets; confirm by click or Space/Return on the focused
+button; Escape / ⌘. cancel. This supersedes the root-Return-cancels policy in
+the 2026-10-12 #1292 / #1334 decisions and ADR-0046.
+A caution symbol only for **unexpected** data loss, not reassuring or
+progress notes or tasks whose sole purpose is deliberate overwrite/removal
+(`alerts.md › Desktop (macOS)`). Classify typed note kinds, never their translated
+text. The user-selected Abort confirmation retains its destructive appearance
+as an explicit safety convention (owner ruling, #1767); this does not give it
+default focus or a root Return action.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.
+Repository cards occupy the center content's top-trailing safe area, outside
+sidebar/Inspector, with a 45%-column width cap (#1768). Every conflict layout
+reserves an in-flow lane for persistent cards and their summary between its
+column/side or saved header and the panes; hunk/whole-file choices must never
+be covered. Directory/file layouts without column headers place the lane before
+their choices. Persistent cards keep × / Escape dismissal. In Conflict Mode,
+routine Info/Success feedback uses the existing fixed-height footer text slot:
+newest message only, one truncated line, the shared four-second lifetime and
+Role::Status arrival announcement. Busy uses that footer's existing spinner;
+slow-read Skip and Hide sit at the trailing end (owner ruling, #1768).
+Success footer text uses contrast-adjusted semantic ink, at least 4.5:1 against
+its actual chrome; the unadjusted success token alone is not text-safe.
+No transient or busy card may cover conflict content or change its geometry.
+Home/Settings/Graph retain their existing placement policies.
+House rule: notifications appear only in the window that owns their subject
+(owner, #1806). Settings shows its own typed theme/settings notices; repository
+results/rescued drafts/refresh stay with their repository root. Theme commands
+capture their invoking window, including repository/Home palette invocation;
+startup theme errors are app-level unless produced in Settings itself.
+Assemble subject, actions and recovery ownership before insertion, lane refresh
+or focus repair. Repair once on the final persistent/transient classification;
+a foreign or action-bearing arrival must not retire an unrelated control.
+A standalone Home root keeps app-level notices; a repository root's Home tab
+retains its repository notices/recovery. Escape considers only that window's
+audience, never dismissing an invisible foreign card or consuming its key.
+Never infer ownership or draft-rescue cause from text. Persistent rescue cards
+append their frozen repository label, even when another tab is current.
+Previews say saved edits were damaged and not restored and the damaged copy
+was kept. When recorded, details are in Operation Log and internal storage
+names/paths stay there. If recording fails, the required acknowledgment carries
+the rescued-file detail and recording error without promising a log entry.
+Recovery captions reuse the existing command name,
+and a failed or unfinished refresh must not dismiss the failure preview.
+Any accepted successful read for the captured owner resolves that preview,
+including keyboard/menu refresh, tab reactivation and external reload; the
+card's own Refresh button is not a prerequisite. Takeover centers follow the
+same persistent-only lane admission, with no empty band for transient stacks.
 Mixed-state close warnings name every kind of unsaved data they will discard,
 including the scoped ordinary-editor file count alongside conflict decisions
 (`feedback.md › Best practices`: "Warn people when they initiate a task that can

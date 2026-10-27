@@ -452,6 +452,24 @@ impl WorktreeNote {
     /// English UI copy; never serialize this text or use it for contract logs.
     pub fn message_display_en(&self) -> String {
         match self {
+            WorktreeNote::PostCreateSteps {
+                steps,
+                trust_required: true,
+                ..
+            } => format!(
+                crate::advice_template_display_en!(WorktreePostCreateStepsTrustRequired),
+                steps.len(),
+                worktree_steps_lines(steps, false, "")
+            ),
+            WorktreeNote::PreRemoveSteps {
+                steps,
+                trust_required: true,
+                ..
+            } => format!(
+                crate::advice_template_display_en!(WorktreePreRemoveStepsTrustRequired),
+                steps.len(),
+                worktree_steps_lines(steps, false, "")
+            ),
             WorktreeNote::IncludeOverCap {
                 total_bytes,
                 cap_bytes,

@@ -101,6 +101,8 @@ impl KagiApp {
                     recording_failed,
                     None,
                     None,
+                    None,
+                    None,
                 );
             }
             Err(e) => {

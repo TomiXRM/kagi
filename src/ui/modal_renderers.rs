@@ -22,7 +22,7 @@ use super::modal_shell::{
     modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, note_path_list,
     note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
-use super::plan_card_rows::{render_commit_row, render_note_row};
+use super::plan_card_rows::{note_presentation, render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
@@ -887,13 +887,14 @@ fn render_plan_modal_card_styled(
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
         for (wi, w) in plan.warnings.iter().enumerate() {
+            let (glyph, color) = note_presentation(w.kind(), &current_theme());
             match note_path_list(w) {
                 Some((summary, files)) => {
                     warn_col = warn_col.child(render_note_row(
                         format!("plan-warning-{wi}").into(),
                         false,
-                        "\u{26a0}",
-                        current_theme().color_warning,
+                        glyph,
+                        color,
                         &summary,
                         accent.is_some(),
                     ));
@@ -903,8 +904,8 @@ fn render_plan_modal_card_styled(
                     warn_col = warn_col.child(render_note_row(
                         format!("plan-warning-{wi}").into(),
                         false,
-                        "\u{26a0}",
-                        current_theme().color_warning,
+                        glyph,
+                        color,
                         &plan_note_text(w),
                         accent.is_some(),
                     ));

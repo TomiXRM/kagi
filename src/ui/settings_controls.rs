@@ -322,12 +322,22 @@ impl KagiApp {
                         s.set_value(settings::DEFAULT_ANALYZE_IGNORE, window, cx)
                     });
                 }
-                self.push_toast(ToastKind::Info, Msg::SettingsAnalyzeIgnoreSaved.t(), cx);
+                self.push_toast_for(
+                    crate::ui::toast_stack::ToastSubject::Settings,
+                    ToastKind::Info,
+                    Msg::SettingsAnalyzeIgnoreSaved.t(),
+                    cx,
+                );
             }
             Err(error) => {
                 let message = super::i18n::analyze_ignore_failed_fmt(&error.to_string());
                 self.settings_controls.ignore_error = Some(message.clone());
-                self.push_toast(ToastKind::Error, message, cx);
+                self.push_toast_for(
+                    crate::ui::toast_stack::ToastSubject::Settings,
+                    ToastKind::Error,
+                    message,
+                    cx,
+                );
             }
         }
         cx.notify();

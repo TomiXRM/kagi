@@ -253,6 +253,8 @@ impl KagiApp {
                     true,
                     None,
                     None,
+                    None,
+                    None,
                 );
             }
             return;
@@ -282,7 +284,12 @@ impl KagiApp {
             ToastKind::Error
         };
         if background {
-            let _ = self.push_operation_result(&entry, "pull", kind, text.into(), cx);
+            let _ = self.push_operation_result(
+                &entry,
+                "pull",
+                crate::ui::toast_stack::ToastSpec::operation(&entry, kind, text.into()),
+                cx,
+            );
             self.insert_recorded_row(recording, cx);
         } else {
             self.record_op_result(
@@ -295,6 +302,8 @@ impl KagiApp {
                 true,
                 Some("pull"),
                 false,
+                None,
+                None,
                 None,
                 None,
             );
@@ -346,12 +355,15 @@ impl KagiApp {
         let _ = self.push_operation_result(
             &entry,
             &entry.op,
-            if success {
-                ToastKind::Success
-            } else {
-                ToastKind::Error
-            },
-            shown,
+            crate::ui::toast_stack::ToastSpec::operation(
+                &entry,
+                if success {
+                    ToastKind::Success
+                } else {
+                    ToastKind::Error
+                },
+                shown,
+            ),
             cx,
         );
         self.insert_recorded_row(recording, cx);

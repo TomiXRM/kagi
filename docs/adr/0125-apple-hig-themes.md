@@ -405,16 +405,16 @@ Open Repository when idle on a repository in Browse; busy tasks offer only
 Cancel. The native tests retain raw Escape from clone-owner focus and check
 the EN/JA Remote action availability.
 
-## Amendment — 2026-10-12: safe Return defaults (#1270)
+## Amendment — 2026-10-25: no default action for danger sheets (#1767; supersedes #1270)
 
-For a destructive alert, Cancel is the default action: root Return and Escape
-cancel without arming or executing. Danger styling does not imply a Return
-default. This applies to Discard (including all), Amend, Stash Drop, local and
+For a destructive alert, there is no default action: root Return is consumed
+without changing the sheet or its armed state. Escape and Cmd-. cancel without
+executing. This applies to Discard (including all), Amend, Stash Drop, local and
 remote branch deletion, Reset, Force-with-lease Push, Replay, Branch Cleanup,
 Remove/Prune Worktrees, Conflict Abort, Editor Discard/Delete, and any shared
 plan card marked destructive (including Apply Suggestion, Sync to Remote and
-History restoration). An armed unobservable-release AppNotice likewise cancels
-on root Return, while its danger button becomes Tab-reachable. Guarded Rebase
+History restoration). An armed unobservable-release AppNotice likewise remains
+armed on root Return, while its danger button stays Tab-reachable. Guarded Rebase
 remains non-destructive and single-stage: unlike Replay it retains the guarded
 plan's existing Return = Confirm policy. There is currently no delete-tag
 ActiveModal variant.

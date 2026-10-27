@@ -534,7 +534,7 @@ pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElemen
 use gpui::{App, AppContext as _, AssetSource, Entity, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{fonts, theme, toast_stack, KagiApp};
+use super::{fonts, theme, toast_stack, KagiApp, Msg, ToastKind};
 
 #[cfg(feature = "gui-e2e")]
 pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
@@ -787,6 +787,7 @@ pub fn build_kagi_entity(
         }
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.observe(stack, |_, _, cx| cx.notify()).detach();
             cx.subscribe_in(
                 stack,
                 window,
@@ -815,8 +816,39 @@ pub fn build_kagi_entity(
                         super::types::ToastAction::OpenOperationLog(entry) => {
                             app.open_operation_result(entry, cx)
                         }
+                        super::types::ToastAction::RefreshRepository(owner) => {
+                            let index = app.tabs.iter().position(|tab| {
+                                tab.session == owner.session && tab.path == owner.path
+                            });
+                            if let Some(index) = index {
+                                let left = app.home_yields_to_repository();
+                                app.return_to_tab(index, left, cx);
+                            }
+                            let attached = app.app_sessions.attachment(owner.session);
+                            if index.is_some()
+                                && app.active_session() == Some(owner.session)
+                                && app.repo_path.as_ref() == Some(&owner.path)
+                                && attached.as_ref().is_some_and(|current| {
+                                    current.path == owner.path && current.worktree == owner.worktree
+                                })
+                            {
+                                app.reload_manual(cx);
+                            } else {
+                                app.push_toast(
+                                    ToastKind::Error,
+                                    Msg::conflict_draft_refresh_unavailable(),
+                                    cx,
+                                );
+                            }
+                            false
+                        }
                     };
-                    if opened {
+                    let recovery_details = stack
+                        .read(cx)
+                        .toasts()
+                        .iter()
+                        .any(|toast| toast.id == request.id && toast.refresh_owner.is_some());
+                    if opened && !recovery_details {
                         stack.update(cx, |stack, cx| stack.begin_exit(request.id, cx));
                     }
                 },
@@ -868,6 +900,11 @@ pub fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
     super::render_status::footer_message_bounds()
 }
 
+#[cfg(feature = "gui-e2e")]
+pub fn footer_display_text() -> gpui::SharedString {
+    super::render_status::footer_display_text()
+}
+
 /// Drive the persisted-record presentation with an already-observed outcome.
 /// The append itself remains real, including lock contention and failure.
 pub fn record_persisted_op(
@@ -881,6 +918,40 @@ pub fn record_persisted_op(
         dirty: dirty.to_string(),
     };
     app.record_op_persist("e2e-record", state("unchanged"), outcome, repo, cx);
+}
+
+/// Present a recorded stopped-operation fixture through the production completion owner.
+/// The receipt append is real; the fixture supplies the already-observed outcome.
+pub fn present_recorded_info_result(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) -> u64 {
+    let repo = app
+        .repo_path
+        .as_ref()
+        .or_else(|| app.tabs.first().map(|tab| &tab.path))
+        .expect("recorded-result fixture requires an opened repository");
+    let state = kagi_git::ops::StateSummary {
+        head: "branch: main".into(),
+        dirty: "unchanged".into(),
+    };
+    let entry = kagi_git::oplog::OpLogEntry::new(
+        "merge",
+        repo.display().to_string(),
+        state.clone(),
+        kagi_git::oplog::OpOutcome::Success { after: state },
+    );
+    let recording = kagi_git::backend::recording::finalize(entry);
+    assert!(matches!(
+        recording,
+        kagi_git::backend::recording::Recording::Appended { .. }
+    ));
+    assert!(!app.present_operation_completion(&recording, false, true, None, None, cx));
+    app.toast_stack
+        .as_ref()
+        .expect("mounted toast stack")
+        .read(cx)
+        .toasts()
+        .last()
+        .expect("stopped completion produces a result")
+        .id
 }
 
 /// Issue #468: push a synthetic `Failed` op-log entry onto the panel, through

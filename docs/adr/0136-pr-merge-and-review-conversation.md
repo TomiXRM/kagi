@@ -92,8 +92,8 @@ boundary. Shared GitHub Markdown preparation/privacy policy remains ADR-0142.
 Branch deletion is a destructive **interaction role**, even though its guarded
 execution and recovery contract remains unchanged. A merge plan that can delete
 a remote or local head branch sets the shared destructive bit: the named Merge
-button becomes danger, root Return cancels, and the existing alert focus trap
-applies. Explicit focus/Space or pointer approval remains the only write entry;
+button becomes danger, root Return leaves the sheet unchanged, and the existing alert focus trap
+applies. Explicit focused Space/Return or pointer approval remains the only write entry;
 retaining branches leaves the ordinary merge role.
 The `pr_detail_a11y_1256` keyboard regression asserts that deleting-merge plans
 retain this destructive role and transfer focus into the modal alert's focus

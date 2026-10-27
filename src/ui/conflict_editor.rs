@@ -76,13 +76,8 @@ fn guidance_pane(msg: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// A source document's quiet jump bar; its viewport has no enclosing border.
-fn pane(
-    id: &'static str,
-    label: String,
-    accent: u32,
-    editor: impl IntoElement,
-) -> gpui::Stateful<gpui::Div> {
+/// Source viewport; the shared column headers precede the notification anchor.
+fn pane(id: &'static str, editor: impl IntoElement) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
@@ -91,10 +86,6 @@ fn pane(
         .min_h(px(0.))
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
-        .child(crate::ui::render_helpers::diff_state::side_header(
-            label.into(),
-            Some(accent),
-        ))
         .child(
             div()
                 .flex()
@@ -104,6 +95,42 @@ fn pane(
                 .min_h(px(0.))
                 .child(editor),
         )
+}
+
+pub(super) fn source_headers(mode: &ConflictMode) -> Option<gpui::AnyElement> {
+    let file = mode
+        .selected_file
+        .and_then(|index| mode.session.files.get(index))?;
+    mode.buffer.hunk_model(&file.path)?;
+    let labels = mode.labels();
+    Some(
+        div()
+            .relative()
+            .flex()
+            .flex_shrink_0()
+            .child(e2e::measure_inside("conflict-source-headers"))
+            .child(pane_header(
+                format!("{} — {}", labels.current.name, Msg::EditorCurrentSide.t()),
+                theme().color_branch,
+            ))
+            .child(
+                div()
+                    .w(theme::scaled_px(12.))
+                    .flex_shrink_0()
+                    .bg(rgb(theme().panel)),
+            )
+            .child(pane_header(
+                format!("{} — {}", labels.incoming.name, Msg::EditorIncomingSide.t()),
+                theme().color_remote,
+            ))
+            .into_any_element(),
+    )
+}
+
+fn pane_header(label: String, accent: u32) -> gpui::Div {
+    crate::ui::render_helpers::diff_state::side_header(label.into(), Some(accent))
+        .flex_1()
+        .min_w(px(0.))
 }
 
 /// Save alone freezes the existing revision-bound request and defers to its owner.
@@ -116,6 +143,13 @@ pub(super) fn save_button(
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let p_save = path.to_path_buf();
+    let role = if ready || refused {
+        ButtonRole::Primary
+    } else {
+        ButtonRole::Secondary
+    };
+    #[cfg(feature = "gui-e2e")]
+    super::conflict_editor_a11y::record_button_role("conflict-save", role);
     let save = cx.listener(
         move |view: &mut ConflictView, _: &gpui::ClickEvent, window, cx| {
             view.conflict_show_page(ConflictPage::Review, cx);
@@ -145,11 +179,7 @@ pub(super) fn save_button(
             } else {
                 Msg::EditorSave.t()
             },
-            if ready || refused {
-                ButtonRole::Primary
-            } else {
-                ButtonRole::Secondary
-            },
+            role,
             save,
             cx,
         )

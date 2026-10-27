@@ -314,7 +314,12 @@ impl KagiApp {
                         &crate::ui::i18n::op::user_text::diagnostic(&error.to_string()),
                         1,
                     );
-                self.push_toast(super::ToastKind::Error, message, cx);
+                self.push_toast_for(
+                    crate::ui::toast_stack::ToastSubject::App,
+                    super::ToastKind::Error,
+                    message,
+                    cx,
+                );
             }
         }
     }
@@ -380,7 +385,12 @@ impl KagiApp {
                         .replacen("{}", &key.1.to_string(), 1)
                         .replacen("{}", &reason, 1)
                 });
-                app.push_toast(super::ToastKind::Error, message, cx);
+                app.push_toast_for(
+                    crate::ui::toast_stack::ToastSubject::App,
+                    super::ToastKind::Error,
+                    message,
+                    cx,
+                );
             });
         })
         .detach();

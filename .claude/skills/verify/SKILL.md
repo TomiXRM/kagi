@@ -24,8 +24,8 @@ without native persistence. A request count proves dispatch, not native durabili
 Shared recorder calls construct their arguments/elements lazily under `gui-e2e`;
 default builds omit these probe-only strings and children, not empty Div stand-ins.
 Use pinned `nightly-2026-10-18` (`wasm_thread` requires nightly) and
-`wasm-bindgen-cli 0.2.123`; install the pinned Playwright Chromium runtime before
-testing. The host embeds the exact pinned component icon bytes using the
+`wasm-bindgen-cli 0.2.123` on PATH; install the pinned Playwright Chromium runtime
+before testing. The host embeds the exact pinned component icon bytes using the
 component asset crate's published build metadata, not network/CDN replacements.
 The matrix covers all eight panes at EN/JA × Apple Light/Dark × normal/narrow/
 167% zoom, real pointer/keyboard input, focus vs selection/ON, and retained
@@ -60,6 +60,20 @@ Run the focused browser paint/geometry tests before heavy native gates.
 Capture one actual PNG per unchanged state, sample all its pixels and attach that
 same image. Hover or state changes require a fresh capture; do not raise test
 deadlines to accommodate a separate GPU screenshot for every sampled pixel.
+Composite numeric controls also need the lower Appearance viewport, not only the
+initial pane image. From `e2e/`, run
+`npx playwright test settings.spec.ts --workers=1 --grep 'composite numeric controls|en apple-light narrow:|ja apple-dark zoom167:'`.
+The focused cases use actual715px production rendering at EN Apple Light100%
+and JA Apple Dark167%. They require the minus/value/plus unit to stay horizontal,
+the entire unit and conversion helper to fit their owning row, and successive
+rows not to overlap. At narrow widths the whole unit may move below its label.
+Capture both the numeric rows and the bottom after real wheel input; JA167%
+does not fit Zoom and all Custom themes content into one frame. Retain actual
+row/helper geometry, unchanged preference values, and fixed sidebar bounds.
+Pair the browser proof with fresh native `settings_quiet,settings_groups,
+settings_window_screen_fit` and real lower-pane images. Do not repeat unchanged
+window-lifetime scenarios solely for a row-allocation change; retain their exact
+prior source/artifact evidence instead.
 The pale-accent regression injects an effective Yellow snapshot, uses real
 keyboard focus on an unselected theme, ON switch, disabled provider and segment.
 It measures the actual outer decoration and samples both pixels of every edge
@@ -83,6 +97,24 @@ and bounds unchanged. Tier A activation-input overrides and real OS/Tier B
 transitions are distinct evidence; the latter requires the owner's foreground
 permission when activation is necessary. Neither lane claims an OS Increase
 Contrast bridge: the shared ring always adjusts its composited contrast.
+Real activation also requires a GUI/Aqua launch context, not merely permission
+to take the foreground. Check `launchctl managername` for both the owned app's
+launcher and its activation-state observer. A Background-bootstrap process can
+display windows yet never become active; removing `KAGI_NO_ACTIVATE`, a successful
+AX raise request, or `AXFocusedWindow` alone does not prove application activation.
+Record actual application/key state, source and executable/codesign identities,
+screen preflight, PID returned by the owned launch, and both CGWindow IDs.
+If a normal launch cannot provide that GUI context, stop and request an authorized
+GUI-context launch; do not use sudo, global session changes, or a product active
+override to manufacture acceptance.
+Keep Settings visibly unoccluded while the owned repository window becomes key,
+positioning only those owned windows. A covered window may not repaint, making
+its captured active image stale. Non-key Settings need not report AX focus.
+On return, the same control/ring must reappear without new Settings-control
+input, with selection/ON value and Settings bounds unchanged. Distinguish this
+consumer proof from an unavailable internal FocusHandle or global AX element.
+Run the finite activation driver and its helpers entirely in that GUI context;
+do not launch in Aqua but move the observations back into Background.
 
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.

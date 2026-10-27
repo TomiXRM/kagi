@@ -180,34 +180,35 @@ assets = [
 # Transitional GPUI fixes: retain list estimates across layout/reset/splice,
 # preserve measured nodes on equal estimates, and resolve downward wheel/
 # scroll_by End intent. #1816 additionally fixes shaped-label wrapping with
-# Unicode line-break/grapheme boundaries and punctuation-safe emergency fallback;
-# the editor LineWrapper is unchanged, and this is not all-Unicode conformance.
-# Remove in #1479-S6 only after the official family preserves both real list
-# geometry and shaped-text wrapping oracles. Other siblings have no independent
+# Unicode line-break/grapheme boundaries and punctuation-safe emergency fallback,
+# plus exact wrap/truncation constraints in the text measurement cache.
+# The editor LineWrapper is unchanged; this is not all-Unicode conformance.
+# Remove in #1479-S6 only after the official family preserves the real list,
+# shaped-text wrapping and measured-truncation oracles. Siblings have no independent
 # fixes: keep one GPUI source identity until that official family cutover.
 [patch."https://github.com/zed-industries/zed"]
-collections = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65", version = "=0.2.2" }
-gpui_linux = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_macos = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_macros = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_platform = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_shared_string = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65", version = "=0.1.0" }
-gpui_util = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_web = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_wgpu = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-gpui_windows = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-http_client = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-media = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-perf = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-refineable = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-scheduler = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-sum_tree = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-util_macros = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-zlog = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-ztracing = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
-ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "1cc8a69d2e904cddbbf0bda880d0180bad99bb65" }
+collections = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710", version = "=0.2.2" }
+gpui_linux = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_macos = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_macros = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_platform = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_shared_string = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710", version = "=0.1.0" }
+gpui_util = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_web = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_wgpu = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+gpui_windows = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+http_client = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+media = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+perf = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+refineable = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+scheduler = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+sum_tree = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+util_macros = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+zlog = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+ztracing = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
+ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "1a78744c1f61171f6c599bc75b48caafcf8dc710" }
 #
 # Transitional Kit patch: managed/offscreen conversation selection, presentation
 # retention, cached composer rows, Input/Select/Find accessibility, IME, Radio

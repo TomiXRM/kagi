@@ -371,6 +371,7 @@ impl SettingsFixture {
             "id": probe.id, "x": f32::from(probe.bounds.origin.x), "y": f32::from(probe.bounds.origin.y),
             "width": f32::from(probe.bounds.size.width), "height": f32::from(probe.bounds.size.height),
             "focused": probe.focused, "selected": probe.selected, "disabled": probe.disabled,
+            "name": probe.name, "value": probe.value,
         })).collect();
         json!({ "language": self.snapshot.language.slug(), "theme": self.snapshot.theme_slug.as_ref(),
             "pane": view.pane().id(), "requests": self.requests.len(), "events": self.requests,

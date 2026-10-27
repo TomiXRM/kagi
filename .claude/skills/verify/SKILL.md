@@ -36,6 +36,10 @@ Theme-caption coverage measures the actual caption allocation and screenshot
 ink span for short names in both Apple themes. Accessible-name or fixture-string
 echoes are insufficient: a caption can have 122px of usable space but paint only
 a 9px ellipsis after an incorrect text-layout cache reuse.
+Long names also require the painted `StyledText` layout's actual ellipsis text
+and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
+Do not replace this with the original full label: a correct 138px truncation
+measurement can still be hard-clipped if the final text leaf is allocated 165px.
 
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.

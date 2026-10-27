@@ -64,7 +64,49 @@ impl SettingsView {
                 });
             let name: SharedString =
                 kagi_domain::text_safety::sanitize_control_bytes(palette.display_name()).into();
-            let caption_probe = self.measured(
+            let caption_text = StyledText::new(name.clone());
+            #[cfg(feature = "gui-e2e")]
+            let caption_text_probe = {
+                let layout = caption_text.layout().clone();
+                let probes = self.probes.clone();
+                let id = format!("settings-theme-caption-text-{}", palette.slug);
+                let name = name.to_string();
+                Some(
+                    canvas(
+                        |_, _, _| (),
+                        move |_, _, window, _| {
+                            let style = window.text_style();
+                            probes.borrow_mut().insert(
+                                id.clone(),
+                                ControlProbe {
+                                    id: id.clone(),
+                                    bounds: layout.bounds(),
+                                    focused: false,
+                                    selected: false,
+                                    disabled: false,
+                                    role: Role::Label,
+                                    name: name.clone(),
+                                    value: layout.text(),
+                                    paint: Some(ControlPaint {
+                                        font_size: style.font_size.to_pixels(window.rem_size()),
+                                        font_weight: style.font_weight,
+                                        text_color: style.color,
+                                    }),
+                                },
+                            );
+                        },
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size(px(0.))
+                    .into_any_element(),
+                )
+            };
+            #[cfg(not(feature = "gui-e2e"))]
+            let caption_text_probe = None::<AnyElement>;
+            #[cfg(feature = "gui-e2e")]
+            let caption_probe = Some(self.measured(
                 format!("settings-theme-caption-{}", palette.slug),
                 Role::Label,
                 name.to_string(),
@@ -72,7 +114,9 @@ impl SettingsView {
                 false,
                 false,
                 false,
-            );
+            ));
+            #[cfg(not(feature = "gui-e2e"))]
+            let caption_probe = None::<AnyElement>;
             let card = self
                 .control(
                     ids[index].clone(),
@@ -132,11 +176,16 @@ impl SettingsView {
                         .child(
                             div()
                                 .relative()
+                                // Stretch the text leaf to the allocated caption width,
+                                // rather than retaining its block max-content width.
+                                .flex()
+                                .flex_col()
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .child(caption_probe)
-                                .child(name.clone()),
+                                .children(caption_probe)
+                                .child(caption_text)
+                                .children(caption_text_probe),
                         )
                         .when(selected, |el| el.child("✓")),
                 )

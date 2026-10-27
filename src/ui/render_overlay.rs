@@ -75,65 +75,53 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
 #[derive(gpui::IntoElement)]
 pub(super) struct ToastHost {
     pub stack: gpui::Entity<toast_stack::ToastStack>,
-    pub partition: toast_stack::ToastPartition,
     pub audience: toast_stack::ToastAudience,
 }
 
 impl gpui::RenderOnce for ToastHost {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
         self.stack.update(cx, |stack, cx| {
-            stack.render_partition(self.partition, self.audience, window, cx)
+            stack.render_audience(self.audience, window, cx)
         })
     }
 }
 
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.render_partition(
-            toast_stack::ToastPartition::All,
-            toast_stack::ToastAudience::Repository,
-            _window,
-            cx,
-        )
+        self.render_audience(toast_stack::ToastAudience::Repository, _window, cx)
     }
 }
 
 impl toast_stack::ToastStack {
-    fn render_partition(
+    fn render_audience(
         &mut self,
-        partition: toast_stack::ToastPartition,
         audience: toast_stack::ToastAudience,
         _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let error_line_height = (_window.rem_size() * 1.4).round();
-        let slot = audience.slot(partition);
+        let slot = audience as usize;
         let count = self
             .toasts()
             .iter()
-            .filter(|toast| audience.includes(toast) && partition.includes(toast))
+            .filter(|toast| audience.includes(toast))
             .count();
         let newest = self
             .toasts()
             .iter()
             .rev()
-            .find(|toast| audience.includes(toast) && partition.includes(toast))
+            .find(|toast| audience.includes(toast))
             .map(|toast| toast.id);
         // Keep the foreground workspace usable even at accessibility zoom.
         // Expansion scrolls within the same budget; durable detail stays in OpLog.
         let budget = _window.viewport_size().height * 0.3;
-        let slide_sign =
-            if self.trailing_placement(_window.window_handle().window_id(), audience, partition) {
-                1.0
-            } else {
-                -1.0
-            };
+        let slide_sign = -1.0;
         // Pinned GPUI has no live/priority setter. A stable Status node exposes
         // arrival text without stealing focus or promoting dismissed old cards.
         let arrival = self.status().filter(|(id, _)| {
-            self.toasts().iter().any(|toast| {
-                toast.id == *id && audience.includes(toast) && partition.includes(toast)
-            })
+            self.toasts()
+                .iter()
+                .any(|toast| toast.id == *id && audience.includes(toast))
         });
         let label = arrival
             .map(|(_, message)| message.clone())
@@ -148,24 +136,15 @@ impl toast_stack::ToastStack {
             .gap_2()
             .min_h_0()
             .max_h(budget)
-            .when(count > 0, |el| {
-                let el = el.child(e2e::measure_inside(match partition {
-                    toast_stack::ToastPartition::All => "toast-repository-stack",
-                    toast_stack::ToastPartition::Persistent => "toast-persistent-stack",
-                    toast_stack::ToastPartition::Transient => "toast-transient-stack",
-                }));
-                // Keep the existing primary-stack oracle unambiguous while
-                // allowing mixed-host tests to measure each projection.
-                el.when(
-                    partition != toast_stack::ToastPartition::Transient
-                        || !self.persistent_lane_open(audience),
-                    |el| el.child(e2e::measure_inside("toast-stack")),
-                )
-            });
+            .when(count > 0, |el| el.child(e2e::measure_inside("toast-stack")));
         #[cfg(feature = "gui-e2e")]
-        if arrival.is_some() || !self.toasts().iter().any(|toast| audience.includes(toast)) {
-            toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
-        }
+        toast_stack::record_status(
+            _window.window_handle().window_id(),
+            audience,
+            Some(role),
+            Some(label),
+            arrival.map(|(id, _)| id),
+        );
         if count > 1 {
             use gpui_component::button::{Button, ButtonVariants as _};
             let owner = cx.entity().downgrade();
@@ -192,7 +171,7 @@ impl toast_stack::ToastStack {
                                 .w_full()
                                 .label(caption.clone())
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.toggle_expanded(audience, partition, cx);
+                                    this.toggle_expanded(audience, cx);
                                 })),
                             slot as u64,
                             self.summary_focus[slot].clone(),
@@ -201,9 +180,8 @@ impl toast_stack::ToastStack {
                         .aria_label(SharedString::from(caption))
                         .aria_expanded(self.expanded[slot])
                         .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                            let _ = owner.update(cx, |stack, cx| {
-                                stack.toggle_expanded(audience, partition, cx)
-                            });
+                            let _ =
+                                owner.update(cx, |stack, cx| stack.toggle_expanded(audience, cx));
                         })
                         .on_key_down(super::keyboard_nav::stop_activation_keys),
                     ),
@@ -222,9 +200,7 @@ impl toast_stack::ToastStack {
             })
             .overflow_y_scroll();
         for toast in self.toasts().iter().rev().filter(|toast| {
-            audience.includes(toast)
-                && partition.includes(toast)
-                && (self.expanded[slot] || newest == Some(toast.id))
+            audience.includes(toast) && (self.expanded[slot] || newest == Some(toast.id))
         }) {
             let id = toast.id;
             let leaving = toast.dismissing.is_some();

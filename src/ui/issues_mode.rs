@@ -649,7 +649,18 @@ pub fn render_issues_mode(
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     app.ensure_issue_avatars(cx);
-    let center = render_center(app, window, cx);
+    let center = div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_w(px(0.))
+        .min_h(px(0.))
+        .child(super::e2e::measure_inside("toast-content-anchor"))
+        .child(super::e2e::measure_inside("takeover-page-controls"))
+        .child(render_center(app, window, cx))
+        .children(app.render_toasts(window, super::toast_stack::ToastAudience::Repository, cx))
+        .into_any_element();
     let center = match panel {
         None => center,
         Some(panel) => div()

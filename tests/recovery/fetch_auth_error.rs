@@ -54,7 +54,11 @@ pub fn scenario_fetch_auth_failure_toast(cx: &mut VisualTestAppContext) {
                     toast.action.is_some(),
                     "authentication failure offers details"
                 );
-                let status = kagi::ui::toast_stack::status_for_e2e().expect("toast rendered");
+                let status = kagi::ui::toast_stack::status_for_e2e(
+                    window.window_id(),
+                    kagi::ui::toast_stack::ToastAudience::Repository,
+                )
+                .expect("toast rendered");
                 assert_eq!(status.role, Some(gpui::Role::Status));
                 assert!(
                     status

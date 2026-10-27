@@ -8,6 +8,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Internal
 
 - Introduce the production Settings presentation boundary with a shared language control and typed host events, exercised by native Settings and the deterministic WASM verification host. Native storage/discovery stays outside the shared view; portable core no longer compiles native persistence APIs. This internal boundary proof precedes the full sidebar cutover and does not claim that rebuild complete. (#1816)
+### Fixed
+
+- Restore one bottom-left notification stack in the owning surface's centre content, including Conflict Mode and Settings' content pane. Persistent, transient and busy feedback share the same bounded anchor without shifting content or covering the sidebar, Inspector, toolbar or status bar. Remove conflict-footer routing while preserving typed notification ownership, audience-scoped Escape, actions, lifetimes and Operation Log detail. (Owner ruling, #1590 restored 2026-10-27.)
 
 ## [0.48.0] - 2026-10-27
 

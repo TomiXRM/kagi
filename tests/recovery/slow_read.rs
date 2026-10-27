@@ -11,7 +11,7 @@ use gpui::{AnyWindowHandle, Entity, Modifiers, VisualTestAppContext};
 use kagi::ui::{
     e2e,
     i18n::{self, Lang},
-    KagiApp,
+    theme, KagiApp,
 };
 use kagi_git::AheadBehind;
 
@@ -50,24 +50,23 @@ fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> (bool, bool)
     let id = window.window_id();
     e2e::clear_control_bounds(id, "busy-snackbar-advice");
     e2e::clear_control_bounds(id, "busy-snackbar-skip");
-    e2e::clear_control_bounds(id, "conflict-footer-busy-advice");
     e2e::clear_control_bounds(id, "busy-snackbar");
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
     })
     .unwrap();
-    if let Some(advice) = e2e::control_bounds(id, "conflict-footer-busy-advice") {
-        let footer = e2e::footer_message_bounds();
-        assert!(advice.top() >= footer.top() && advice.bottom() <= footer.bottom());
+    if let Some(card) = e2e::control_bounds(id, "busy-snackbar") {
+        let anchor = e2e::control_bounds(id, "toast-content-anchor").expect("content host");
+        let container = e2e::control_bounds(id, "toast-container").expect("shared stack");
+        assert!(card.top() >= anchor.top() && card.bottom() <= anchor.bottom());
+        assert!((container.left() - anchor.left() - theme::scaled_px(12.)).abs() <= gpui::px(2.));
         assert!(
-            e2e::control_bounds(id, "busy-snackbar").is_none(),
-            "conflict busy feedback never paints a pane card"
+            (anchor.bottom() - container.bottom() - theme::scaled_px(12.)).abs() <= gpui::px(2.)
         );
     }
     (
-        e2e::control_bounds(id, "busy-snackbar-advice").is_some()
-            || e2e::control_bounds(id, "conflict-footer-busy-advice").is_some(),
+        e2e::control_bounds(id, "busy-snackbar-advice").is_some(),
         e2e::control_bounds(id, "busy-snackbar-skip").is_some(),
     )
 }

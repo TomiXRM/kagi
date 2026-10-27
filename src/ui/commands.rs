@@ -3224,6 +3224,7 @@ impl KagiApp {
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => {
+
                 Some(super::settings_view::render_settings_overlay(
                     cx.entity(),
                     self.settings_entity(),

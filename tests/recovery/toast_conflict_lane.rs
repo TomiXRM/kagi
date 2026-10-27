@@ -1,4 +1,4 @@
-//! Persistent conflict feedback reserves space, including its overflow summary.
+//! Conflict shares the centre-content bottom-left stack without moving controls.
 use super::*;
 
 pub(super) fn run(cx: &mut VisualTestAppContext) {
@@ -7,11 +7,13 @@ pub(super) fn run(cx: &mut VisualTestAppContext) {
     let old_zoom = theme::zoom();
     let old_lang = i18n::lang();
     let old_theme = theme::theme().slug.to_string();
-    theme::set_zoom(1.);
-    for preset in ["apple-light", "apple-dark"] {
-        for lang in [i18n::Lang::En, i18n::Lang::Ja] {
-            for layout in ["text", "raw", "directory-file", "saved"] {
-                run_case(cx, layout, lang, preset);
+    for zoom in [1., 1.67] {
+        theme::set_zoom(zoom);
+        for preset in ["apple-light", "apple-dark"] {
+            for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+                for layout in ["text", "raw", "directory-file", "saved"] {
+                    run_case(cx, layout, lang, preset);
+                }
             }
         }
     }
@@ -98,67 +100,31 @@ fn control_bounds(window: AnyWindowHandle, layout: &str) -> Vec<Bounds<Pixels>> 
         .collect()
 }
 
-fn assert_safe_lane(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
-    let lane = bounds(window, "conflict-notification-lane");
-    let stack = bounds(window, "toast-persistent-stack");
-    assert!(stack.top() >= lane.top() && stack.bottom() <= lane.bottom());
-    assert!(stack.size.width <= lane.size.width * 0.45 + px(1.));
-    let headers: &[&str] = match layout {
-        "text" => &["conflict-source-headers"],
-        "raw" => &[
-            "conflict-image-current-header",
-            "conflict-image-incoming-header",
-        ],
-        "saved" => &["conflict-saved-source-header"],
-        "directory-file" => &["conflict-content-header"],
-        _ => unreachable!(),
-    };
-    for id in headers {
-        assert!(
-            bounds(window, id).bottom() <= lane.top(),
-            "{id} is never covered"
-        );
-    }
-    for id in controls(layout) {
-        let control = bounds(window, id);
-        assert!(
-            stack.bottom() <= control.top() && lane.bottom() <= control.top(),
-            "{layout}: persistent cards AND summary must not intersect {id}"
-        );
-    }
-    if layout == "raw" {
-        eprintln!(
-            "[gui-e2e] ASSERT raw-lane {:?}/{}: both per-side Use controls below headers/lane; no overlap",
-            i18n::lang(),
-            theme::theme().slug
-        );
-    }
-    lane
+fn assert_safe_lane(window: AnyWindowHandle, _layout: &str) -> Bounds<Pixels> {
+    let anchor = bounds(window, "toast-content-anchor");
+    let stack = bounds(window, "toast-container");
+    assert!((stack.left() - anchor.left() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!((anchor.bottom() - stack.bottom() - theme::scaled_px(12.)).abs() <= px(2.));
+    assert!(stack.top() >= anchor.top() && stack.right() <= anchor.right());
+    assert!(stack.size.width <= anchor.size.width * 0.45 + px(1.));
+    let sidebar = bounds(window, "conflict-sidebar-clip");
+    let footer = bounds(window, "pr-menu-footer");
+    assert!(stack.left() >= sidebar.right());
+    assert!(stack.bottom() <= footer.top());
+    anchor
 }
 
 fn paint_feedback(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     for id in [
-        "toast-transient-stack",
-        "toast-transient-overlay",
+        "toast-stack",
+        "toast-container",
         "busy-snackbar",
         "busy-snackbar-skip",
         "busy-snackbar-dismiss",
-        "conflict-footer-busy",
-        "conflict-footer-busy-controls",
     ] {
         e2e::clear_control_bounds(window.window_id(), id);
     }
     draw(cx, window);
-    for id in [
-        "toast-transient-stack",
-        "toast-transient-overlay",
-        "busy-snackbar",
-    ] {
-        assert!(
-            e2e::control_bounds(window.window_id(), id).is_none(),
-            "Conflict Mode never paints {id} over its choices"
-        );
-    }
 }
 
 fn assert_safe_footer(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
@@ -203,13 +169,24 @@ fn exercise_lane(
     cx.run_until_parked();
     draw(cx, window);
     let lane = assert_safe_lane(window, layout);
+    let collapsed = bounds(window, "toast-container");
+    crate::native_ax::activate(cx);
+    let more = i18n::Msg::ToastMore.t().replace("{count}", "2");
+    assert!(
+        crate::native_ax::press(cx, window, &more),
+        "Conflict disclosure remains reachable"
+    );
+    cx.run_until_parked();
+    draw(cx, window);
+    let expanded = bounds(window, "toast-container");
+    assert!((expanded.bottom() - collapsed.bottom()).abs() <= px(1.));
+    assert!(expanded.top() <= collapsed.top());
+    assert_eq!(assert_safe_lane(window, layout), lane);
     let shifted = control_bounds(window, layout);
-    for (before, after) in original.iter().zip(&shifted) {
-        assert!(
-            after.top() > before.top(),
-            "persistent feedback reserves real height"
-        );
-    }
+    assert_eq!(
+        shifted, original,
+        "persistent feedback does not move conflict controls"
+    );
     let original_footer = assert_safe_footer(window, layout);
     let original_text = e2e::footer_display_text();
     for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
@@ -223,25 +200,20 @@ fn exercise_lane(
         assert_eq!(control_bounds(window, layout), shifted);
         assert_eq!(assert_safe_footer(window, layout), original_footer);
         assert_eq!(
-            e2e::footer_display_text().as_ref(),
-            "Unrelated transient fixture…"
+            e2e::footer_display_text(),
+            original_text,
+            "transient feedback no longer routes through the footer"
         );
-        let status = kagi::ui::toast_stack::status_for_e2e().expect("actual arrival status");
+        let status =
+            kagi::ui::toast_stack::status_for_e2e(window.window_id(), ToastAudience::Repository)
+                .expect("actual arrival status");
         assert_eq!(status.role, Some(gpui::Role::Status));
         assert_eq!(status.newest_id, Some(transient));
-        assert_eq!(
-            status.label.as_deref(),
-            Some("Unrelated transient fixture…")
-        );
-        if kind == kagi::ui::ToastKind::Success {
-            let text = e2e::control_paint(window.window_id(), "status-footer-text").unwrap();
-            let ink = u32::from(text.text_color.to_rgb()) >> 8;
-            let background = theme::theme().chrome_surface();
-            assert!(
-                theme::contrast_ratio(ink, background) >= 4.5,
-                "actual Success footer ink must reach AA on its painted chrome"
-            );
-        }
+        assert!(status
+            .label
+            .as_deref()
+            .unwrap()
+            .starts_with("Unrelated transient fixture"));
         stack.update(cx, |stack, _| {
             stack.advance_age_for_e2e(Duration::from_secs(4));
             assert!(stack.expiring_ids().contains(&transient));
@@ -261,7 +233,9 @@ fn exercise_lane(
                 .all(|toast| toast.id != transient));
         });
         assert_eq!(
-            kagi::ui::toast_stack::status_for_e2e().unwrap().newest_id,
+            kagi::ui::toast_stack::status_for_e2e(window.window_id(), ToastAudience::Repository)
+                .unwrap()
+                .newest_id,
             None,
             "expiry never re-announces an older persistent error"
         );
@@ -277,18 +251,15 @@ fn exercise_lane(
     assert_eq!(assert_safe_lane(window, layout), lane);
     assert_eq!(control_bounds(window, layout), shifted);
     assert_eq!(assert_safe_footer(window, layout), original_footer);
-    assert_ne!(e2e::footer_display_text(), original_text);
-    assert!(bounds(window, "conflict-footer-busy").size.height > px(0.));
+    assert!(bounds(window, "busy-snackbar").size.height > px(0.));
     for id in ["busy-snackbar-skip", "busy-snackbar-dismiss"] {
         let control = bounds(window, id);
         assert!(control.size.width > px(0.) && control.size.height > px(0.));
+        let container = bounds(window, "toast-container");
         assert!(
-            control.top() >= original_footer.top() && control.bottom() <= original_footer.bottom(),
-            "{id}: {control:?} must fit {original_footer:?}, layout={layout}, lang={:?}, zoom={}",
-            kagi::ui::i18n::lang(),
-            kagi::ui::theme::zoom()
+            control.top() >= container.top() && control.bottom() <= container.bottom(),
+            "{id} fits the shared content stack"
         );
-        assert!(control.left() >= bounds(window, "status-footer-text").right());
     }
     let control = if matches!(layout, "text" | "raw") {
         "busy-snackbar-skip"
@@ -334,10 +305,8 @@ fn exercise_lane(
     });
     cx.run_until_parked();
     paint_feedback(cx, window);
-    assert_eq!(
-        e2e::footer_display_text().as_ref(),
-        "Newest routine feedback"
-    );
+    assert_eq!(e2e::footer_display_text(), original_text);
+    assert_safe_lane(window, layout);
     assert_eq!(control_bounds(window, layout), original);
     assert_eq!(assert_safe_footer(window, layout), original_footer);
     stack.update(cx, |stack, _| {
@@ -419,7 +388,11 @@ pub(crate) fn assert_settings_subject_isolation(
         e2e::control_bounds(settings.window_id(), "toast-stack").is_none(),
         "a repository draft rescue must not create a Settings card or lane"
     );
-    assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open(ToastAudience::Settings)));
+    assert!(!cx.read(|cx| stack
+        .read(cx)
+        .toasts()
+        .iter()
+        .any(|toast| toast.subject == ToastSubject::Settings)));
     let path = theme::themes_dir()
         .unwrap()
         .join("owned-window-invalid.json");

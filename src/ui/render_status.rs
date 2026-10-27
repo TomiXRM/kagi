@@ -156,30 +156,6 @@ impl KagiApp {
     ) -> impl IntoElement {
         let summary = self.view().status_summary.clone();
         let bottom_tab = self.bottom_tab;
-        let conflict = self.conflict_body_visible();
-        if conflict {
-            if let Some(stack) = &self.toast_stack {
-                stack.update(cx, |stack, cx| {
-                    stack.use_conflict_footer(window.window_handle().window_id(), cx);
-                });
-            }
-        }
-        let (status_footer, arrival, busy_advice) = if conflict {
-            self.conflict_footer_feedback(status_footer, cx)
-        } else {
-            (status_footer, None, false)
-        };
-        let busy_controls = conflict && self.busy_feedback_visible();
-        let skip_width = (busy_controls
-            && self.slow_read_shown().is_some_and(|read| read.skippable()))
-        .then(|| {
-            status_text_width(SharedString::from(i18n::slow_read_skip()), window)
-                + theme::scaled_px(12.)
-        });
-        let clone_width = (busy_controls && self.clone_progress_available()).then(|| {
-            status_text_width(SharedString::from(Msg::CloneShowProgress.t()), window)
-                + theme::scaled_px(12.)
-        });
 
         // ── Footer message colour ──────────────────────────────
         let colors = theme();
@@ -219,11 +195,6 @@ impl KagiApp {
             status_text_width(branch_text.clone(), window).min(theme::scaled_px(60.));
         // Bar padding, two panel-button widths, their margins and feedback gap.
         let mut fixed_width = theme::scaled_px(16. + 2. * 24. + 4. + 2. + 6.);
-        if busy_controls {
-            fixed_width += theme::scaled_px(STATUS_BAR_H + 4.)
-                + skip_width.unwrap_or_default()
-                + clone_width.unwrap_or_default();
-        }
         let branch_tip = branch_text.clone();
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_status_branch_identity(branch_text.clone(), branch_tip.clone());
@@ -430,34 +401,13 @@ impl KagiApp {
                 .min(theme::scaled_px(80. + if busy { 14. } else { 0. }))
         };
         let display_text = SharedString::from(view_models::footer_line(&footer_text));
-        let announcement = arrival
-            .as_ref()
-            .map(|(_, label)| label.clone())
-            .or_else(|| busy.then(|| footer_text.clone()))
-            .unwrap_or_default();
         #[cfg(feature = "gui-e2e")]
         {
             FOOTER_DISPLAY_TEXT.with(|text| *text.borrow_mut() = display_text.clone());
-            if conflict {
-                super::toast_stack::record_status(
-                    Some(gpui::Role::Status),
-                    Some(announcement.clone()),
-                    arrival.as_ref().map(|(id, _)| *id),
-                );
-                if busy && self.home_github.cloning.is_some() {
-                    super::e2e::record_clone_busy_status(gpui::Role::Status, &announcement);
-                }
-            }
         }
         let message = div()
             .id("status-footer-msg")
             .flex()
-            .when(conflict, |message| {
-                message.role(gpui::Role::Status).aria_label(announcement)
-            })
-            .when(conflict && busy, |message| {
-                message.child(super::e2e::measure_inside("conflict-footer-busy"))
-            })
             .flex_row()
             .items_center()
             .gap(theme::scaled_px(4.))
@@ -476,9 +426,6 @@ impl KagiApp {
                     .min_w_0()
                     .truncate()
                     .child(display_text)
-                    .when(busy_advice, |text| {
-                        text.child(super::e2e::measure_inside("conflict-footer-busy-advice"))
-                    })
                     .when(cfg!(feature = "gui-e2e"), |el| {
                         el.child(super::e2e::measure_inside("status-footer-text"))
                     }),
@@ -496,24 +443,6 @@ impl KagiApp {
             message.into_any_element()
         };
         bar = bar.child(message);
-        if busy_controls {
-            bar = bar.child(
-                div()
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .h(theme::scaled_px(STATUS_BAR_H))
-                    .ml(theme::scaled_px(4.))
-                    .child(super::e2e::measure_inside("conflict-footer-busy-controls"))
-                    .children(skip_width.map(|width| self.render_busy_skip(Some(width), cx)))
-                    .children(
-                        clone_width
-                            .and_then(|width| self.render_clone_progress_action(Some(width), cx)),
-                    )
-                    .child(self.render_busy_dismiss(true, cx)),
-            );
-        }
 
         // Icon buttons at the right end.
         bar.child(

@@ -305,7 +305,6 @@ impl WorkspaceItem for EditorWorkspaceItem {
                     panel,
                     app.render_toasts(
                         window,
-                        super::busy::ToastPlacement::Repository,
                         crate::ui::toast_stack::ToastAudience::Repository,
                         cx,
                     ),

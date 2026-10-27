@@ -207,6 +207,7 @@ impl SettingsWindow {
         }
     }
 
+
 }
 
 impl Render for SettingsWindow {
@@ -219,6 +220,7 @@ impl Render for SettingsWindow {
         let pane = self.view.read(cx).pane();
         window.set_window_title(&format!("{} — {}", Msg::SettingsTitle.t(), pane.title()));
         window.set_rem_size(theme::scaled_px(16.));
+
         div()
             .size_full()
             .relative()

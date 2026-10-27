@@ -118,6 +118,9 @@ fn check_failure(
         assert!(stack.origin.x + stack.size.width <= anchor.origin.x + anchor.size.width);
         assert!(stack.origin.y + stack.size.height <= anchor.origin.y + anchor.size.height);
         assert!(stack.size.width <= anchor.size.width * 0.45);
+        let inset = kagi::ui::theme::scaled_px(12.);
+        assert!((stack.left() - anchor.left() - inset).abs() <= gpui::px(2.));
+        assert!((anchor.bottom() - stack.bottom() - inset).abs() <= gpui::px(2.));
     }
     let receipts = read_oplog_tail_for_repo(&repo, 100)
         .into_iter()

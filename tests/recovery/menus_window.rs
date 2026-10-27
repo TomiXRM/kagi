@@ -855,7 +855,11 @@ fn assert_recent_open_error(
         assert!(matches!(&app.status_footer, kagi::ui::FooterStatus::Failed(text) if text == &toast.message));
         toast.message.clone()
     });
-    let status = kagi::ui::toast_stack::status_for_e2e().expect("rendered failure notice");
+    let status = kagi::ui::toast_stack::status_for_e2e(
+        win.window_id(),
+        kagi::ui::toast_stack::ToastAudience::Repository,
+    )
+    .expect("rendered failure notice");
     assert!(status
         .label
         .as_ref()

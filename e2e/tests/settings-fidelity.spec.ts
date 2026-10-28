@@ -363,10 +363,10 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       await click(page, "sc-model-select");
       const openGroup = await probe(page, "settings-smart-group");
       const openTrigger = await probe(page, "sc-model-select");
-      expect(openTrigger.x).toBeGreaterThanOrEqual(openGroup.x + 1);
-      expect(openTrigger.x + openTrigger.width).toBeLessThanOrEqual(openGroup.x + openGroup.width - 1);
-      expect(openTrigger.y).toBeGreaterThanOrEqual(openGroup.y + 1);
-      expect(openTrigger.y + openTrigger.height).toBeLessThanOrEqual(openGroup.y + openGroup.height - 1);
+      expect(openTrigger.x).toBeGreaterThanOrEqual(openGroup.x + border);
+      expect(openTrigger.x + openTrigger.width).toBeLessThanOrEqual(openGroup.x + openGroup.width - border);
+      expect(openTrigger.y).toBeGreaterThanOrEqual(openGroup.y + border);
+      expect(openTrigger.y + openTrigger.height).toBeLessThanOrEqual(openGroup.y + openGroup.height - border);
       await info.attach(`open-model-row-${count}.json`, { body: JSON.stringify({ group: openGroup, trigger: openTrigger }), contentType: "application/json" });
       const rows = (await observed(page)).controls.filter(control => control.role === "MenuItemRadio");
       expect(rows).toHaveLength(count);
@@ -479,10 +479,11 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     const text = await probe(page, "settings-markdown-help-text");
     const row = await probe(page, "settings-markdown-row");
     const editorGroup = await probe(page, "settings-editor-group");
-    expect(row.x).toBeGreaterThanOrEqual(editorGroup.x + 1);
-    expect(row.x + row.width).toBeLessThanOrEqual(editorGroup.x + editorGroup.width - 1);
-    expect(row.y).toBeGreaterThanOrEqual(editorGroup.y + 1);
-    expect(row.y + row.height).toBeLessThanOrEqual(editorGroup.y + editorGroup.height - 1);
+    const border = appearance === "apple-light" ? 1 : 0;
+    expect(Math.abs(row.x - editorGroup.x - border - 12 * zoom)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(editorGroup.x + editorGroup.width - row.x - row.width - border - 12 * zoom)).toBeLessThanOrEqual(0.5);
+    expect(row.y).toBe(editorGroup.y + border);
+    expect(row.y + row.height).toBe(editorGroup.y + editorGroup.height - border);
     const preview = await probe(page, "settings-markdown-preview");
     const source = await probe(page, "settings-markdown-source");
     expect(preview.y).toBe(source.y);
@@ -542,8 +543,8 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
         expect(control.y + control.height).toBeLessThanOrEqual(viewport.y + viewport.height);
       }
       const statusText = await probe(page, "settings-analyze-status-text");
-      const innerLeft = group.x + 1 + 12 * zoom;
-      const innerRight = group.x + group.width - 1 - 12 * zoom;
+      const innerLeft = group.x + border + 12 * zoom;
+      const innerRight = group.x + group.width - border - 12 * zoom;
       expect(status.x).toBeGreaterThanOrEqual(innerLeft - 0.5);
       expect(status.x + status.width).toBeLessThanOrEqual(innerRight + 0.5);
       expect(statusText.value).toBe(status.name);
@@ -553,8 +554,8 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       if (language === "ja" && state === "saved") {
         expect(statusText.height).toBeGreaterThan(statusText.paint!.fontSize * 1.5);
       }
-      expect(Math.abs(status.x - group.x - 1 - 12 * zoom)).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(save.x + save.width - group.x - group.width + 1 + 12 * zoom)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(status.x - group.x - border - 12 * zoom)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(save.x + save.width - group.x - group.width + border + 12 * zoom)).toBeLessThanOrEqual(0.5);
       if (reset.y !== save.y) expect(reset.x + reset.width).toBe(save.x + save.width);
       await info.attach(`analyze-footer-${state}.png`, { body: await page.screenshot(), contentType: "image/png" });
       await info.attach(`analyze-footer-${state}.json`, { body: JSON.stringify({ viewport, group, status, statusText, reset, save }), contentType: "application/json" });

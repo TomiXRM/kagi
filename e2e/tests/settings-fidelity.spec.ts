@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, expectSnappedLength, type Probe } from "./settings-helpers";
+import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, luminance, expectSnappedLength, type Probe } from "./settings-helpers";
 import canonicalText from "../../tests/recovery/settings_text.json";
 
 test.use({ deviceScaleFactor: 1 });
@@ -576,5 +576,41 @@ for (const language of ["en", "ja"] as const) {
         }
       }
     });
+  }
+}
+
+for (const appearance of ["apple-light", "apple-dark"]) {
+  for (const language of ["en", "ja"]) {
+    for (const zoom of [1, 1.67]) {
+      test(`canonical multiline control fill and focus: ${appearance} ${language} ${zoom}`, async ({ page }, info) => {
+        await page.setViewportSize({ width: 900, height: 760 });
+        await boot(page);
+        await host(page, "appearance", appearance);
+        await host(page, "language", language);
+        await host(page, "zoom", String(zoom));
+        await host(page, "accent", "yellow");
+        await pane(page, "analyze");
+        const input = await reveal(page, "settings-analyze-input");
+        await page.mouse.move(2, 2); await frames(page);
+        // Pinned s8 multiline_value uses ink::control, not the platform
+        // Input's white/editor background. Sample clear ink near its edge.
+        const fillPoint = [input.x + input.width - 20 * zoom, input.y + 40 * zoom];
+        const expected = appearance === "apple-light" ? [230, 230, 230] : [48, 48, 51];
+        const rest = await paintedPixels(page, [fillPoint]);
+        expect(rest.colors[0]).toEqual(expected);
+        const before = await observed(page);
+        await click(page, "settings-analyze-input");
+        await page.mouse.move(2, 2); await frames(page);
+        const focused = await paintedPixels(page, [
+          fillPoint, [input.x + 0.5, input.y + 40 * zoom],
+        ]);
+        expect(focused.colors[0]).toEqual(expected);
+        const a = luminance(expected), b = luminance(focused.colors[1]);
+        expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toBeGreaterThanOrEqual(3);
+        expect((await observed(page)).draft).toBe(before.draft);
+        expect((await observed(page)).requests).toBe(before.requests);
+        await info.attach("canonical-multiline-focus.png", { body: focused.png, contentType: "image/png" });
+      });
+    }
   }
 }

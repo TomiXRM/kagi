@@ -3,7 +3,6 @@ use super::{
     kit_style::{ink, metrics, pt},
     *,
 };
-use gpui_component::input::Input;
 use kagi_ui_core::theme::theme;
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
@@ -116,13 +115,7 @@ impl SettingsView {
             .relative()
             .min_w_0()
             .min_h(pt(220.))
-            .child(
-                Input::new(&self.input)
-                    .context_menu(kagi_ui_core::input::context_menu(&self.input, false))
-                    .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
-                    .appearance(true)
-                    .bordered(true),
-            )
+            .child(self.multiline_input(window, cx))
             .children(cfg!(feature = "gui-e2e").then(|| {
                 self.measured(
                     "settings-analyze-input".into(),

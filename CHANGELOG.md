@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   - Preserve PR #1814's canonical component craft: grouped Light/Dark theme choosers, then Accent/Layout/Motion/Custom themes, card hairlines, title/body/secondary hierarchy, label-sized segments, capsule and stepper geometry, neutral OFF switches with white knobs, fixed-hue tile gradients and 132-point data-driven theme previews. Provider/model choices use real keyboard-operable menus; focus and disabled state remain separate from selection.
   - Keep long popup values and wrapped Japanese segment/status text inside their actual controls and groups, with visible ellipses, full-name hover help and right-aligned wrapped action clusters.
   - Translate the Analyze ignore placeholder and its save/reset feedback into production Japanese, while retaining the canonical English captions and ADR-0048 Git terms. Lock the visible heading to the locale rule rather than the old untranslated gallery output.
+  - Give the shared multiline Settings editor the canonical inset-control fill and seven-point radius in both appearances, retaining real editing and a separate contrast-adjusted focus ring instead of the generic Input field appearance.
 
 ### Internal
 

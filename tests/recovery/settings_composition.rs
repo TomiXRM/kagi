@@ -566,6 +566,19 @@ pub fn assert_composition(
             );
         }
     }
+    if view.pane() == Pane::Analyze {
+        let input = probe(&probes, "settings-analyze-input").bounds;
+        let expected = if kagi::ui::theme::theme().dark {
+            [48, 48, 51]
+        } else {
+            [230, 230, 230]
+        };
+        assert_rgb(
+            sample(Point::new(input.right() - px(20.), input.center().y)),
+            expected,
+            "canonical multiline_value uses the inset control fill, not the generic Input fill",
+        );
+    }
     assert_canonical_text(view, &probes);
 }
 

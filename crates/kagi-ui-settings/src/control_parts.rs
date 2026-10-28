@@ -5,6 +5,30 @@ use gpui_component::{Icon, IconName, Sizable, Size};
 use std::time::Duration;
 
 impl SettingsView {
+    pub(crate) fn multiline_input(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> gpui_component::input::Input {
+        let focused =
+            self.input.read(cx).focus_handle(cx).is_focused(window) && window.is_window_active();
+        let fill = ink::control();
+        gpui_component::input::Input::new(&self.input)
+            .context_menu(kagi_ui_core::input::context_menu(&self.input, false))
+            .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
+            .appearance(true)
+            .bordered(false)
+            .bg(rgb(fill))
+            .rounded(pt(metrics::CONTROL_RADIUS))
+            .p(pt(10.))
+            .border(px(2.))
+            .border_color(if focused {
+                focus_ring::color(self.snapshot.effective_accent, fill)
+            } else {
+                gpui::transparent_black()
+            })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn button(
         &mut self,

@@ -46,13 +46,14 @@ property, canonical value from code, actual value measured, ○/×:
 | Sidebar | x/y/width/height of the panel; top inset; row height and row pitch; selection fill role; item order |
 | Detail | title band height and the title's text; scroll content insets; gap between sections |
 | Per pane | sequence of sections; for each section, which rows sit in which group card; which kit part draws each trailing control; the **exact visible text** of every title, label and button (EN and JA) compared with the canonical's strings — a shortened or reworded label is a ×, even if it fits. A canonical gallery may hard-code English **placeholder** literals (text not taken from `Msg`); those fix the English wording only, never the other locale: a JA screen showing an English placeholder is a × |
-| Repeated parts | card/tile size and how many are visible at the canonical width |
+| Repeated parts | card/tile size and how many complete ones are visible at the canonical width; **group card internals**: border per appearance, horizontal padding, separator thickness and whether separators take layout space — check them as relations (content width = card − padding − borders; card height = Σ rows + separators + borders) |
 
 Then:
 
 1. Implement **structure only** (window, sidebar, title, sections, groups,
    which part per row). Do not start focus, hover, AX, IME, pixel-proof or
-   matrix work.
+   matrix work. (Light/Dark and EN/JA at 100% belong to G1; "matrix" means
+   interaction states, other zooms and other widths.)
 2. Capture the **whole real window** — native, including anything Kagi draws
    as chrome — at the canonical's theme, language and zoom. A harness that
    does not draw the host's chrome (e.g. the browser host for Settings)
@@ -62,7 +63,8 @@ Then:
    `target/ui-fidelity/<surface>/sheet-<pane>-<appearance>-<lang>.png`, and open it.
 4. Fill the "actual" column from measured bounds (renderer probes or
    `render_to_image` pixels), not from constants in your own code.
-5. **Pass** = every row ○ (geometry within ±1 pt, structure exact). Any × is
+5. **Pass** = every row ○ (every measured edge and every dimension within
+   ±1 pt, structure exact). Any × is
    fixed, or becomes an owner question with the sheet attached. Do not
    continue past a × while waiting.
 
@@ -130,9 +132,10 @@ Composition values taken from that code (pt = design points at 100%):
 | Detail title | `detail_page()`: band 52 high, padding x 14, 15 pt bold, text = pane name, shown once |
 | Detail scroll | padding left 6, right 18, bottom 20; 20 between sections |
 | Section | heading then body, gap 8; heading inset = group padding (12) + 1 px in Light |
+| Group card | `group()`: padding x 12, radius 10, `ink::card()` fill. **Light**: 1 px hairline border; **Dark: no border** (content width = card − 24). Between rows a 1 px hairline **in layout flow** (card height = Σ rows + (n − 1) + 2 border px in Light, + 0 in Dark). Do not reserve a transparent border for Light/Dark parity |
 | Theme chooser | per appearance (Light/Dark) one `section`, whose cards sit **inside** one `group()` card; rows that belong to that chooser follow inside the same group |
 | Pop-up | `popup_value()`: value text + 18 pt filled chevron box; the trigger itself is not filled at rest |
 | Visible text | Where the canonical uses a `Msg`, show that `Msg` in every locale (e.g. Custom themes EN "Open theme folder…", "Reload Themes", "Theme file guide…"); never shorten an existing string to make a layout fit. Where the canonical's text is an English **placeholder** — a hard-coded literal ("Layout", "Motion"; the s8 task allowed them) or a `Msg` whose JA arm still held English at the canonical commit ("Graph", "Smart Commit") — keep the English wording in EN and show the production JA name (グラフ, スマートコミット, 分析 …) or add one. Never English prose in JA; Git terms follow ADR-0048 and the `ja-git-terms` gate |
 | Appearance splice | h's chooser **replaces** s8's Theme pop-up row: a "Light Mode" and a "Dark Mode" section, each one group holding the theme preview cards only. h's Rex-prototype content (Default/Built-in captions, extended-palette switch, New, "— Active" suffix, Import Theme) is not a Kagi feature and is excluded. Then Accent as its own titled section, then s8's Layout, Motion, Custom themes |
 | Live data and approved additions | Live values (theme catalog, folder path, models, ignore-file contents) are compared by role and position, not literally, and are never translated or rewritten — "never English prose in JA" covers UI prose only (titles, labels, help, buttons, status). Approved production additions (#1816 contract): Analyze saved/dirty status, the compact-threshold px hint, unavailable-provider status. List them as additions with #1816 as the source; they are not × |
-| Owner exceptions | no Search field (#1816: no fake controls); pane set/order per #1816; switch knob is white in Light and Dark (#1816 blind-review contract — the dark OFF thumb in the s8 Apple Dark capture is a known capture defect, not canonical) |
+| Owner exceptions | no Search field (#1816: no fake controls); pane set/order per #1816 (sidebar glyphs follow the canonical s8 code, not #1816's table); switch knob is white in Light and Dark (#1816 blind-review contract — the dark OFF thumb in the s8 Apple Dark capture is a known capture defect, not canonical); theme strips scroll horizontally and may show a partial next card (count complete cards); Analyze's ignore editor keeps its bounded height with internal scrolling (parent-relayed, pending owner confirmation — not a ×) |

@@ -389,6 +389,7 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                             || control.id == format!("settings-theme-caption-{slug}")
                             || control.id == format!("settings-theme-caption-text-{slug}")
                             || control.id == format!("settings-theme-badge-{slug}")
+                            || control.id == format!("settings-theme-preview-{slug}")
                     }) {
                         // Preserve the actual containment assertion, but first
                         // reveal this horizontal child with a real wheel event.

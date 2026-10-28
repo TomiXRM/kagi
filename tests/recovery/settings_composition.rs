@@ -492,7 +492,11 @@ pub fn assert_composition(
         );
         near(
             heading.bounds.left() - group.left(),
-            px(13.),
+            px(if kagi::ui::theme::theme().dark {
+                12.
+            } else {
+                13.
+            }),
             "heading and group row inset alignment",
         );
         let header_bottom = match section.title {
@@ -507,6 +511,7 @@ pub fn assert_composition(
             px(8.),
             "section heading/help to card gap",
         );
+        assert_group_relations(&probes, section.group, scroll, &sample);
         for &(prefix, role, count) in section.controls {
             let controls: Vec<_> = probes
                 .iter()
@@ -580,6 +585,138 @@ pub fn assert_composition(
         );
     }
     assert_canonical_text(view, &probes);
+}
+
+fn assert_group_relations(
+    probes: &[ControlProbe],
+    id: &str,
+    viewport: Bounds<Pixels>,
+    sample: &impl Fn(Point<Pixels>) -> [u8; 4],
+) {
+    let group = probe(probes, id).bounds;
+    let dark = kagi::ui::theme::theme().dark;
+    let border = px(if dark { 0. } else { 1. });
+    let row_count = match id {
+        "settings-layout-group" | "settings-smart-group" => 3,
+        "settings-graph-group" | "settings-custom-themes-group" | "settings-analyze-group" => 2,
+        _ => 1,
+    };
+    let rows: Vec<_> = (0..row_count)
+        .map(|index| probe(probes, &format!("{id}-row-{index}")).bounds)
+        .collect();
+    let row_prefix = format!("{id}-row-");
+    let separator_prefix = format!("{id}-separator-");
+    assert_eq!(
+        probes
+            .iter()
+            .filter(|p| p.id.starts_with(&row_prefix))
+            .count(),
+        row_count,
+        "{id}: canonical direct-row membership"
+    );
+    assert_eq!(
+        probes
+            .iter()
+            .filter(|p| p.id.starts_with(&separator_prefix))
+            .count(),
+        row_count - 1,
+        "{id}: exactly one separator per adjacent row pair"
+    );
+    let sum = rows
+        .iter()
+        .fold(px(0.), |height, row| height + row.size.height);
+    near(
+        group.size.height - sum,
+        px((row_count - 1) as f32) + border * 2.,
+        "card height equals actual rows plus in-flow separators and appearance-specific borders",
+    );
+    near(
+        rows[0].top(),
+        group.top() + border,
+        "first row follows actual top border",
+    );
+    near(
+        rows.last().unwrap().bottom(),
+        group.bottom() - border,
+        "last row precedes actual bottom border",
+    );
+    for (index, row) in rows.iter().enumerate() {
+        near(
+            row.size.width,
+            group.size.width - px(24.) - border * 2.,
+            "content width equals card minus padding and actual borders",
+        );
+        near(
+            row.left(),
+            group.left() + px(12.) + border,
+            "row leading padding and actual border",
+        );
+        near(
+            row.right(),
+            group.right() - px(12.) - border,
+            "row trailing padding and actual border",
+        );
+        if index > 0 {
+            let separator = probe(probes, &format!("{id}-separator-{}", index - 1)).bounds;
+            near(
+                separator.size.height,
+                px(1.),
+                "one-pixel hairline thickness",
+            );
+            near(
+                separator.left(),
+                row.left(),
+                "separator shares content inset",
+            );
+            near(
+                separator.size.width,
+                row.size.width,
+                "separator spans the real content width",
+            );
+            near(
+                separator.top(),
+                rows[index - 1].bottom(),
+                "separator follows previous row in flow",
+            );
+            near(
+                separator.bottom(),
+                row.top(),
+                "separator occupies space before next row",
+            );
+        }
+    }
+    if group.top() >= viewport.top() && group.bottom() <= viewport.bottom() {
+        let fill = if dark { [28, 28, 30] } else { [255, 255, 255] };
+        let edge = if dark { fill } else { [220, 220, 220] };
+        assert_rgb(
+            sample(Point::new(group.left() + px(0.25), group.center().y)),
+            edge,
+            "Light hairline / Dark unbordered card edge",
+        );
+        assert_rgb(
+            sample(Point::new(group.left() + px(2.), group.center().y)),
+            fill,
+            "canonical group fill",
+        );
+        let background: [u8; 3] = if dark { [16, 16, 18] } else { [247, 247, 247] };
+        let boundary = 10. - (10_f32.powi(2) - 9.75_f32.powi(2)).sqrt();
+        for (delta, inside) in [(-1., false), (1., true)] {
+            let pixel = sample(Point::new(
+                group.left() + px(boundary + delta),
+                group.top() + px(0.25),
+            ));
+            let contrast: f32 = (0..3)
+                .map(|i| {
+                    (f32::from(pixel[i]) - f32::from(background[i]))
+                        * (f32::from(edge[i]) - f32::from(background[i]))
+                })
+                .sum::<f32>()
+                / (0..3)
+                    .map(|i| (f32::from(edge[i]) - f32::from(background[i])).powi(2))
+                    .sum::<f32>();
+            assert_eq!(contrast >= 0.5, inside, "10pt group contour");
+        }
+    }
 }
 
 fn assert_canonical_text(view: &SettingsView, probes: &[ControlProbe]) {

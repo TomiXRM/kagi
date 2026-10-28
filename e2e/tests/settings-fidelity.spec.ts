@@ -115,24 +115,47 @@ for (const appearance of ["apple-light", "apple-dark"]) {
   }
 }
 
-test("production groups reserve identical Light/Dark border and separator geometry", async ({ page }) => {
+test("production groups follow canonical appearance-specific borders and in-flow separators", async ({ page }) => {
+  test.setTimeout(120_000);
   await page.setViewportSize({ width: 715, height: 640 });
   await boot(page);
-  const geometry: number[][] = [];
   for (const appearance of ["apple-light", "apple-dark"]) {
     await host(page, "appearance", appearance);
+    const border = appearance === "apple-light" ? 1 : 0;
+    for (const language of ["en", "ja"]) {
+      await host(page, "language", language);
+      for (const destination of panes) {
+        await pane(page, destination);
+        const controls = (await observed(page)).controls;
+        const groups = controls.filter(control => control.id.endsWith("-group"));
+        for (const group of groups) {
+          const rowCount = ["settings-layout-group", "settings-smart-group"].includes(group.id) ? 3
+            : ["settings-graph-group", "settings-custom-themes-group", "settings-analyze-group"].includes(group.id) ? 2 : 1;
+          const rows = Array.from({ length: rowCount }, (_, index) =>
+            controls.find(control => control.id === `${group.id}-row-${index}`)!);
+          expect(controls.filter(control => control.id.startsWith(`${group.id}-row-`))).toHaveLength(rowCount);
+          expect(controls.filter(control => control.id.startsWith(`${group.id}-separator-`))).toHaveLength(rowCount - 1);
+          expect(group.height - rows.reduce((sum, row) => sum + row.height, 0)).toBe(rowCount - 1 + 2 * border);
+          expect(rows[0].y).toBe(group.y + border);
+          expect(rows.at(-1)!.y + rows.at(-1)!.height).toBe(group.y + group.height - border);
+          for (const [index, row] of rows.entries()) {
+            expect(row.width).toBe(group.width - 24 - 2 * border);
+            expect(row.x).toBe(group.x + 12 + border);
+            expect(row.x + row.width).toBe(group.x + group.width - 12 - border);
+            if (index === 0) continue;
+            const separator = controls.find(control => control.id === `${group.id}-separator-${index - 1}`)!;
+            expect(separator.height).toBe(1);
+            expect(separator.x).toBe(row.x);
+            expect(separator.width).toBe(row.width);
+            expect(separator.y).toBe(rows[index - 1].y + rows[index - 1].height);
+            expect(separator.y + separator.height).toBe(row.y);
+          }
+        }
+      }
+    }
     await pane(page, "graph");
     const group = await reveal(page, "settings-graph-group");
     const separator = await probe(page, "settings-graph-group-separator-0");
-    const first = await probe(page, "compact-toggle");
-    const second = await probe(page, "lane-compact-toggle");
-    expect(separator.height).toBe(1);
-    // 12pt row inset inside the identically reserved 1px outer border.
-    expect(separator.x - group.x).toBe(13);
-    expect(group.x + group.width - separator.x - separator.width).toBe(13);
-    expect(separator.y).toBeGreaterThanOrEqual(first.y + first.height);
-    expect(separator.y + separator.height).toBeLessThanOrEqual(second.y);
-    geometry.push([group.x, group.y, group.width, group.height, separator.x, separator.y, separator.width, separator.height, first.y, second.y]);
     await page.mouse.move(2, 2); await frames(page);
     const paint = await paintedPixels(page, [
       [separator.x + separator.width / 2, separator.y],
@@ -141,9 +164,9 @@ test("production groups reserve identical Light/Dark border and separator geomet
       [group.x + 2, group.y + group.height / 2],
     ]);
     expect(paint.colors[0]).not.toEqual(paint.colors[1]);
-    if (appearance === "apple-light") expect(paint.colors[2]).not.toEqual(paint.colors[3]);
+    expect(paint.colors[2]).toEqual(border === 1 ? [220, 220, 220] : [28, 28, 30]);
+    expect(paint.colors[3]).toEqual(border === 1 ? [255, 255, 255] : [28, 28, 30]);
   }
-  expect(geometry[1]).toEqual(geometry[0]);
 });
 
 for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"]] as const) {
@@ -317,13 +340,14 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       const modelRow = await probe(page, "settings-model-row");
       const trigger = await probe(page, "sc-model-select");
       const triggerText = await probe(page, "sc-model-select-text");
+      const border = appearance === "apple-light" ? 1 : 0;
       // A wrapped row must contribute its actual height to its group, not
       // merely keep its control somewhere inside the overall viewport.
       for (const control of [modelRow, trigger]) {
-        expect(control.x).toBeGreaterThanOrEqual(group.x + 1);
-        expect(control.x + control.width).toBeLessThanOrEqual(group.x + group.width - 1);
-        expect(control.y).toBeGreaterThanOrEqual(group.y + 1);
-        expect(control.y + control.height).toBeLessThanOrEqual(group.y + group.height - 1);
+        expect(control.x).toBeGreaterThanOrEqual(group.x + border);
+        expect(control.x + control.width).toBeLessThanOrEqual(group.x + group.width - border);
+        expect(control.y).toBeGreaterThanOrEqual(group.y + border);
+        expect(control.y + control.height).toBeLessThanOrEqual(group.y + group.height - border);
       }
       expect(trigger.y + trigger.height).toBeLessThanOrEqual(modelRow.y + modelRow.height);
       expect(triggerText.name).toBe(models.at(-1));

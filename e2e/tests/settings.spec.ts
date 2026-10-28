@@ -756,10 +756,11 @@ for (const [language, appearance, zoom] of [
       }
       const controls = (await observed(page)).controls;
       const groups = controls.filter(control => control.role === "Group" && control.id.endsWith("-group"));
+      const border = appearance === "apple-light" ? 1 : 0;
       for (const row of controls.filter(control => control.role === "Group" && control.id.endsWith("-row"))) {
-        expect(groups.some(group => row.x >= group.x + 1 && row.y >= group.y + 1
-          && row.x + row.width <= group.x + group.width - 1
-          && row.y + row.height <= group.y + group.height - 1),
+        expect(groups.some(group => row.x >= group.x + border && row.y >= group.y + border
+          && row.x + row.width <= group.x + group.width - border
+          && row.y + row.height <= group.y + group.height - border),
         JSON.stringify({ destination, row, groups })).toBe(true);
       }
       await info.attach(`${destination}-compact.png`, { body: await page.screenshot(), contentType: "image/png" });

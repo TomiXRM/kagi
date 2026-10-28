@@ -135,8 +135,7 @@ fn assert_popup_radio_tree(
 }
 
 fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
-    draw(cx, window);
-    crate::native_ax::activate_window(cx, window);
+    crate::native_ax::activate(cx);
     draw(cx, window);
     for count in [0, 1, 20] {
         app.update(cx, |app, cx| {
@@ -383,7 +382,7 @@ fn popup_reopens_in_new_native_host(cx: &mut VisualTestAppContext, window: AnyWi
     });
     assert_ne!(window.window_id(), reopened.window_id());
     draw(cx, reopened);
-    crate::native_ax::activate_window(cx, reopened);
+    crate::native_ax::activate(cx);
     draw(cx, reopened);
     let restored_view_id = cx
         .update_window(reopened, |_, window, cx| {

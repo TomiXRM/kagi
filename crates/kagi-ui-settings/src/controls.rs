@@ -299,8 +299,6 @@ impl SettingsView {
                     .min_w_0()
                     .max_w_full()
                     .ml_auto()
-                    .flex()
-                    .flex_col()
                     .child(control),
             );
         if summary.is_some() {

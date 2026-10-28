@@ -449,6 +449,11 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     const help = await probe(page, "settings-markdown-help");
     const text = await probe(page, "settings-markdown-help-text");
     const row = await probe(page, "settings-markdown-row");
+    const editorGroup = await probe(page, "settings-editor-group");
+    expect(row.x).toBeGreaterThanOrEqual(editorGroup.x + 1);
+    expect(row.x + row.width).toBeLessThanOrEqual(editorGroup.x + editorGroup.width - 1);
+    expect(row.y).toBeGreaterThanOrEqual(editorGroup.y + 1);
+    expect(row.y + row.height).toBeLessThanOrEqual(editorGroup.y + editorGroup.height - 1);
     const preview = await probe(page, "settings-markdown-preview");
     const source = await probe(page, "settings-markdown-source");
     expect(preview.y).toBe(source.y);
@@ -466,6 +471,10 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     expect(text.y + text.height).toBeLessThanOrEqual(row.y + row.height);
     expect(help.x + help.width <= preview.x || help.y + help.height <= preview.y).toBe(true);
     for (const control of [preview, source]) {
+      expect(control.x).toBeGreaterThanOrEqual(row.x);
+      expect(control.x + control.width).toBeLessThanOrEqual(row.x + row.width);
+      expect(control.y).toBeGreaterThanOrEqual(row.y);
+      expect(control.y + control.height).toBeLessThanOrEqual(row.y + row.height);
       const label = await probe(page, `${control.id}-label`);
       const leaf = await probe(page, `${control.id}-text`);
       expect(leaf.value).toBe(label.name);

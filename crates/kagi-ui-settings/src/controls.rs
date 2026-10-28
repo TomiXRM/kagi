@@ -18,14 +18,8 @@ pub(crate) struct SettingsGroup {
 impl ParentElement for SettingsGroup {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         for element in elements {
-            let element = if self.rows > 0 {
-                let separator = div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(1.))
-                    .bg(rgb(ink::hairline()));
+            if self.rows > 0 {
+                let separator = div().h(px(1.)).flex_shrink_0().bg(rgb(ink::hairline()));
                 #[cfg(feature = "gui-e2e")]
                 let separator = {
                     let id = format!("{}-separator-{}", self.id, self.rows - 1);
@@ -47,18 +41,15 @@ impl ParentElement for SettingsGroup {
                         );
                     })
                 };
-                div()
-                    .relative()
-                    .min_w_0()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .child(element)
-                    .child(separator)
-                    .into_any_element()
-            } else {
-                element
-            };
+                self.container.extend([separator.into_any_element()]);
+            }
+            #[cfg(feature = "gui-e2e")]
+            let element = MeasuredGroupPart {
+                element,
+                id: format!("{}-row-{}", self.id, self.rows),
+                probes: self.probes.clone(),
+            }
+            .into_any_element();
             self.container.extend([element]);
             self.rows += 1;
         }
@@ -67,7 +58,95 @@ impl ParentElement for SettingsGroup {
 
 impl RenderOnce for SettingsGroup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.container
+        #[cfg(feature = "gui-e2e")]
+        return MeasuredGroupPart {
+            element: self.container.into_any_element(),
+            id: self.id.into(),
+            probes: self.probes,
+        }
+        .into_any_element();
+        #[cfg(not(feature = "gui-e2e"))]
+        self.container.into_any_element()
+    }
+}
+
+/// Transparent test recorder: forwards the child's LayoutId, without introducing
+/// a measuring flex wrapper or reconstructing its border box from style values.
+#[cfg(feature = "gui-e2e")]
+struct MeasuredGroupPart {
+    element: AnyElement,
+    id: String,
+    probes: Rc<RefCell<BTreeMap<String, ControlProbe>>>,
+}
+
+#[cfg(feature = "gui-e2e")]
+impl IntoElement for MeasuredGroupPart {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+impl Element for MeasuredGroupPart {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.element.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.element.prepaint(window, cx);
+        self.probes.borrow_mut().insert(
+            self.id.clone(),
+            ControlProbe {
+                id: self.id.clone(),
+                bounds,
+                role: Role::Group,
+                name: self.id.clone(),
+                value: String::new(),
+                paint: None,
+                focused: false,
+                selected: false,
+                disabled: false,
+            },
+        );
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.element.paint(window, cx);
     }
 }
 
@@ -103,7 +182,7 @@ impl SettingsView {
             .gap(pt(8.))
             .child(
                 div()
-                    .px(pt(metrics::GROUP_PADDING_X) + px(1.))
+                    .px(pt(metrics::GROUP_PADDING_X) + px(if theme().dark { 0. } else { 1. }))
                     .min_w_0()
                     .flex()
                     .flex_col()
@@ -154,46 +233,12 @@ impl SettingsView {
             .w_full()
             .rounded(pt(metrics::GROUP_RADIUS))
             .px(pt(metrics::GROUP_PADDING_X))
-            .border_1()
-            .border_color(if theme().dark {
-                transparent_black()
-            } else {
-                rgb(ink::hairline()).into()
+            .when(!theme().dark, |card| {
+                card.border_1().border_color(rgb(ink::hairline()))
             })
             .bg(rgb(ink::card()))
             .flex()
             .flex_col();
-        #[cfg(feature = "gui-e2e")]
-        let container = {
-            let probes = self.probes.clone();
-            container.child(
-                canvas(
-                    move |bounds, _, _| {
-                        // Explicit top/left gives the padding box, unlike the
-                        // static-position canvas in ElementExt::on_prepaint.
-                        probes.borrow_mut().insert(
-                            id.into(),
-                            ControlProbe {
-                                id: id.into(),
-                                bounds: bounds.dilate(px(1.)),
-                                role: Role::Group,
-                                name: id.into(),
-                                value: String::new(),
-                                paint: None,
-                                focused: false,
-                                selected: false,
-                                disabled: false,
-                            },
-                        );
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            )
-        };
         SettingsGroup {
             container,
             rows: 0,

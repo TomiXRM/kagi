@@ -81,7 +81,11 @@ coordinates. Compare those with the measured sidebar panel/top inset; do not
 claim that hidden-window captures establish OS activation or traffic-light paint.
 Create/open same-logical-scale canonical/native sheets and record every G1 row
 before advancing to parts and state tests. The same scenario later asserts the
-composition relations against real native owner bounds.
+composition relations against real native owner bounds, including every group:
+content width = card −24pt padding − actual borders (Light1px per side, Dark0);
+card height = sum of actual row heights + in-flow1px separators + actual borders.
+Transparent test recorders forward each child's LayoutId without adding a flex
+wrapper; do not derive the measured card's border box from its style constants.
 
 `settings_quiet` also moves the pointer onto each selected sidebar row and
 samples native Metal pixels, including same-height pane transitions. It checks
@@ -99,7 +103,7 @@ white knob; its transparent hit target is at least 28 points, not the old 18-poi
 track. Compare actual OFF/ON pixels, not a theme token that can make OFF blue.
 `settings-fidelity.spec.ts` additionally checks original 24-point capsule/stepper
 visuals, equal label-derived segment widths, selected text emphasis, card fills,
-one-pixel non-layout hairlines and real rest/hover/pressed/focus paint. One screenshot
+one-pixel in-flow hairlines, appearance-specific borders and real rest/hover/pressed/focus paint. One screenshot
 per unchanged state supplies all pixel samples; do not substitute accessible text
 for visible caption or component-quality evidence.
 The final v9 construction contract and production role map live in

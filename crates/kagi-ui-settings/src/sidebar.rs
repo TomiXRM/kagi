@@ -158,7 +158,6 @@ impl SettingsView {
         if let Some(index) = focused {
             sidebar = sidebar.child(self.sidebar_focus_overlay(index));
         }
-        let chrome = self.layout_measurements.clone();
         let sidebar = sidebar
             .relative()
             .children(cfg!(feature = "gui-e2e").then(|| {
@@ -171,17 +170,7 @@ impl SettingsView {
                     false,
                     false,
                 )
-            }))
-            .child(
-                canvas(
-                    move |bounds, _, _| {
-                        chrome.borrow_mut().sidebar_height = bounds.size.height;
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            );
+            }));
         div()
             .relative()
             .h_full()

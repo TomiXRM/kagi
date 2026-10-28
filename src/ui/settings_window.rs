@@ -84,14 +84,13 @@ fn window_options(cx: &App) -> WindowOptions {
         })
         .or_else(|| cx.primary_display());
     let visible = display.as_ref().map(|display| display.visible_bounds());
-    let max_height = visible.map_or(SETTINGS_HEIGHT, |bounds| f32::from(bounds.size.height));
-    let height = saved
-        .map_or(SETTINGS_HEIGHT, |frame| frame.height)
-        .clamp(500_f32.min(max_height), max_height);
+    let height = visible.map_or(px(SETTINGS_HEIGHT), |bounds| {
+        px(SETTINGS_HEIGHT).min(bounds.size.height)
+    });
     let width = visible.map_or(px(SETTINGS_WIDTH), |bounds| {
         px(SETTINGS_WIDTH).min(bounds.size.width)
     });
-    let mut bounds = Bounds::centered(None, size(width, px(height)), cx);
+    let mut bounds = Bounds::centered(None, size(width, height), cx);
     if let Some(visible) = visible {
         let restore = saved.filter(|frame| {
             frame.display_uuid.is_none()
@@ -112,7 +111,7 @@ fn window_options(cx: &App) -> WindowOptions {
         bounds.origin.y = bounds
             .origin
             .y
-            .clamp(visible.top(), visible.bottom() - px(height));
+            .clamp(visible.top(), visible.bottom() - height);
     }
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -138,7 +137,7 @@ struct SettingsWindow {
     view: Entity<kagi_ui_settings::SettingsView>,
     focus: FocusHandle,
     input_escape_started_marked: bool,
-    last_fit: Option<(f32, kagi_ui_settings::Pane, f32, u64)>,
+    last_display_configuration: Option<u64>,
     _observe: Subscription,
     _release: Subscription,
     _toast_removed: Option<Subscription>,
@@ -151,30 +150,6 @@ impl SettingsWindow {
             .settings_entity()
             .expect("Settings initialized before native host");
         cx.observe(&view, |_, _, cx| cx.notify()).detach();
-        let host = cx.entity().downgrade();
-        view.update(cx, |view, cx| {
-            view.set_content_measure(
-                std::rc::Rc::new(move |bounds, window, cx| {
-                    let _ = host.update(cx, |host, cx| {
-                        let height = f32::from(bounds.size.height);
-                        let pane = host.view.read(cx).pane();
-                        let zoom = theme::zoom();
-                        let displays = display_configuration();
-                        if host.last_fit.is_some_and(|previous| {
-                            (previous.0 - height).abs() < 0.5
-                                && previous.1 == pane
-                                && previous.2 == zoom
-                                && previous.3 == displays
-                        }) {
-                            return;
-                        }
-                        host.last_fit = Some((height, pane, zoom, displays));
-                        fit_content(window, height, cx);
-                    });
-                }),
-                cx,
-            )
-        });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         window.on_window_should_close(cx, |window, cx| {
@@ -186,6 +161,9 @@ impl SettingsWindow {
             remember_geometry(window, cx);
         })
         .detach();
+        // A canonical-sized initial frame need not emit a bounds change.
+        // Capture it once so an ignored legacy height cannot survive until quit.
+        remember_geometry(window, cx);
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
         let release = cx.observe_release_in(&owner, window, |_, _, window, cx| close(window, cx));
         let toast_removed = owner.read(cx).toast_stack.clone().map(|stack| {
@@ -228,7 +206,7 @@ impl SettingsWindow {
             view,
             focus,
             input_escape_started_marked: false,
-            last_fit: None,
+            last_display_configuration: None,
             _observe: observe,
             _release: release,
             _toast_removed: toast_removed,
@@ -246,6 +224,11 @@ impl Render for SettingsWindow {
         let pane = self.view.read(cx).pane();
         window.set_window_title(&format!("{} — {}", Msg::SettingsTitle.t(), pane.title()));
         window.set_rem_size(theme::scaled_px(16.));
+        let displays = display_configuration();
+        if self.last_display_configuration != Some(displays) {
+            self.last_display_configuration = Some(displays);
+            fit_frame(window, cx);
+        }
 
         div()
             .size_full()
@@ -372,9 +355,10 @@ fn display_configuration() -> u64 {
     hash.finish()
 }
 
-/// GPUI exposes content resizing but no native frame positioning. Apply both
-/// together on the foreground executor, outside the drawing/window borrow.
-fn fit_content(window: &Window, height: f32, cx: &App) {
+/// Apply the fixed viewport only on open or a display-configuration change.
+/// Preserve manual placement across pane/content/zoom changes and never activate
+/// the window while fitting its native frame outside the drawing/window borrow.
+fn fit_frame(window: &Window, cx: &App) {
     use objc2::{msg_send, rc::Retained, runtime::AnyObject};
     use objc2_foundation::NSRect;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -399,7 +383,7 @@ fn fit_content(window: &Window, height: f32, cx: &App) {
         let visible: NSRect = msg_send![screen, visibleFrame];
         let inset = current.size.height - content.size.height;
         let max_content = (visible.size.height - inset).max(0.);
-        let content_height = f64::from(height).clamp(500_f64.min(max_content), max_content);
+        let content_height = f64::from(SETTINGS_HEIGHT).min(max_content);
         let mut fitted = current;
         fitted.size.width = (f64::from(SETTINGS_WIDTH) + current.size.width - content.size.width)
             .min(visible.size.width);

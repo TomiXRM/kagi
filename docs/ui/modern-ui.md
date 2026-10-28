@@ -252,9 +252,13 @@ bounds, not only parent boxes or accessible-name echoes.
 `pt` metrics scale with UI zoom; GPUI `px` decorations are logical window
 pixels, not Retina PNG pixels. The 2px focus stroke/3px gap are unscaled by UI
 zoom; native screenshot comparisons additionally use the actual backing scale.
-The native host is 900 points wide, initially 760 points high, with content-driven
-height bounded by the visible screen (500-point floor when it fits). There is
-no Kagi-drawn host title band: sidebar and detail start at the window top and
+The native host is fixed at 900×760 logical points, reduced only to fit the visible
+screen including native frame/content insets. Switching panes or changing UI zoom
+never resizes it; taller content scrolls inside the detail. Saved frame height is
+retained only for on-disk compatibility and never selects geometry. Fitting runs
+on open/reopen and changed connected-display geometry; manual moves survive pane,
+content and zoom changes.
+There is no Kagi-drawn host title band: sidebar and detail start at the window top and
 the pane title appears once. OS-drawn traffic lights occupy the sidebar's top
 inset. These owner-designated canonical rules supersede the compact port.
 Initial/reopened Appearance starts at the top; meaningful focus/selection changes

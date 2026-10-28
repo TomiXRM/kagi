@@ -214,7 +214,7 @@ impl SettingsView {
             .unwrap_or_else(|| Msg::SettingsThemesFolderUnavailable.t().into());
         let open = self.button(
             "settings-theme-folder-open",
-            Msg::SettingsCustomThemesOpen.t().into(),
+            format!("{}…", Msg::SettingsCustomThemesOpen.t()).into(),
             self.snapshot.can_open_theme_folder,
             ink::card(),
             SettingsIntent::OpenThemeFolder,
@@ -232,7 +232,7 @@ impl SettingsView {
         );
         let guide = self.button(
             "settings-theme-guide",
-            Msg::SettingsCustomThemesGuide.t().into(),
+            format!("{}…", Msg::SettingsCustomThemesGuide.t()).into(),
             true,
             ink::card(),
             SettingsIntent::OpenThemeGuide,

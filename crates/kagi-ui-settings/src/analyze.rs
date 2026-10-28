@@ -63,7 +63,7 @@ impl SettingsView {
         let request = self.analyze_request(cx);
         let reset = self.button(
             "settings-analyze-reset",
-            Msg::SettingsAnalyzeIgnoreReset.t().into(),
+            format!("{}…", Msg::SettingsAnalyzeIgnoreReset.t()).into(),
             true,
             ink::card(),
             SettingsIntent::ResetAnalyze(request.clone()),
@@ -93,15 +93,15 @@ impl SettingsView {
             .flex()
             .flex_col()
             .role(Role::Label)
-            .aria_label(Msg::SettingsAnalyzeIgnoreSummary.t())
+            .aria_label(Msg::SettingsAnalyzeIgnoreDesc.t())
             .aria_description(Msg::SettingsAnalyzeIgnoreDesc.t())
-            .child(Msg::SettingsAnalyzeIgnoreSummary.t())
+            .child(Msg::SettingsAnalyzeIgnoreDesc.t())
             .children(cfg!(feature = "gui-e2e").then(|| {
                 self.measured(
                     "settings-analyze-help".into(),
                     Role::Label,
                     Msg::SettingsAnalyzeIgnore.t().into(),
-                    Msg::SettingsAnalyzeIgnoreSummary.t().into(),
+                    Msg::SettingsAnalyzeIgnoreDesc.t().into(),
                     false,
                     false,
                     false,

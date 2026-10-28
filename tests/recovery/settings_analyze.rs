@@ -457,19 +457,23 @@ fn help_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
         (
             "graph",
             "settings-avatar-help",
-            Msg::SettingsLaneCompactDesc,
+            Msg::SettingsLaneCompactSummary,
         ),
-        ("graph", "settings-copy-help", Msg::SettingsGraphCopyDesc),
-        ("network", "settings-fetch-help", Msg::SettingsAutoFetchDesc),
+        ("graph", "settings-copy-help", Msg::SettingsGraphCopySummary),
+        (
+            "network",
+            "settings-fetch-help",
+            Msg::SettingsAutoFetchSummary,
+        ),
         (
             "appearance",
             "settings-motion-help",
-            Msg::SettingsReduceMotionDesc,
+            Msg::SettingsReduceMotionSummary,
         ),
         (
             "terminal",
             "settings-terminal-lock-help",
-            Msg::SettingsTerminalAutoLockDesc,
+            Msg::SettingsTerminalAutoLockSummary,
         ),
         (
             "appearance",
@@ -479,7 +483,7 @@ fn help_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
         (
             "smart_commit",
             "settings-smart-enable-help",
-            Msg::SettingsSmartEnableDesc,
+            Msg::SettingsSmartEnableSummary,
         ),
         (
             "analyze",
@@ -489,13 +493,13 @@ fn help_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     ] {
         click(cx, window, &format!("settings-pane-{pane}"));
         let help = crate::settings_controls::probe(cx, window, id)
-            .expect("full help rendered without hover");
+            .expect("canonical help rendered without hover");
         let viewport =
             crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
         assert_eq!(
             help.value,
             text.t(),
-            "the rendered help contains the full localized explanation"
+            "the rendered help contains the exact canonical localized text"
         );
         assert!(help.bounds.size.height > gpui::px(0.));
         assert!(
@@ -524,18 +528,17 @@ fn provider_unavailable_help(
     });
     draw(cx, window);
     let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
-    let saved_provider = settings::read_setting("smart_commit_provider");
     let help = crate::settings_controls::probe(cx, window, "settings-provider-help").unwrap();
     assert_eq!(help.name, Msg::SettingsSmartProvider.t());
-    assert!(
-        help.value.contains(Msg::SettingsSmartProviderDesc.t()),
-        "availability explanations supplement, not replace, the base provider help"
-    );
+    assert_eq!(help.value, Msg::SettingsSmartProviderSummary.t());
+    let availability =
+        crate::settings_controls::probe(cx, window, "settings-provider-availability").unwrap();
     for provider in ["Claude Code", "Codex"] {
         let reason = i18n::provider_not_found_hint(provider);
         assert!(
-            help.value.contains(reason.as_str()),
-            "{provider} has an understandable unavailability explanation in the visible help"
+            availability.value.matches(reason.as_str()).count() == 1
+                && !help.value.contains(reason.as_str()),
+            "{provider} has one visible unavailability explanation, not a duplicate in provider help"
         );
     }
     let viewport = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
@@ -550,7 +553,7 @@ fn provider_unavailable_help(
         crate::settings_controls::probe(cx, window, "settings-provider-help")
             .unwrap()
             .bounds,
-        "full provider help and unavailable reasons are visible without hover",
+        "canonical provider help is visible without hover",
     );
     click(cx, window, "sc-provider-select");
     for id in ["sc-provider-claude-code", "sc-provider-codex"] {
@@ -560,6 +563,14 @@ fn provider_unavailable_help(
         // PopupMenu owns focus and skips disabled items. Navigate/confirm the
         // only available provider, then reopen to exercise disabled pointer hits.
         crate::keyboard_nav::keys(cx, window, "escape enter down down enter");
+        assert_eq!(
+            cx.read(|cx| app.read(cx).smart_commit.provider),
+            kagi::ui::smart_commit::SmartProvider::Ollama,
+            "keyboard navigation skips unavailable providers"
+        );
+        // Confirming the available implicit default may persist it. The disabled
+        // pointer hit below must preserve that actual post-confirm baseline.
+        let saved_provider = settings::read_setting("smart_commit_provider");
         click(cx, window, "sc-provider-select");
         click(cx, window, id);
         let unchanged = crate::settings_controls::probe(cx, window, id).unwrap();
@@ -587,6 +598,7 @@ pub fn scenario_settings_analyze_save_state(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS settings_analyze_save_state");
 }
 pub fn scenario_settings_help_text(cx: &mut VisualTestAppContext) {
+    let _provider = crate::gui_isolation::SavedKeys::keep(&["smart_commit_provider"]);
     matrix(cx, "appearance", help_leg);
     eprintln!("[gui-e2e] PASS settings_help_text");
 }

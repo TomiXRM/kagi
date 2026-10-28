@@ -25,7 +25,10 @@ This skill orders work. It does not replace `docs/ui/modern-ui.md`,
    [Settings canonical](#settings-canonical) below.
 2. Read the canonical **code**, not only its pictures. Every number in the
    composition table comes from that code (`pt(..)`, metrics, which kit part
-   draws which row), not from eyeballing a PNG.
+   draws which row), not from eyeballing a PNG — except where this skill's
+   canonical table for the surface states a value or a splice: that table
+   records owner rulings and overrides the gallery code (e.g. a gallery
+   page's capture size).
 3. Anything else (ADRs, older figures, the previous implementation, a design
    issue) is subordinate. Where it disagrees with the canonical, list the
    conflict and ask the owner. Do not resolve a conflict by writing an ADR
@@ -56,7 +59,7 @@ Then:
    cannot pass G1.
 3. Put actual and canonical side by side at the **same logical scale**
    (divide each PNG by its own backing scale) in
-   `target/ui-fidelity/<surface>/sheet-<pane>.png`, and open it.
+   `target/ui-fidelity/<surface>/sheet-<pane>-<appearance>-<lang>.png`, and open it.
 4. Fill the "actual" column from measured bounds (renderer probes or
    `render_to_image` pixels), not from constants in your own code.
 5. **Pass** = every row ○ (geometry within ±1 pt, structure exact). Any × is
@@ -130,4 +133,6 @@ Composition values taken from that code (pt = design points at 100%):
 | Theme chooser | per appearance (Light/Dark) one `section`, whose cards sit **inside** one `group()` card; rows that belong to that chooser follow inside the same group |
 | Pop-up | `popup_value()`: value text + 18 pt filled chevron box; the trigger itself is not filled at rest |
 | Visible text | Where the canonical uses a `Msg`, show that `Msg` in every locale (e.g. Custom themes EN "Open theme folder…", "Reload Themes", "Theme file guide…"); never shorten an existing string to make a layout fit. Where the canonical's text is an English **placeholder** — a hard-coded literal ("Layout", "Motion"; the s8 task allowed them) or a `Msg` whose JA arm still held English at the canonical commit ("Graph", "Smart Commit") — keep the English wording in EN and show the production JA name (グラフ, スマートコミット, 分析 …) or add one. Never English prose in JA; Git terms follow ADR-0048 and the `ja-git-terms` gate |
+| Appearance splice | h's chooser **replaces** s8's Theme pop-up row: a "Light Mode" and a "Dark Mode" section, each one group holding the theme preview cards only. h's Rex-prototype content (Default/Built-in captions, extended-palette switch, New, "— Active" suffix, Import Theme) is not a Kagi feature and is excluded. Then Accent as its own titled section, then s8's Layout, Motion, Custom themes |
+| Live data and approved additions | Live values (theme catalog, folder path, models, ignore text) are compared by role and position, not literally. Approved production additions (#1816 contract): Analyze saved/dirty status, the compact-threshold px hint, unavailable-provider status. List them as additions with #1816 as the source; they are not × |
 | Owner exceptions | no Search field (#1816: no fake controls); pane set/order per #1816; switch knob is white in Light and Dark (#1816 blind-review contract — the dark OFF thumb in the s8 Apple Dark capture is a known capture defect, not canonical) |

@@ -158,8 +158,10 @@ jobs:
           toolchain: nightly-2026-10-18
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      # rust-toolchain.toml overrides the action's default toolchain. Select the
+      # nightly that owns the installed WASM target, exactly as build-web.sh does.
       - name: Check shared core, Settings and browser host
-        run: cargo check --locked --target wasm32-unknown-unknown -p kagi-ui-core -p kagi-ui-settings -p kagi-web
+        run: cargo +nightly-2026-10-18 check --locked --target wasm32-unknown-unknown -p kagi-ui-core -p kagi-ui-settings -p kagi-web
 
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:

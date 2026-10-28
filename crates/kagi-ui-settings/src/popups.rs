@@ -233,14 +233,13 @@ impl SettingsView {
             .h(pt(metrics::CONTROL_HEIGHT))
             .w_full()
             .min_w_0()
+            .pl(pt(8.))
+            .pr(pt(3.))
             .rounded(pt(metrics::CONTROL_RADIUS))
             .flex()
             .items_center()
-            .bg(rgb(if open {
-                ink::control_pressed()
-            } else {
-                ink::control()
-            }))
+            .gap(pt(8.))
+            .when(open, |el| el.bg(rgb(ink::control_pressed())))
             .opacity(if enabled { 1. } else { ink::disabled_opacity() })
             .when(enabled && !open, |el| {
                 el.group_hover(id, |s| s.bg(rgb(ink::control_hover())))
@@ -263,19 +262,32 @@ impl SettingsView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .pl(pt(8.))
                     .truncate()
                     .child(text)
                     .children(text_probe),
             )
             .child(
                 div()
-                    .w(pt(18.))
-                    .h_full()
+                    .relative()
+                    .size(pt(18.))
+                    .rounded(pt(5.))
+                    .bg(rgb(ink::control()))
+                    .text_color(ink::secondary())
                     .flex_shrink_0()
                     .flex()
                     .items_center()
                     .justify_center()
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            format!("{id}-chevron"),
+                            Role::Image,
+                            String::new(),
+                            String::new(),
+                            false,
+                            false,
+                            !enabled,
+                        )
+                    }))
                     .child(Icon::new(IconName::ChevronsUpDown).with_size(Size::Size(pt(12.)))),
             );
         self.control(

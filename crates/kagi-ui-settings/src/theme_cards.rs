@@ -1,5 +1,6 @@
 //! Palette-derived theme choices; preview colors never substitute invented art.
 use super::{
+    controls::section,
     kit_style::{ink, metrics, pt},
     *,
 };

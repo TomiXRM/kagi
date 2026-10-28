@@ -367,7 +367,8 @@ impl SettingsView {
                 )
                 .flex_grow(1.)
                 .flex_shrink(1.)
-                .flex_basis(segment_width)
+                // The rail owns the preferred width; cells share its final width.
+                .flex_basis(px(0.))
                 .min_w(pt(metrics::CONTROL_HIT_HEIGHT))
                 .px(pt(8.))
                 .py(pt(4.))

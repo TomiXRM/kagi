@@ -4234,7 +4234,8 @@ impl Msg {
             }
 
             // ── Analyze ignore section (ADR-0119) ────────────────────
-            (En, SettingsAnalyzeIgnore) | (Ja, SettingsAnalyzeIgnore) => "Analyze ignore",
+            (En, SettingsAnalyzeIgnore) => "Analyze ignore",
+            (Ja, SettingsAnalyzeIgnore) => "分析の除外設定",
             (En, SettingsAnalyzeIgnoreDesc) => {
                 "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Reload the repository to apply."
             }
@@ -4248,15 +4249,15 @@ impl Msg {
             (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
             (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
             (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
-            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "分析の除外設定を保存しました",
             (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
-            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "分析の除外設定を保存できませんでした",
             (En, SettingsAnalyzeIgnoreClean) => "Saved",
             (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
             (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
-            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
+            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して分析の除外設定をリセットしますか？",
             (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. Your Analyze ignore patterns will be replaced with the defaults.",
-            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。Analyze ignore のパターンを既定値に置き換えます。",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。分析の除外パターンを既定値に置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.

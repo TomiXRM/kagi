@@ -352,6 +352,7 @@ fn two_natural_tabs(
     cx.run_until_parked();
     e2e::clear_control_bounds(window.window_id(), "tab-overflow");
     let mut natural_widths = None;
+    let mut blank_width = None;
     for width in [940., 1200.] {
         for _ in 0..4 {
             crate::recovery_layout::draw(cx, window, (width, 660.));
@@ -359,11 +360,21 @@ fn two_natural_tabs(
         let repo = e2e::control_bounds(window.window_id(), "repo-tab-0").unwrap();
         let home = e2e::control_bounds(window.window_id(), "home-tab").unwrap();
         let scroll = e2e::tab_strip::scroll().unwrap();
-        let viewport = scroll.bounds();
+        // The tab scroll viewport intentionally hugs its natural-width items.
+        // Unused chrome belongs to the separate measured drag spacer.
+        let blank = e2e::control_bounds(window.window_id(), "titlebar-drag-region").unwrap();
         assert!(
-            home.right() + px(8.) < viewport.right(),
-            "two natural tabs leave actual trailing chrome: {repo:?}, {home:?} in {viewport:?}"
+            blank.left() >= scroll.bounds().right() && blank.size.width > px(0.),
+            "unused chrome {blank:?} follows the natural tab viewport {:?}",
+            scroll.bounds()
         );
+        if let Some(previous) = blank_width {
+            assert!(
+                blank.size.width > previous,
+                "the wider parent gives unused space to chrome, not stretched tabs"
+            );
+        }
+        blank_width = Some(blank.size.width);
         let widths = (repo.size.width, home.size.width);
         if let Some(previous) = natural_widths {
             assert_eq!(
@@ -393,7 +404,7 @@ fn two_natural_tabs(
                 ),
                 (home.center().x, theme::theme().bg_base, "active Home"),
                 (
-                    (home.right() + viewport.right()) / 2.,
+                    blank.center().x,
                     theme::theme().chrome_surface(),
                     "natural-width trailing chrome",
                 ),

@@ -501,6 +501,11 @@ fn assert_theme_groups(view: &SettingsView, probes: &[ControlProbe]) {
                 px(6.),
                 "canonical preview/caption gap",
             );
+            near(
+                card.bounds.bottom(),
+                caption.bottom(),
+                "canonical card height follows its real caption, without fixed-height slack",
+            );
             if index > 0 {
                 near(
                     card.bounds.left() - cards[index - 1].bounds.right(),

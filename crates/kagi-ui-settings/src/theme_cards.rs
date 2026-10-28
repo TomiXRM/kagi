@@ -300,7 +300,6 @@ impl SettingsView {
                     )
                     .w(pt(super::kit_style::metrics::THEME_CARD_WIDTH))
                     .flex_shrink_0()
-                    .h(pt(104.))
                     .min_w_0()
                     .rounded(pt(metrics::GROUP_RADIUS))
                     .hover(|style| style.bg(rgb(ink::control_hover())))
@@ -319,7 +318,6 @@ impl SettingsView {
                             .min_w_0()
                             .text_center()
                             .text_size(pt(metrics::SECONDARY))
-                            .line_height(pt(14.))
                             .text_color(if selected {
                                 ink::text()
                             } else {

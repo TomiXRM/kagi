@@ -42,7 +42,7 @@ property, canonical value from code, actual value measured, ○/×:
 | Window | logical width × height **and the size policy**: fixed, or grows/shrinks with content — measure it on at least the shortest and the tallest pane (does switching panes resize the window?); what scrolls when content is taller; whether host chrome (title band, toolbar) is drawn by Kagi; where the traffic lights sit relative to the sidebar |
 | Sidebar | x/y/width/height of the panel; top inset; row height and row pitch; selection fill role; item order |
 | Detail | title band height and the title's text; scroll content insets; gap between sections |
-| Per pane | sequence of sections; for each section, which rows sit in which group card; which kit part draws each trailing control; the **exact visible text** of every title, label and button (EN and JA) compared with the canonical's strings — a shortened or reworded label is a ×, even if it fits |
+| Per pane | sequence of sections; for each section, which rows sit in which group card; which kit part draws each trailing control; the **exact visible text** of every title, label and button (EN and JA) compared with the canonical's strings — a shortened or reworded label is a ×, even if it fits. A canonical gallery may hard-code English **placeholder** literals (text not taken from `Msg`); those fix the English wording only, never the other locale: a JA screen showing an English placeholder is a × |
 | Repeated parts | card/tile size and how many are visible at the canonical width |
 
 Then:
@@ -129,5 +129,5 @@ Composition values taken from that code (pt = design points at 100%):
 | Section | heading then body, gap 8; heading inset = group padding (12) + 1 px in Light |
 | Theme chooser | per appearance (Light/Dark) one `section`, whose cards sit **inside** one `group()` card; rows that belong to that chooser follow inside the same group |
 | Pop-up | `popup_value()`: value text + 18 pt filled chevron box; the trigger itself is not filled at rest |
-| Visible text | the canonical's `Msg` strings, e.g. Custom themes: "Open theme folder…", "Reload Themes", "Theme file guide…"; never shorten an existing string to make a layout fit |
+| Visible text | Where the canonical uses a `Msg`, show that `Msg` in every locale (e.g. Custom themes EN "Open theme folder…", "Reload Themes", "Theme file guide…"); never shorten an existing string to make a layout fit. Where the canonical hard-codes an English literal (s8 pane/section titles such as "Graph", "Layout", "Motion"; the s8 task allowed English placeholders), it is a placeholder: keep that English wording in EN and use the production JA translation (an existing `Msg`, e.g. owner-approved スマートコミット) or add one — never English in JA |
 | Owner exceptions | no Search field (#1816: no fake controls); pane set/order per #1816 |

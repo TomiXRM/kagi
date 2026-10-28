@@ -108,9 +108,12 @@ at width W).
 ## Settings canonical
 
 Owner ruling (PR #1818 review, 2026-10-29): the Settings UI built in the
-#1814 experiment is canonical.
+#1814 experiment is canonical. Its reference vocabulary is macOS System
+Settings.
 
-- Code: `origin/experiment/kagi-settings-skill` @ `1c6486202`
+- Code: `origin/experiment/kagi-settings-skill` @ `7b717e237` (layout
+  identical to `1c6486202`, which the tests and ADRs cite; only gallery
+  names and sample copy changed)
   - parts: `src/ui/settings_kit/mod.rs`, `src/ui/settings_kit/controls.rs`
   - Kagi's eight panes: `experiments/settings-skill/runs/i10/lab_i10_s8.rs.txt`
   - theme chooser: `experiments/settings-skill/runs/i10/lab_i10_h.rs.txt`
@@ -136,6 +139,6 @@ Composition values taken from that code (pt = design points at 100%):
 | Theme chooser | per appearance (Light/Dark) one `section`, whose cards sit **inside** one `group()` card; rows that belong to that chooser follow inside the same group |
 | Pop-up | `popup_value()`: value text + 18 pt filled chevron box; the trigger itself is not filled at rest |
 | Visible text | Where the canonical uses a `Msg`, show that `Msg` in every locale (e.g. Custom themes EN "Open theme folder…", "Reload Themes", "Theme file guide…"); never shorten an existing string to make a layout fit. Where the canonical's text is an English **placeholder** — a hard-coded literal ("Layout", "Motion"; the s8 task allowed them) or a `Msg` whose JA arm still held English at the canonical commit ("Graph", "Smart Commit") — keep the English wording in EN and show the production JA name (グラフ, スマートコミット, 分析 …) or add one. Never English prose in JA; Git terms follow ADR-0048 and the `ja-git-terms` gate |
-| Appearance splice | h's chooser **replaces** s8's Theme pop-up row: a "Light Mode" and a "Dark Mode" section, each one group holding the theme preview cards only. h's Rex-prototype content (Default/Built-in captions, extended-palette switch, New, "— Active" suffix, Import Theme) is not a Kagi feature and is excluded. Then Accent as its own titled section, then s8's Layout, Motion, Custom themes |
+| Appearance splice | h's chooser **replaces** s8's Theme pop-up row: a "Light Mode" and a "Dark Mode" section, each one group holding the theme preview cards only. h's prototype-only content (Default/Built-in captions, extended-palette switch, New, "— Active" suffix, Import Theme) is not a Kagi feature and is excluded. Then Accent as its own titled section, then s8's Layout, Motion, Custom themes |
 | Live data and approved additions | Live values (theme catalog, folder path, models, ignore-file contents) are compared by role and position, not literally, and are never translated or rewritten — "never English prose in JA" covers UI prose only (titles, labels, help, buttons, status). Approved production additions (#1816 contract): Analyze saved/dirty status, the compact-threshold px hint, unavailable-provider status. List them as additions with #1816 as the source; they are not × |
 | Owner exceptions | no Search field (#1816: no fake controls); pane set/order per #1816 (sidebar glyphs follow the canonical s8 code, not #1816's table); switch knob is white in Light and Dark (#1816 blind-review contract — the dark OFF thumb in the s8 Apple Dark capture is a known capture defect, not canonical); theme strips scroll horizontally and may show a partial next card (count complete cards); Analyze's ignore editor keeps its bounded height with internal scrolling (parent-relayed, pending owner confirmation — not a ×) |

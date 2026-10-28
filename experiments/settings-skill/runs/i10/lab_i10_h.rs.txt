@@ -1,4 +1,4 @@
-//! Gallery reconstruction of Rex's Themes settings pane.
+//! Gallery reconstruction of a System Settings–style Themes pane.
 use gpui::{div, prelude::*, rgb, AnyElement, App, Role, Window};
 use gpui_component::IconName;
 use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
@@ -19,7 +19,7 @@ fn main() {
     gallery_host::run(&PAGES);
 }
 
-fn rex_sidebar() -> AnyElement {
+fn settings_sidebar() -> AnyElement {
     let item = |id, icon, tint, label| {
         sidebar_item(
             id,
@@ -250,7 +250,7 @@ fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
     };
 
     settings_window(
-        rex_sidebar(),
+        settings_sidebar(),
         detail_page(
             "themes-scroll",
             "Themes",

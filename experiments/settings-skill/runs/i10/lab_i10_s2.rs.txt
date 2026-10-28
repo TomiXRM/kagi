@@ -1,4 +1,4 @@
-//! Rex Interface, composed from the settings kit. The only kit gap is a
+//! System Settings–style Interface pane, composed from the settings kit. The only kit gap is a
 //! labelled visual choice tile; all form and navigation controls are kit-owned.
 use gpui::{div, prelude::*, rgb, AnyElement, App, Div, FontWeight, Role, Window};
 use gpui_component::IconName;
@@ -194,7 +194,7 @@ fn choice_tile(
         .into_any_element()
 }
 
-fn rex_sidebar(cx: &GalleryContext) -> AnyElement {
+fn settings_sidebar(cx: &GalleryContext) -> AnyElement {
     let item = |id, icon, hue, en, ja| {
         sidebar_item(
             id,
@@ -367,7 +367,7 @@ fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
                 ),
         );
     settings_window(
-        rex_sidebar(cx),
+        settings_sidebar(cx),
         detail_page(
             "interface-scroll",
             text(cx, "Interface", "インターフェイス"),

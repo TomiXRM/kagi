@@ -55,8 +55,8 @@ fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
 ```
 
 The complete worked example is `examples/settings_gallery.rs` (`server` page
-= Rex's Server pane; `parts` page = every part in every forced state). Read it
-before writing yours.
+= a macOS System Settings–style pane; `parts` page = every part in every
+forced state). Read it before writing yours.
 
 ## 2. The kit (`src/ui/settings_kit/`)
 

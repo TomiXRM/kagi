@@ -7,8 +7,8 @@
 //! ```
 //!
 //! `parts` draws every kit part in one forced state; `server` is a complete
-//! page (Rex's Server pane) built only from kit parts — the worked example the
-//! settings skill points to.
+//! macOS System Settings–style pane built only from kit parts — the worked
+//! example the settings skill points to.
 use gpui::{div, prelude::*, AnyElement, App, Window};
 use gpui_component::IconName;
 use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
@@ -37,8 +37,9 @@ fn main() {
     gallery_host::run(&PAGES);
 }
 
-/// The sidebar Rex shows on every pane; `selected` names the current item.
-fn rex_sidebar(selected: &str, forced: Forced) -> AnyElement {
+/// The System Settings–style sidebar shared by every page; `selected` names
+/// the current item.
+fn settings_sidebar(selected: &str, forced: Forced) -> AnyElement {
     let item = |id: &'static str, icon, tint, label: &'static str| {
         let on = id == selected;
         sidebar_item(
@@ -123,12 +124,12 @@ fn server(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
         Forced::Rest
     };
     settings_window(
-        rex_sidebar("server", sidebar_state),
+        settings_sidebar("server", sidebar_state),
         detail_page(
             "server-scroll",
             "Server",
             [
-                group([Row::new("Rex Server")
+                group([Row::new("Local Server")
                     .subtitle("Running for 5h 9m")
                     .leading(icon_tile(IconName::Bot, Tint::Purple, 32.))
                     .trailing(capsule_button("stop", "Stop Server…", button_state))
@@ -139,7 +140,7 @@ fn server(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
                     None,
                     None,
                     group([Row::new("Sign in to Tailscale")
-                        .subtitle("Access Rex securely from your other devices.")
+                        .subtitle("Access this Mac securely from your other devices.")
                         .leading(icon_tile(IconName::Network, Tint::Neutral, 32.))
                         .trailing(capsule_button("sign-in", "Sign In", Forced::Rest))
                         .into_any_element()]),
@@ -153,7 +154,7 @@ fn server(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
                             .trailing(popup_value("label", "tomixrm", Forced::Rest))
                             .into_any_element(),
                         Row::new("Remote Control")
-                            .subtitle("Let Rex and other clients perform actions in this app.")
+                            .subtitle("Let other clients perform actions in this app.")
                             .trailing(switch(
                                 "remote",
                                 "Remote Control",
@@ -173,7 +174,7 @@ fn server(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
 fn parts(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
     let state = Forced::parse(cx.state).expect("states are Forced names");
     settings_window(
-        rex_sidebar("themes", state),
+        settings_sidebar("themes", state),
         detail_page(
             "parts-scroll",
             format!("Parts — {}", state.name()),

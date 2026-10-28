@@ -1,4 +1,4 @@
-//! I10/S1 — Rex Notifications, composed from the Kagi settings kit.
+//! I10/S1 — System Settings–style Notifications pane, composed from the Kagi settings kit.
 use gpui::{div, prelude::*, rgb, AnyElement, App, Role, Window};
 use gpui_component::{Icon, IconName, Sizable as _, Size};
 use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};

@@ -130,6 +130,20 @@ fn sections(pane: Pane) -> Vec<Section> {
     }
 }
 
+fn canonical_section_title(title: &'static str) -> &'static str {
+    if kagi::ui::i18n::lang() != kagi::ui::i18n::Lang::Ja {
+        return title;
+    }
+    match title {
+        "Light Mode" => "ライトモード",
+        "Dark Mode" => "ダークモード",
+        "Accent" => "アクセント",
+        "Custom themes" => "自作テーマ",
+        "Language" => "言語",
+        _ => title,
+    }
+}
+
 pub fn assert_composition(
     window: &Window,
     cx: &App,
@@ -141,9 +155,15 @@ pub fn assert_composition(
     let viewport = Bounds::new(Point::default(), window.viewport_size());
     let frame = window.window_bounds().get_bounds();
     let screen = window.display(cx).unwrap().visible_bounds();
-    assert!(
-        viewport.size.width >= px(900.),
-        "canonical native width: {viewport:?}"
+    near(
+        viewport.size.width,
+        px(900.).min(screen.size.width - (frame.size.width - viewport.size.width)),
+        "canonical fixed native width, reduced only for screen containment",
+    );
+    near(
+        viewport.size.height,
+        px(760.).min(screen.size.height - (frame.size.height - viewport.size.height)),
+        "canonical fixed native height on shortest and tallest panes",
     );
     assert!(frame.size.width >= viewport.size.width);
     contains(
@@ -151,7 +171,6 @@ pub fn assert_composition(
         frame,
         "entire native frame fits its visible display",
     );
-    assert!(viewport.size.height >= px(500.).min(screen.size.height));
 
     let title = probe(&probes, "settings-pane-title");
     near(
@@ -344,10 +363,11 @@ pub fn assert_composition(
     );
     let mut previous_bottom = title.bounds.bottom() - px(20.);
     for section in &expected_sections {
-        let section_bounds = probe(&probes, &format!("settings-section-{}", section.title)).bounds;
-        let heading = probe(&probes, &format!("settings-heading-{}", section.title));
+        let canonical_title = canonical_section_title(section.title);
+        let section_bounds = probe(&probes, &format!("settings-section-{canonical_title}")).bounds;
+        let heading = probe(&probes, &format!("settings-heading-{canonical_title}"));
         assert_eq!(heading.role, Role::Heading);
-        assert_eq!(heading.name, section.title);
+        assert_eq!(heading.name, canonical_title);
         near(
             section_bounds.top() - previous_bottom,
             px(20.),
@@ -404,10 +424,11 @@ pub fn assert_composition(
         }
     }
     if view.pane() == Pane::Appearance {
+        use gpui_component::scroll::ScrollbarHandle as _;
         near(
-            scroll.bottom() - previous_bottom,
+            scroll.top() + view.scroll_handle().content_size().height - previous_bottom,
             px(20.),
-            "final section leaves canonical bottom inset",
+            "final section leaves canonical bottom inset in scrolling content",
         );
         assert_theme_groups(view, &probes);
     }
@@ -440,6 +461,37 @@ pub fn assert_composition(
                 "rest popup trigger has owning card fill"
             );
         }
+    }
+    assert_canonical_text(view, &probes);
+}
+
+fn assert_canonical_text(view: &SettingsView, probes: &[ControlProbe]) {
+    static TEXT: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+        serde_json::from_str(include_str!("settings_text.json"))
+            .expect("canonical Settings text oracle")
+    });
+    let locale = if kagi::ui::i18n::lang() == kagi::ui::i18n::Lang::Ja {
+        "ja"
+    } else {
+        "en"
+    };
+    for row in TEXT["rows"].as_array().unwrap() {
+        if row["pane"].as_str() != Some(view.pane().id()) {
+            continue;
+        }
+        let id = row["id"][locale].as_str().unwrap();
+        let actual = probe(probes, id);
+        let measured = match row["field"].as_str().unwrap() {
+            "name" => actual.name.as_str(),
+            "value" => actual.value.as_str(),
+            field => panic!("unknown canonical text probe field {field}"),
+        };
+        assert_eq!(
+            measured,
+            row["text"][locale].as_str().unwrap(),
+            "canonical1c6486202 visible text: {locale}/{}/{id}",
+            view.pane().id()
+        );
     }
 }
 

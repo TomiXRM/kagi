@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, expectSnappedLength, type Probe } from "./settings-helpers";
+import canonicalText from "../../tests/recovery/settings_text.json";
 
 test.use({ deviceScaleFactor: 1 });
 
@@ -557,4 +558,23 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     expect((await observed(page)).baseline).toBe("first/\n");
     expect((await observed(page)).draft).toBe("second/\n");
   });
+}
+
+for (const language of ["en", "ja"] as const) {
+  for (const appearance of ["apple-light", "apple-dark"]) {
+    test(`canonical visible text in every pane: ${language} ${appearance}`, async ({ page }) => {
+      await page.setViewportSize({ width: 900, height: 760 });
+      await boot(page);
+      await host(page, "language", language);
+      await host(page, "appearance", appearance);
+      for (const destination of panes) {
+        await pane(page, destination);
+        for (const row of canonicalText.rows.filter(row => row.pane === destination)) {
+          const actual = await probe(page, row.id[language]);
+          const measured = row.field === "name" ? actual.name : actual.value;
+          expect(measured, `${destination}/${row.id[language]} canonical1c6486202`).toBe(row.text[language]);
+        }
+      }
+    });
+  }
 }

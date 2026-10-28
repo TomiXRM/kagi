@@ -551,7 +551,14 @@ for (const language of ["en", "ja"]) {
             .filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"))
             .flatMap(control => {
               const slug = control.id.slice("settings-theme-".length);
-              return [control.id, `${control.id}-focus-ring`, `settings-theme-caption-${slug}`, `settings-theme-caption-text-${slug}`, `settings-theme-badge-${slug}`];
+              const previewId = `settings-theme-preview-${slug}`;
+              const preview = state.controls.find(part => part.id === previewId);
+              expect(preview, `${previewId} belongs to a real theme card`).toBeDefined();
+              expect(preview!.x).toBeGreaterThanOrEqual(control.x);
+              expect(preview!.y).toBeGreaterThanOrEqual(control.y);
+              expect(preview!.x + preview!.width).toBeLessThanOrEqual(control.x + control.width);
+              expect(preview!.y + preview!.height).toBeLessThanOrEqual(control.y + control.height);
+              return [control.id, `${control.id}-focus-ring`, previewId, `settings-theme-caption-${slug}`, `settings-theme-caption-text-${slug}`, `settings-theme-badge-${slug}`];
             }));
           for (const control of state.controls) {
             expect(control.width, control.id).toBeGreaterThan(0);

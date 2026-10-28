@@ -70,12 +70,13 @@ reachability assertions remain.
 Before any state/hover/focus matrix, run the structure-only native
 `KAGI_GUI_E2E_ONLY=settings_window_composition` scenario through the Tier A command
 below, following the UI fidelity skill's G0→G1 gate. It captures the whole
-production Settings host at EN100 in both Apple themes with `render_to_image()`,
+production Settings host at EN/JA100% in both Apple themes with `render_to_image()`,
 not the chrome-free browser host, and writes PNGs plus actual renderer bounds to
-`target/ui-fidelity/settings/`. The native window is900pt wide, initially760pt
-high and content-driven/screen-bounded with the existing500pt floor. It draws no
-extra host title band. OS-drawn traffic lights are absent from Metal images:
-the scenario separately records their actual AppKit rectangles in content
+`target/ui-fidelity/settings/`. The native window is fixed900×760pt, reduced only
+to fit the display's visible frame; switching panes never resizes it, and taller
+content scrolls inside the detail. It draws no extra host title band.
+OS-drawn traffic lights are absent from Metal images; the scenario separately
+records their actual AppKit rectangles in content
 coordinates. Compare those with the measured sidebar panel/top inset; do not
 claim that hidden-window captures establish OS activation or traffic-light paint.
 Create/open same-logical-scale canonical/native sheets and record every G1 row

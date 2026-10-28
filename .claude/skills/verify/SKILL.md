@@ -137,6 +137,11 @@ owner-scoped active descendants, not recorder children. The pinned debug JSON
 does not serialize disabled flags; disabled behavior is checked by real input,
 and raw-node disabled-state evidence belongs to the separately identified fork
 renderer test. Do not relabel that diagnostic as OS accessibility delivery.
+Settle the native window first, then query `accessibilityChildren` on the exact
+AppKit content view obtained through that GPUI window's raw handle; draw again
+before reading its tree. Record native classes and `is_a11y_active` before/after.
+Repeat for a newly reopened host. Do not replace a missing real tree with
+recorder metadata or force an internal accessibility flag.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 Run the focused browser paint/geometry tests before heavy native gates.

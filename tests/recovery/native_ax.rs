@@ -18,6 +18,41 @@ pub fn activate(cx: &mut VisualTestAppContext) {
     });
 }
 
+/// Query the actual live GPUI NSWindow adapter after its first settled frame.
+/// No global accessibility flag or synthetic tree is installed.
+pub fn activate_window(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    cx.update_window(win, |_, window, _| {
+        let handle = HasWindowHandle::window_handle(window).unwrap();
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            panic!("native accessibility requires the actual AppKit window");
+        };
+        let before = window.is_a11y_active();
+        // SAFETY: this is the exact live GPUI view, borrowed on the main thread.
+        unsafe {
+            use objc2::{msg_send, runtime::AnyObject};
+            let view = handle.ns_view.as_ptr().cast::<AnyObject>();
+            let native: *mut AnyObject = msg_send![view, window];
+            assert!(!native.is_null());
+            let content: *mut AnyObject = msg_send![native, contentView];
+            assert!(!content.is_null());
+            let _: *mut AnyObject = msg_send![content, accessibilityChildren];
+            let after = window.is_a11y_active();
+            eprintln!(
+                "[gui-e2e] native AX {:?}: window={:?}, contentView={:?}, active={before}->{after}",
+                win.window_id(),
+                (&*native).class(),
+                (&*content).class(),
+            );
+            assert!(
+                after,
+                "the matched native adapter must activate before inspecting its real frame"
+            );
+        }
+    })
+    .unwrap();
+}
+
 pub fn tree(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Value {
     let json = cx
         .update_window(win, |_, w, _| w.debug_a11y_tree_json())

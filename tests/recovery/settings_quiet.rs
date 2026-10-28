@@ -1,6 +1,6 @@
 //! #1199 / #1201: neutral Settings hierarchy and circular radio mark.
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::{rgb, FontWeight, VisualTestAppContext};
+use gpui::{FontWeight, VisualTestAppContext, rgb};
 use kagi::ui::{e2e, theme};
 
 pub(crate) fn luminance(color: u32) -> f64 {
@@ -142,19 +142,19 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                     // the old heading/titlebar hairlines or floating-card frame.
                     let samples = [
                         (
-                            gpui::point(
-                                sidebar.left() + gpui::px(2.),
-                                sidebar.top() + gpui::px(2.),
-                            ),
+                            gpui::point(sidebar.left() + gpui::px(2.), sidebar.center().y),
                             sidebar_fill,
+                            "sidebar interior (outside rounded corners)",
                         ),
                         (
                             gpui::point(detail.left() + gpui::px(2.), detail.center().y),
                             window_fill,
+                            "detail background",
                         ),
                         (
                             gpui::point(group.left() + gpui::px(2.), group.center().y),
                             card_fill,
+                            "row group interior",
                         ),
                     ];
                     cx.update_window(window, |_, window, _| {
@@ -162,7 +162,7 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                             .render_to_image()
                             .expect("shared Settings native image");
                         let scale = window.scale_factor();
-                        for (point, color) in samples {
+                        for (point, color, label) in samples {
                             let pixel = image
                                 .get_pixel(
                                     (f32::from(point.x) * scale) as u32,
@@ -176,7 +176,7 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                             ]) {
                                 assert!(
                                     got.abs_diff(expected) <= 2,
-                                    "neutral surface {pixel:?}, expected {color:06x} at {point:?}"
+                                    "{label}: {pixel:?}, expected {color:06x} at {point:?}; theme={slug} zoom={zoom}, sidebar={sidebar:?}, detail={detail:?}, group={group:?}"
                                 );
                             }
                         }

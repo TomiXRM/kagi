@@ -5,7 +5,7 @@ use crate::macos::{build_fixture, mount, unmount};
 use crate::settings_controls::{bounds, click, draw, probe};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::i18n::Msg;
-use kagi::ui::{settings, KagiApp};
+use kagi::ui::{KagiApp, settings};
 
 const SWITCHES: [(&str, &str, Option<&str>, Msg); 6] = [
     (
@@ -222,7 +222,9 @@ pub fn scenario_settings_zoom_bound(cx: &mut VisualTestAppContext) {
     assert_eq!(settings::read_setting("ui_zoom").as_deref(), Some("1900"));
     keys(cx, window, "escape");
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS settings_zoom_bound legacy 167%, 170% preset, 200% upper bound and 190% lower preset");
+    eprintln!(
+        "[gui-e2e] PASS settings_zoom_bound legacy 167%, 170% preset, 200% upper bound and 190% lower preset"
+    );
 }
 
 /// Eight real panes replace the removed single-page group list. Every measured
@@ -265,13 +267,24 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                     "fixed detail {viewport:?} stays inside the actual overlay frame {frame:?}"
                 );
                 let sidebar = bounds(cx, window, "settings-sidebar").unwrap();
+                let navigation = bounds(cx, window, "settings-sidebar-items").unwrap();
+                assert!(
+                    navigation.left() >= sidebar.left() - px(1.)
+                        && navigation.right() <= sidebar.right() + px(1.),
+                    "navigation {navigation:?} belongs to sidebar {sidebar:?}, not detail {viewport:?}"
+                );
+                crate::recovery_layout::contained(
+                    sidebar,
+                    bounds(cx, window, &format!("settings-pane-{}", pane.id())).unwrap(),
+                    "the activated pane remains reachable in its own sidebar viewport",
+                );
                 let probes = cx.read(|cx| view.read(cx).control_probes());
                 let controls: Vec<_> = probes
                     .into_iter()
                     .filter(|control| {
                         !control.id.starts_with("settings-pane-")
+                            && !control.id.starts_with("settings-sidebar")
                             && ![
-                                "settings-sidebar",
                                 "settings-detail-scroll",
                                 "settings-detail-content",
                                 "settings-detail-viewport",
@@ -375,6 +388,7 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                             || control.id == format!("{id}-focus-ring")
                             || control.id == format!("settings-theme-caption-{slug}")
                             || control.id == format!("settings-theme-caption-text-{slug}")
+                            || control.id == format!("settings-theme-badge-{slug}")
                     }) {
                         // Preserve the actual containment assertion, but first
                         // reveal this horizontal child with a real wheel event.
@@ -383,12 +397,12 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                     let rect = bounds(cx, window, &control.id).unwrap();
                     assert!(
                         rect.left() >= viewport.left() - px(1.),
-                        "{} left",
+                        "{} left: {rect:?} in {viewport:?}",
                         control.id
                     );
                     assert!(
                         rect.right() <= viewport.right() + px(1.),
-                        "{} right",
+                        "{} right: {rect:?} in {viewport:?}",
                         control.id
                     );
                     scroll.set_offset(point(

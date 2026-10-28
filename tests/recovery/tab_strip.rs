@@ -1,6 +1,6 @@
 //! Repository strip overflow and close-action accessibility regressions.
 use crate::macos::unmount;
-use gpui::{px, size, AnyWindowHandle, MouseButton, Role, VisualTestAppContext};
+use gpui::{AnyWindowHandle, MouseButton, Role, VisualTestAppContext, px, size};
 use kagi::ui::e2e;
 use kagi_ui_core::{i18n, theme};
 use std::{cell::RefCell, rc::Rc};
@@ -48,7 +48,7 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
     theme::set_zoom(1.);
     let fixtures: Vec<_> = (0..12).map(|_| crate::macos::build_fixture()).collect();
     let (app, window) = mount(cx, fixtures[0].path());
-    two_tab_pin(cx, window, &app);
+    two_natural_tabs(cx, window, &app);
     for fixture in fixtures.iter().skip(1) {
         app.update(cx, |app, cx| {
             assert!(app.open_repository(fixture.path().to_path_buf(), cx));
@@ -333,7 +333,7 @@ fn duplicate_menu(
     draw(cx, window);
 }
 
-fn two_tab_pin(
+fn two_natural_tabs(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
     app: &gpui::Entity<kagi::ui::KagiApp>,
@@ -351,58 +351,68 @@ fn two_tab_pin(
     .unwrap();
     cx.run_until_parked();
     e2e::clear_control_bounds(window.window_id(), "tab-overflow");
-    draw(cx, window);
-    let repo = e2e::control_bounds(window.window_id(), "repo-tab-0").unwrap();
-    let home = e2e::control_bounds(window.window_id(), "home-tab").unwrap();
-    // Baseline Apple Light / JA / 167%: inactive repo, naturally-sized Home,
-    // then plain chrome. These pins reject the equal-width stretched tabs.
-    cx.update_window(window, |_, window, _| {
-        let image = window.render_to_image().unwrap();
-        let scale = window.scale_factor();
-        for (x, color, label) in [
-            (88., theme::theme().surface, "inactive repository"),
-            (
-                300.,
-                theme::theme().bg_base,
-                "Home at its baseline position",
-            ),
-            (
-                460.,
-                theme::theme().chrome_surface(),
-                "natural-width trailing chrome",
-            ),
-        ] {
-            let pixel = image
-                .get_pixel(
-                    (x * scale) as u32,
-                    ((f32::from(repo.top()) + 5.) * scale) as u32,
-                )
-                .0;
+    let mut natural_widths = None;
+    for width in [940., 1200.] {
+        for _ in 0..4 {
+            crate::recovery_layout::draw(cx, window, (width, 660.));
+        }
+        let repo = e2e::control_bounds(window.window_id(), "repo-tab-0").unwrap();
+        let home = e2e::control_bounds(window.window_id(), "home-tab").unwrap();
+        let scroll = e2e::tab_strip::scroll().unwrap();
+        let viewport = scroll.bounds();
+        assert!(
+            home.right() + px(8.) < viewport.right(),
+            "two natural tabs leave actual trailing chrome: {repo:?}, {home:?} in {viewport:?}"
+        );
+        let widths = (repo.size.width, home.size.width);
+        if let Some(previous) = natural_widths {
             assert_eq!(
-                &pixel[..3],
-                &[(color >> 16) as u8, (color >> 8) as u8, color as u8],
-                "{label}"
+                widths, previous,
+                "the same two tabs must not stretch when an ample viewport grows"
             );
         }
-    })
-    .unwrap();
-    assert!(
-        (190. ..=215.).contains(&f32::from(repo.size.width)),
-        "natural repo width: {repo:?}"
-    );
-    assert!(
-        (130. ..=155.).contains(&f32::from(home.size.width)),
-        "natural Home width: {home:?}"
-    );
-    let scroll = e2e::tab_strip::scroll().unwrap();
-    assert_eq!(
-        scroll.bounds_for_item(1).unwrap().left(),
-        scroll.bounds_for_item(0).unwrap().right() + px(1.)
-    );
-    assert!(
-        e2e::control_bounds(window.window_id(), "tab-overflow").is_none(),
-        "no » when both natural-width tabs fit"
-    );
+        natural_widths = Some(widths);
+        assert_eq!(
+            scroll.bounds_for_item(1).unwrap().left(),
+            scroll.bounds_for_item(0).unwrap().right() + px(1.)
+        );
+        assert!(
+            e2e::control_bounds(window.window_id(), "tab-overflow").is_none(),
+            "no » when both natural-width tabs fit"
+        );
+        // Sample the actual tab interiors and unused chrome, rather than pin
+        // incidental label widths that change with the fixed-chrome type ramp.
+        cx.update_window(window, |_, window, _| {
+            let image = window.render_to_image().unwrap();
+            let scale = window.scale_factor();
+            for (x, color, label) in [
+                (
+                    repo.left() + px(6.),
+                    theme::theme().surface,
+                    "inactive repository",
+                ),
+                (home.center().x, theme::theme().bg_base, "active Home"),
+                (
+                    (home.right() + viewport.right()) / 2.,
+                    theme::theme().chrome_surface(),
+                    "natural-width trailing chrome",
+                ),
+            ] {
+                let pixel = image
+                    .get_pixel(
+                        (f32::from(x) * scale) as u32,
+                        ((f32::from(repo.top()) + 5.) * scale) as u32,
+                    )
+                    .0;
+                assert_eq!(
+                    &pixel[..3],
+                    &[(color >> 16) as u8, (color >> 8) as u8, color as u8],
+                    "{label}"
+                );
+            }
+        })
+        .unwrap();
+    }
     app.update(cx, |app, cx| {
         app.close_home_tab(cx);
         app.set_theme(&old_theme, cx);

@@ -138,9 +138,17 @@ fn canonical_section_title(title: &'static str) -> &'static str {
         "Light Mode" => "ライトモード",
         "Dark Mode" => "ダークモード",
         "Accent" => "アクセント",
+        "Layout" => "レイアウト",
+        "Motion" => "モーション",
+        "Commit graph" => "commit グラフ",
+        "Clipboard" => "クリップボード",
+        "Worktree safety" => "worktree の安全性",
+        "Background sync" => "バックグラウンド同期",
+        "Message generation" => "メッセージ生成",
         "Custom themes" => "自作テーマ",
         "Language" => "言語",
-        _ => title,
+        "Markdown" | "Analyze ignore" => title,
+        _ => panic!("canonical section needs an explicit Japanese text oracle: {title}"),
     }
 }
 

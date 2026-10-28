@@ -242,8 +242,10 @@ Rows are 32 points with a 2-point gap and neutral selection. Each appearance's
 theme strip sits inside its own group card, and Accent has a section heading.
 Visible labels and action captions preserve the canonical `Msg` text in EN and
 JA, including “Open theme folder…”, “Reload Themes” and “Theme file guide…”.
-The canonical gallery's literal section headings remain literal; proper feature
-names such as Graph, Smart Commit and Analyze are not reworded in Japanese.
+The canonical gallery's English placeholders fix only English wording. Japanese
+uses production `Msg` translations, including グラフ, ネットワークと同期,
+スマートコミット, 分析, レイアウト and モーション; the proper noun Markdown and
+Git terms Hash/Branch remain unchanged (ADR-0048).
 The native `settings_window_composition` scenario captures everything Kagi draws
 with `window.render_to_image()` and records actual AppKit traffic-light bounds;
 Metal images do not contain the OS-drawn lights. Composition evidence lives in

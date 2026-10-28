@@ -931,7 +931,7 @@ RULES: tuple[Rule, ...] = (
             "theme::theme(); theme::scaled_px(12.0);",
             "use kagi_ui_core::settings::{ToolbarDisplay, MarkdownDefaultView};",
             "let mode = ToolbarDisplay::IconOnly;",
-            '// Host calls theme::set_zoom; shared renderer emits an intent.\n',
+            "// Host calls theme::set_zoom; shared renderer emits an intent.\n",
             'let help = "Settings::load() belongs to the native host";',
         ),
     ),
@@ -1269,17 +1269,17 @@ MANIFEST_RULES: tuple[ManifestRule, ...] = (
         samples=(
             '[dependencies]\nkagi-git = "0.1"\n',
             '[dependencies]\ndisk = { package = "tokio", version = "1" }\n',
-            '[target.\'cfg(unix)\'.dependencies]\nlibc = "0.2"\n',
+            "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n",
             '[build-dependencies]\ncc = "1"\n',
             '[dev-dependencies]\ntempfile = "3"\n',
-            '[dependencies]\nbackend.workspace = true\n',
+            "[dependencies]\nbackend.workspace = true\n",
             '[dependencies.disk]\npackage = "std-fs"\nversion = "1"\n',
         ),
         samples_ok=(
             '[dependencies]\nkagi-domain = { path = "../kagi-domain" }\n'
             'kagi-ui-core = { path = "../kagi-ui-core" }\n'
             'gpui = "0.2"\ngpui-component = "0.5"\n',
-            '[dependencies]\nui.workspace = true\n',
+            "[dependencies]\nui.workspace = true\n",
         ),
         sample_aliases=(("backend", "kagi-git"), ("ui", "gpui")),
     ),

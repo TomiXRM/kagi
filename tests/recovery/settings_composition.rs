@@ -27,6 +27,85 @@ fn probe<'a>(probes: &'a [ControlProbe], id: &str) -> &'a ControlProbe {
         .unwrap_or_else(|| panic!("missing measured native composition part {id}"))
 }
 
+fn assert_rgb(actual: [u8; 4], expected: [u8; 3], relation: &str) {
+    for (got, want) in actual[..3].iter().zip(expected) {
+        assert!(
+            got.abs_diff(want) <= 2,
+            "{relation}: {actual:?} != {expected:?}"
+        );
+    }
+}
+
+fn assert_sidebar_paint(
+    panel: Bounds<Pixels>,
+    probes: &[ControlProbe],
+    sample: &impl Fn(Point<Pixels>) -> [u8; 4],
+) {
+    // Pinned kit ink roles in Apple Light/Dark; never production kit helpers.
+    let dark = kagi::ui::theme::theme().dark;
+    let (window, sidebar, hairline) = if dark {
+        ([16, 16, 18], [22, 22, 24], [50, 50, 53])
+    } else {
+        ([247, 247, 247], [241, 241, 241], [220, 220, 220])
+    };
+    assert_rgb(sample(Point::new(px(2.), px(2.))), window, "window ink");
+    assert_rgb(
+        sample(Point::new(panel.center().x, panel.bottom() - px(20.))),
+        sidebar,
+        "sidebar ink",
+    );
+    assert_rgb(
+        sample(Point::new(panel.left() + px(16.), panel.top() + px(0.25))),
+        hairline,
+        "sidebar one-pixel hairline",
+    );
+    // The top-left raster contour must cross the canonical 12pt circle, not
+    // merely claim a radius in a probe populated from its style constant.
+    let boundary = 12. - (12_f32.powi(2) - 11.75_f32.powi(2)).sqrt();
+    let contrast = |pixel: [u8; 4]| {
+        let numerator: f32 = (0..3)
+            .map(|i| {
+                (f32::from(pixel[i]) - f32::from(window[i]))
+                    * (f32::from(hairline[i]) - f32::from(window[i]))
+            })
+            .sum();
+        let denominator: f32 = (0..3)
+            .map(|i| (f32::from(hairline[i]) - f32::from(window[i])).powi(2))
+            .sum();
+        numerator / denominator
+    };
+    for (delta, inside) in [(-1., false), (1., true)] {
+        let pixel = sample(Point::new(
+            panel.left() + px(boundary + delta),
+            panel.top() + px(0.25),
+        ));
+        assert_eq!(contrast(pixel) >= 0.5, inside, "12pt sidebar contour");
+    }
+    // Hue::rgb values and top-lit gradient come from the pinned canonical kit.
+    for (id, light, dark_rgb) in [
+        ("appearance", 0x5856d6, 0x5e5ce6),
+        ("graph", 0xff9500, 0xff9f0a),
+        ("editor", 0x30b0c7, 0x40c8e0),
+        ("terminal", 0x8e8e93, 0x6e6e73),
+        ("network", 0x007aff, 0x0a84ff),
+        ("smart_commit", 0xaf52de, 0xbf5af2),
+        ("analyze", 0x30b0c7, 0x40c8e0),
+        ("general", 0x8e8e93, 0x6e6e73),
+    ] {
+        let tile = probe(probes, &format!("settings-pane-tile-{id}")).bounds;
+        let base = if dark { dark_rgb } else { light };
+        let expected = [16, 8, 0].map(|shift| {
+            let channel = ((base >> shift) & 255) as f32;
+            (channel + (255. - channel) * 0.11).round() as u8
+        });
+        assert_rgb(
+            sample(Point::new(tile.left() + px(2.), tile.center().y)),
+            expected,
+            "canonical category hue at tile gradient midpoint",
+        );
+    }
+}
+
 struct Section {
     title: &'static str,
     group: &'static str,
@@ -147,7 +226,8 @@ fn canonical_section_title(title: &'static str) -> &'static str {
         "Message generation" => "メッセージ生成",
         "Custom themes" => "自作テーマ",
         "Language" => "言語",
-        "Markdown" | "Analyze ignore" => title,
+        "Analyze ignore" => "分析の除外設定",
+        "Markdown" => title,
         _ => panic!("canonical section needs an explicit Japanese text oracle: {title}"),
     }
 }
@@ -289,6 +369,21 @@ pub fn assert_composition(
             row.bounds.center().y,
             "tile is centered in its real row",
         );
+        let label = probe(&probes, &format!("settings-pane-{id}-label"));
+        near(
+            label.bounds.left() - tile.bounds.right(),
+            px(9.),
+            "canonical tile-to-label gap",
+        );
+        assert_eq!(
+            label.paint.expect("actual sidebar label paint").font_weight,
+            if row.selected {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::NORMAL
+            },
+            "selection changes sidebar emphasis, never category identity"
+        );
         if let Some(previous) = rows.last() {
             let previous: &&ControlProbe = previous;
             near(
@@ -324,6 +419,7 @@ pub fn assert_composition(
             "canonical neutral selection: {pixel:?}"
         );
     }
+    assert_sidebar_paint(panel, &probes, &sample);
     assert_eq!(traffic_lights.len(), 3);
     for &[x, y, width, height] in traffic_lights {
         let light = Bounds::new(

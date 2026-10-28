@@ -40,6 +40,13 @@ pub struct ControlPaint {
     pub text_color: Hsla,
 }
 
+#[derive(Default)]
+struct LayoutMeasurements {
+    title_height: Pixels,
+    sidebar_height: Pixels,
+    sidebar_focus: Option<Bounds<Pixels>>,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct ControlReveal {
     viewport: Size<Pixels>,
@@ -72,7 +79,7 @@ pub struct SettingsView {
     detail_slot: Option<DetailSlot>,
     content_measure: Option<ContentMeasure>,
     detail_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
-    chrome_heights: Rc<RefCell<(Pixels, Pixels)>>,
+    layout_measurements: Rc<RefCell<LayoutMeasurements>>,
     #[cfg(feature = "gui-e2e")]
     probes: Rc<RefCell<BTreeMap<String, ControlProbe>>>,
     _input_subscription: Subscription,
@@ -109,7 +116,7 @@ impl SettingsView {
             popup: None,
             detail_slot: None,
             content_measure: None,
-            chrome_heights: Rc::new(RefCell::new((px(0.), px(0.)))),
+            layout_measurements: Rc::default(),
             detail_bounds: Rc::default(),
             #[cfg(feature = "gui-e2e")]
             probes: Rc::default(),
@@ -257,13 +264,14 @@ impl Render for SettingsView {
         let sidebar = self.sidebar(window, cx);
         let content = self.render_pane(window, cx);
         let measure = self.content_measure.clone();
-        let chrome = self.chrome_heights.clone();
+        let chrome = self.layout_measurements.clone();
         let content = div().relative().min_w_0().w_full().child(content).child(
             canvas(
                 move |mut bounds, window, cx| {
-                    let (title, sidebar) = *chrome.borrow();
-                    bounds.size.height = (bounds.size.height + title + kit_style::pt(20.))
-                        .max(sidebar + kit_style::pt(16.));
+                    let chrome = chrome.borrow();
+                    bounds.size.height =
+                        (bounds.size.height + chrome.title_height + kit_style::pt(20.))
+                            .max(chrome.sidebar_height + kit_style::pt(16.));
                     if let Some(measure) = measure {
                         measure(bounds, window, cx);
                     }
@@ -277,7 +285,7 @@ impl Render for SettingsView {
         );
         let bounds = self.detail_bounds.clone();
         let slot = self.detail_slot.as_ref().and_then(|slot| slot(window, cx));
-        let title_heights = self.chrome_heights.clone();
+        let title_heights = self.layout_measurements.clone();
         let viewport = div()
             .id("settings-detail-viewport")
             .relative()
@@ -393,7 +401,8 @@ impl Render for SettingsView {
                             .child(
                                 canvas(
                                     move |bounds, _, _| {
-                                        title_heights.borrow_mut().0 = bounds.size.height;
+                                        title_heights.borrow_mut().title_height =
+                                            bounds.size.height;
                                     },
                                     |_, _, _, _| {},
                                 )

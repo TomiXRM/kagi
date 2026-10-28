@@ -192,23 +192,33 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                 .unwrap()
                                 .selected
                         );
-                        assert_hover_fill(cx, window, &id, palette.selected, zoom);
+                        assert_hover_fill(
+                            cx,
+                            window,
+                            &id,
+                            if slug == "apple-light" {
+                                0xd3d3d3
+                            } else {
+                                0x3a3a3c
+                            },
+                            zoom,
+                        );
                     }
                     let language = if lang == kagi::ui::i18n::Lang::En {
                         "settings-language-en"
                     } else {
                         "settings-language-ja"
                     };
-                    // Independent approved raised-segment colors, not the
-                    // production helper that formerly returned inactive gray.
+                    // Independent canonical neutral-selection colors, not a
+                    // comparison against the helper that produces the fill.
                     assert_hover_fill(
                         cx,
                         window,
                         language,
                         if slug == "apple-light" {
-                            0xffffff
+                            0xd3d3d3
                         } else {
-                            0x66666c
+                            0x3a3a3c
                         },
                         zoom,
                     );

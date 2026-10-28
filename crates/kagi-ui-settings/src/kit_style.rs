@@ -36,7 +36,9 @@ pub(crate) fn detail_min_width() -> Pixels {
         + metrics::STEPPER_VALUE_WIDTH
         + metrics::GROUP_PADDING_X * 2.)
         + gpui::px(2.);
-    let theme = pt(metrics::THEME_CARD_WIDTH) + gpui::px(metrics::FOCUS_REVEAL_MARGIN * 2.);
+    // Theme previews now belong to a group, so its padding and border are
+    // part of their minimum allocation. Ring clearance uses that group inset.
+    let theme = pt(metrics::THEME_CARD_WIDTH + metrics::GROUP_PADDING_X * 2.) + gpui::px(2.);
     stepper.max(theme) + pt(metrics::DETAIL_PADDING_LEFT + metrics::DETAIL_PADDING_RIGHT)
 }
 

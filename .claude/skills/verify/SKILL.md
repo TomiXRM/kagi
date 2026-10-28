@@ -42,37 +42,52 @@ Long names also require the painted `StyledText` layout's actual ellipsis text
 and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
 Do not replace this with the original full label: a correct 138px truncation
 measurement can still be hard-clipped if the final text leaf is allocated 165px.
-The compact chooser has two independent Light/Dark horizontal strips, one
-global radio selection and Light-then-Dark keyboard order, not a value slider.
+The canonical chooser has two Light/Dark sections, each enclosing its horizontal
+strip in a group card, one global radio selection and Light-then-Dark keyboard
+order, not a value slider. Cards use the owner-selected132×84 preview geometry.
 Classify from the fixture's actual `themeCatalog.dark`, never names or colors.
 Choose the smallest faithful production host for the changed behavior. For portable
 Settings layout/input, the existing browser host is a measured cheap option; run:
 `npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1 --grep 'production (kit|groups|popup|text leaves)|sidebar overflow|horizontal theme chooser|Smart Commit|pale accent|selected hover|captions|numeric controls'`.
-The new chooser matrix uses715×640 at EN/JA and100%/167%. Compare measured
-RadioButton count with the host catalog, visit every card using real arrow keys,
-and sample both pixels of all four first/last focus-ring edges from one PNG.
+The narrow shared-view chooser matrix uses715×640 at EN/JA and100%/167%; it
+does not establish native window composition. Compare measured RadioButton count
+with the host catalog, visit every card using real arrow keys, and sample both
+pixels of all four first/last focus-ring edges from one PNG.
 Home/End and Space retain their focus/selection semantics. Real horizontal
 wheel browsing must survive unchanged seeds and focus loss to the already-selected
 Appearance destination. Browsing either strip must not move the other; vertical
 wheel over either strip must still move the form without changing its X offset.
 Check selected reveal after pane return, host reopen, same-count catalog change
 and actual viewport resize (including640×640/167%). The200% sidebar case keeps
-the715×640 host and original row/tile/control metrics: wheel and keyboard must
-reach all eight destinations, reveal the complete focus ring, and leave the
-whole numeric unit inside its row/detail. Normal/167% sidebar geometry stays
-unchanged. Caption tests must reveal each real card rather than sampling
-offscreen grid coordinates.
-Native `settings_window_screen_fit` additionally bounds content height to640;
-its existing saved-frame/display/position and final-control reachability
-assertions remain. The original tall-grid captures are historical, not approval
-of the compact chooser.
+the715×640 browser host and canonical row/tile/control metrics: the traffic-light
+inset now causes real overflow at200%, so wheel and keyboard must reach all eight
+destinations, reveal the complete focus ring, and leave the whole numeric unit
+inside its row/detail. Caption tests reveal each real card, not offscreen coordinates.
+Native `settings_window_screen_fit` bounds the entire frame to the visible screen,
+without a compact-height ceiling; saved-frame/display/position and final-control
+reachability assertions remain.
+
+Before any state/hover/focus matrix, run the structure-only native
+`KAGI_GUI_E2E_ONLY=settings_window_composition` scenario through the Tier A command
+below, following the UI fidelity skill's G0→G1 gate. It captures the whole
+production Settings host at EN100 in both Apple themes with `render_to_image()`,
+not the chrome-free browser host, and writes PNGs plus actual renderer bounds to
+`target/ui-fidelity/settings/`. The native window is900pt wide, initially760pt
+high and content-driven/screen-bounded with the existing500pt floor. It draws no
+extra host title band. OS-drawn traffic lights are absent from Metal images:
+the scenario separately records their actual AppKit rectangles in content
+coordinates. Compare those with the measured sidebar panel/top inset; do not
+claim that hidden-window captures establish OS activation or traffic-light paint.
+Create/open same-logical-scale canonical/native sheets and record every G1 row
+before advancing to parts and state tests. The same scenario later asserts the
+composition relations against real native owner bounds.
 
 `settings_quiet` also moves the pointer onto each selected sidebar row and
 samples native Metal pixels, including same-height pane transitions. It checks
-the selected language segment while hovered against the approved white
-(Apple Light) and light-gray (Apple Dark) fills, not the inactive-row helper.
-Actual element bounds require the normal one-line segment's 24-point visible
-track and 20-point pill at 100%, inside a hit target of at least 28 scaled points.
+the canonical neutral selection fills (Apple Light211/211/211, Apple Dark58/58/60),
+not an implementation-helper echo. Actual element bounds require the normal
+one-line segment's24-point visible track and20-point pill at100%, inside a hit
+target of at least28 scaled points.
 At both zooms, independently assert the track's 2-point and pill's 4-point
 top/bottom insets against the actual hit bounds (≤0.5px per edge). GPUI's pinned
 `taffy.rs:342-403` snaps absolute near/far edges separately: at 167% the observed

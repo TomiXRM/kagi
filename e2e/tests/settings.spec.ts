@@ -222,7 +222,7 @@ for (const appearance of ["apple-light", "apple-dark"]) {
         await frames(page);
         const segmentPaint = await paintedPixels(page, [[hit.x + 3 * zoom, hit.y + hit.height / 2]]);
         const [color] = segmentPaint.colors;
-        const expected = appearance === "apple-light" ? [255, 255, 255] : [102, 102, 108];
+        const expected = appearance === "apple-light" ? [211, 211, 211] : [58, 58, 60];
         color.forEach((value, channel) => expect(Math.abs(value - expected[channel])).toBeLessThanOrEqual(2));
         await info.attach(`${appearance}-${language}-${zoom}-segments.png`, { body: segmentPaint.png, contentType: "image/png" });
       });
@@ -599,7 +599,7 @@ for (const [language, appearance, zoom] of [
     const light = await probe(page, "settings-themes-light-scroll");
     const dark = await probe(page, "settings-themes-dark-scroll");
     expect(light.y + light.height).toBeLessThan(dark.y);
-    for (const card of cards) expectSnappedLength(card.width, 144 * zoom);
+    for (const card of cards) expectSnappedLength(card.width, 132 * zoom);
     expect(cards).toHaveLength(initial.themeCount);
     expect(cards.length).toBeGreaterThan(2);
     const inStrip = async (control: Probe, margin = 0, requireVerticalVisibility = true) => {

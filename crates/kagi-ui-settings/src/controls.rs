@@ -480,7 +480,9 @@ impl SettingsView {
                         .is_none_or(|focus| !focus.is_focused(window))
                 })
             });
-        let focus_overlay = focused.then(|| {
+        // The sidebar paints its ring after its tightly spaced row siblings,
+        // within that local scroll owner, never as a window-level overlay.
+        let focus_overlay = (focused && role != Role::Tab).then(|| {
             let ring_color =
                 super::focus_ring::color(self.snapshot.effective_accent, focus_background);
             div()

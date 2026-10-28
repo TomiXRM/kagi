@@ -21,6 +21,14 @@ impl SettingsView {
                 Pane::ALL.iter().position(|p| *p == self.pane).unwrap_or(0),
             );
         }
+        let focused = ids.iter().position(|id| {
+            window.is_window_active()
+                && self
+                    .focus
+                    .get(id)
+                    .is_some_and(|focus| focus.is_focused(window))
+        });
+        self.layout_measurements.borrow_mut().sidebar_focus = None;
         let mut sidebar = div()
             .id("settings-sidebar-items")
             .w_full()
@@ -127,12 +135,30 @@ impl SettingsView {
                         })
                         .child(pane.title()),
                 );
+            let item = item.when(focused == Some(index), |item| {
+                let measurements = self.layout_measurements.clone();
+                item.child(
+                    canvas(
+                        move |bounds, _, _| {
+                            measurements.borrow_mut().sidebar_focus = Some(bounds);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+            });
             sidebar = sidebar.child(item.hover_tooltip(
                 SharedString::from(format!("settings-pane-name-{}", pane.id())),
                 pane.title(),
             ));
         }
-        let chrome = self.chrome_heights.clone();
+        if let Some(index) = focused {
+            sidebar = sidebar.child(self.sidebar_focus_overlay(index));
+        }
+        let chrome = self.layout_measurements.clone();
         let sidebar = sidebar
             .relative()
             .children(cfg!(feature = "gui-e2e").then(|| {
@@ -149,7 +175,7 @@ impl SettingsView {
             .child(
                 canvas(
                     move |bounds, _, _| {
-                        chrome.borrow_mut().1 = bounds.size.height;
+                        chrome.borrow_mut().sidebar_height = bounds.size.height;
                     },
                     |_, _, _, _| {},
                 )
@@ -223,5 +249,63 @@ impl SettingsView {
                     ),
             )
             .into_any_element()
+    }
+
+    fn sidebar_focus_overlay(&self, index: usize) -> AnyElement {
+        let measurements = self.layout_measurements.clone();
+        let background = ink::sidebar();
+        let color = super::focus_ring::color(self.snapshot.effective_accent, background);
+        #[cfg(feature = "gui-e2e")]
+        let (id, probes) = (
+            format!("settings-pane-{}-focus-ring", Pane::ALL[index].id()),
+            self.probes.clone(),
+        );
+        #[cfg(not(feature = "gui-e2e"))]
+        let _ = index;
+        // Paint after rows, but before later host content/overlays. A global
+        // deferred draw would incorrectly lift decoration above host overlays.
+        canvas(
+            move |_, _, _| measurements.borrow().sidebar_focus,
+            move |_, bounds, window, _| {
+                let Some(bounds) = bounds else { return };
+                let bounds = bounds.dilate(px(5.));
+                window.paint_quad(quad(
+                    bounds,
+                    pt(10.),
+                    transparent_black(),
+                    px(5.),
+                    rgb(background),
+                    BorderStyle::Solid,
+                ));
+                window.paint_quad(quad(
+                    bounds,
+                    pt(10.),
+                    transparent_black(),
+                    px(2.),
+                    color,
+                    BorderStyle::Solid,
+                ));
+                #[cfg(feature = "gui-e2e")]
+                probes.borrow_mut().insert(
+                    id.clone(),
+                    ControlProbe {
+                        id,
+                        bounds,
+                        role: Role::Image,
+                        name: String::new(),
+                        value: String::new(),
+                        paint: None,
+                        focused: false,
+                        selected: false,
+                        disabled: false,
+                    },
+                );
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
     }
 }

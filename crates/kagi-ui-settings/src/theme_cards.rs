@@ -96,7 +96,9 @@ impl SettingsView {
                 .flex()
                 .flex_nowrap()
                 .items_start()
-                .gap(pt(8.))
+                // Wrappers reserve the existing unscaled ring clearance without
+                // changing the canonical eight-point visible card gap.
+                .gap(pt(8.) - px(metrics::FOCUS_REVEAL_MARGIN * 2.))
                 .min_w_0()
                 .w_full()
                 .overflow_x_scroll()
@@ -288,7 +290,7 @@ impl SettingsView {
                         selected,
                         true,
                         Role::RadioButton,
-                        ink::window(),
+                        ink::card(),
                         px(0.),
                         16.,
                         Some(SettingsIntent::Theme(palette.slug.to_string().into())),
@@ -329,10 +331,16 @@ impl SettingsView {
                             .child(caption_text)
                             .children(caption_text_probe),
                     );
-                cards = cards.child(card.hover_tooltip(
-                    SharedString::from(format!("settings-theme-name-{}", palette.slug)),
-                    name,
-                ));
+                cards = cards.child(
+                    div()
+                        .w(pt(metrics::THEME_CARD_WIDTH) + px(metrics::FOCUS_REVEAL_MARGIN * 2.))
+                        .flex_shrink_0()
+                        .p(px(metrics::FOCUS_REVEAL_MARGIN))
+                        .child(card.hover_tooltip(
+                            SharedString::from(format!("settings-theme-name-{}", palette.slug)),
+                            name,
+                        )),
+                );
             }
             let viewport = self.theme_viewport[mode].clone();
             let scroll = self.theme_scroll[mode].clone();
@@ -382,7 +390,7 @@ impl SettingsView {
                 .id(SharedString::from(scroll_id))
                 .relative()
                 .min_w_0()
-                .w_full()
+                .mx(-px(metrics::FOCUS_REVEAL_MARGIN))
                 .when(persistent, |area| area.pb(px(16.)))
                 .child(cards)
                 .children(cfg!(feature = "gui-e2e").then(|| {
@@ -417,7 +425,11 @@ impl SettingsView {
                             } else {
                                 "settings-themes-dark-group"
                             })
-                            .child(div().py(pt(12.)).child(area)),
+                            .child(
+                                div()
+                                    .py(pt(12.) - px(metrics::FOCUS_REVEAL_MARGIN))
+                                    .child(area),
+                            ),
                         ),
                     )
                     // Reveal the real section, including its heading, rather

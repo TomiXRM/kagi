@@ -171,12 +171,12 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
       expect(inner.x + inner.width, `${inner.id} right`).toBeLessThanOrEqual(outer.x + outer.width);
       expect(inner.y + inner.height, `${inner.id} bottom`).toBeLessThanOrEqual(outer.y + outer.height);
     };
-    for (const destination of panes) {
-      contains(viewport, await probe(page, `settings-pane-${destination}`));
-    }
+    contains(viewport, await probe(page, "settings-pane-appearance"));
+    const general = await probe(page, "settings-pane-general");
+    expect(general.y + general.height).toBeGreaterThan(viewport.y + viewport.height);
     await info.attach("sidebar-640h-200.png", { body: await page.screenshot(), contentType: "image/png" });
-    // All eight rows fit at 640h. Exercise real overflow with a genuinely
-    // shorter browser viewport, without shrinking production row geometry.
+    // The canonical traffic-light inset now makes 200% overflow real even at
+    // 640h. Retain the stronger wheel/keyboard reachability leg at 500h.
     await page.setViewportSize({ width: 715, height: 500 }); await frames(page);
     viewport = await probe(page, "settings-sidebar");
     const before = await observed(page);
@@ -328,7 +328,11 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       expect(triggerText.name).toBe(models.at(-1));
       expect(triggerText.value).toMatch(/(?:…|\.\.\.)$/);
       expect(Math.abs(triggerText.x - trigger.x - 8 * zoom)).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(triggerText.x + triggerText.width - trigger.x - trigger.width + 18 * zoom)).toBeLessThanOrEqual(0.5);
+      const chevron = await probe(page, "sc-model-select-chevron");
+      expectSnappedLength(chevron.width, 18 * zoom);
+      expectSnappedLength(chevron.height, 18 * zoom);
+      expect(Math.abs(chevron.x - triggerText.x - triggerText.width - 8 * zoom)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(trigger.x + trigger.width - chevron.x - chevron.width - 3 * zoom)).toBeLessThanOrEqual(0.5);
       await info.attach(`long-model-row-${count}.png`, { body: await page.screenshot(), contentType: "image/png" });
       await info.attach(`long-model-row-${count}.json`, { body: JSON.stringify({ group, modelRow, trigger, triggerText }), contentType: "application/json" });
       await click(page, "sc-model-select");

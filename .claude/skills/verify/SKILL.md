@@ -106,6 +106,13 @@ item** and inspect the full-name tooltip PNG; an earlier unavailable-value
 tooltip or the full AX-name field is not that proof. Actual exposed trigger
 bounds determine the second-click target when the popup overlaps its centre.
 Keep real disabled-first/wrap/confirm and host-reopen-discard assertions.
+The existing native `settings_provider_keys` leg also opens its actual popup,
+sends Cmd-W, reopens the retained production view in a new native window and
+requires no stale menu. Reopening and dismissing a fresh menu must restore
+trigger focus without changing the persisted provider/model. Its eight native
+cells reuse the existing coherent availability fixture; this is native-owner
+lifetime coverage, not proof of real OS activation.
+
 
 GPUI `px`/`Pixels` are logical window coordinates. The focus stroke/gap remain
 2/3 logical pixels independent of UI zoom; multiply by the actual native

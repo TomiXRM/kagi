@@ -3,12 +3,12 @@ use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, drain_native_events, mount, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{
-    e2e,
+    KagiApp, ToastKind, e2e,
     i18n::{self, Msg},
     settings,
     settings_view::SettingsHostForE2e,
     smart_commit::SmartProvider,
-    theme, KagiApp, ToastKind,
+    theme,
 };
 
 pub(crate) fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
@@ -166,18 +166,22 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             "all providers remain discoverable in the real menu"
         );
         assert_eq!(options.iter().filter(|option| option.selected).count(), 1);
-        assert!(options
-            .iter()
-            .all(|option| option.role == gpui::Role::MenuItemRadio && !option.name.is_empty()));
+        assert!(
+            options
+                .iter()
+                .all(|option| option.role == gpui::Role::MenuItemRadio && !option.name.is_empty())
+        );
         assert_eq!(options[2].name, "Codex");
         assert!(options[2].disabled && !options[2].selected);
         for option in &options {
             assert_popup_radio_tree(cx, window, option);
         }
-        assert!(probe(cx, window, "settings-provider-availability")
-            .unwrap()
-            .value
-            .contains(&i18n::provider_not_found_hint("Codex")));
+        assert!(
+            probe(cx, window, "settings-provider-availability")
+                .unwrap()
+                .value
+                .contains(&i18n::provider_not_found_hint("Codex"))
+        );
         click(cx, window, "sc-provider-codex");
         assert_eq!(
             cx.read(|cx| app.read(cx).smart_commit.provider),
@@ -300,10 +304,12 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             );
             let actual = crate::native_ax::node(cx, window, "sc-model-select".into());
             assert_eq!(actual["aria"]["role"], "ComboBox");
-            assert!(actual["aria"]["value"]
-                .as_str()
-                .unwrap()
-                .contains(&selected_model));
+            assert!(
+                actual["aria"]["value"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&selected_model)
+            );
             click(cx, window, "sc-model-select");
             keys(cx, window, "tab");
             draw(cx, window);
@@ -330,6 +336,92 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             .unwrap();
         assert!(rect.left() >= gpui::px(0.) && rect.right() <= width);
     }
+    popup_reopens_in_new_native_host(cx, window);
+}
+
+fn popup_reopens_in_new_native_host(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let repo = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|candidate| candidate.window_id() != window.window_id())
+            .expect("owning repository remains open")
+    });
+    let view_id = cx
+        .update_window(window, |_, window, cx| {
+            kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                .unwrap()
+                .entity_id()
+        })
+        .unwrap();
+    let before = (
+        settings::read_setting("smart_commit_provider"),
+        settings::read_setting("smart_commit_model"),
+    );
+    open_popup(cx, window, false);
+    draw(cx, window);
+    assert!(probe(cx, window, "settings-popup-menu").is_some());
+    cx.simulate_keystrokes(window, "cmd-w");
+    drain_native_events();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| cx
+            .windows()
+            .iter()
+            .map(|window| window.window_id())
+            .collect::<Vec<_>>()),
+        vec![repo.window_id()],
+        "Cmd-W closes the Settings owner even while its real PopupMenu has focus"
+    );
+    keys(cx, repo, "cmd-,");
+    cx.run_until_parked();
+    let reopened = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|candidate| candidate.window_id() != repo.window_id())
+            .expect("new native Settings host")
+    });
+    assert_ne!(window.window_id(), reopened.window_id());
+    draw(cx, reopened);
+    let restored_view_id = cx
+        .update_window(reopened, |_, window, cx| {
+            kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                .unwrap()
+                .entity_id()
+        })
+        .unwrap();
+    assert_eq!(
+        view_id, restored_view_id,
+        "the production owner retains its shared view"
+    );
+    assert!(
+        probe(cx, reopened, "settings-popup-menu").is_none(),
+        "a new host must not paint the old popup or retain its window anchor"
+    );
+    assert!(
+        probe(cx, reopened, "settings-pane-smart_commit")
+            .unwrap()
+            .selected
+    );
+    open_popup(cx, reopened, false);
+    draw(cx, reopened);
+    let option =
+        probe(cx, reopened, "sc-provider-ollama").expect("fresh real menu in the new host");
+    assert_popup_radio_tree(cx, reopened, &option);
+    keys(cx, reopened, "escape");
+    draw(cx, reopened);
+    assert!(probe(cx, reopened, "settings-popup-menu").is_none());
+    assert!(probe(cx, reopened, "sc-provider-select").unwrap().focused);
+    assert_eq!(
+        before,
+        (
+            settings::read_setting("smart_commit_provider"),
+            settings::read_setting("smart_commit_model"),
+        ),
+        "opening, closing and reopening a menu never changes stored choices"
+    );
+    cx.simulate_keystrokes(reopened, "cmd-w");
+    drain_native_events();
+    cx.run_until_parked();
 }
 
 pub fn scenario_settings_provider_keys(cx: &mut VisualTestAppContext) {
@@ -594,10 +686,12 @@ fn unwritable_directory(
             cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()),
             "draft-ignore\n"
         );
-        assert!(probe(cx, window, "settings-analyze-error")
-            .unwrap()
-            .value
-            .contains("Permission denied"));
+        assert!(
+            probe(cx, window, "settings-analyze-error")
+                .unwrap()
+                .value
+                .contains("Permission denied")
+        );
         drop(restore);
         assert_eq!(std::fs::read(path).unwrap(), b"saved bytes");
         dismiss_feedback(cx, app, window);
@@ -642,9 +736,11 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
             ToastKind::Error,
             "failed Analyze write shows an error toast"
         );
-        assert!(error
-            .message
-            .starts_with(Msg::SettingsAnalyzeIgnoreFailed.t()));
+        assert!(
+            error
+                .message
+                .starts_with(Msg::SettingsAnalyzeIgnoreFailed.t())
+        );
         assert!(error.message.contains("analyze_ignore"));
         assert!(error.message.contains("directory") || error.message.contains("Directory"));
         assert!(error.message.chars().count() <= 241);
@@ -713,5 +809,7 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
 
 pub fn scenario_settings_analyze_ignore_feedback(cx: &mut VisualTestAppContext) {
     matrix(cx, "analyze", analyze_leg);
-    eprintln!("[gui-e2e] PASS settings_analyze_ignore_feedback EN/JA Light/Dark 100/167% Save/Reset failure and recovery");
+    eprintln!(
+        "[gui-e2e] PASS settings_analyze_ignore_feedback EN/JA Light/Dark 100/167% Save/Reset failure and recovery"
+    );
 }

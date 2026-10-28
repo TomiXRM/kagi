@@ -1,0 +1,304 @@
+import { test, expect } from "@playwright/test";
+import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, expectSnappedLength, type Probe } from "./settings-helpers";
+
+test.use({ deviceScaleFactor: 1 });
+
+for (const appearance of ["apple-light", "apple-dark"]) {
+  for (const language of ["en", "ja"]) {
+    for (const zoom of [1, 1.67]) {
+      test(`production kit geometry and live states: ${appearance} ${language} ${zoom}`, async ({ page }, info) => {
+        test.setTimeout(120_000);
+        await page.setViewportSize({ width: 715, height: 640 });
+        await boot(page);
+        await host(page, "appearance", appearance);
+        await host(page, "language", language);
+        await host(page, "zoom", String(zoom));
+        await pane(page, "graph");
+        for (const [id, size, weight] of [
+          ["settings-pane-title", 15, 700],
+          ["settings-pane-graph-label", 13, 600],
+          ["settings-pane-appearance-label", 13, 400],
+        ] as const) {
+          const paint = (await probe(page, id)).paint;
+          expect(paint, `${id} actual paint style`).not.toBeNull();
+          expect(paint!.fontSize).toBeCloseTo(size * zoom, 4);
+          expect(paint!.fontWeight).toBe(weight);
+        }
+        const hit = await reveal(page, "compact-toggle");
+        const track = await probe(page, "compact-toggle-visual");
+        const knob = await probe(page, "compact-toggle-knob");
+        for (const [actual, expected] of [[track.width, 28], [track.height, 16], [knob.width, 12], [knob.height, 12]]) {
+          expectSnappedLength(actual, expected * zoom);
+        }
+        expect(hit.height).toBeGreaterThanOrEqual(Math.floor(28 * zoom));
+        expect(hit.selected).toBe(false);
+        await page.mouse.move(2, 2); await frames(page);
+        const off = await paintedPixels(page, [[track.x + track.width - 4 * zoom, track.y + track.height / 2], [knob.x + knob.width / 2, knob.y + knob.height / 2]]);
+        expect(off.colors[1]).toEqual([255, 255, 255]);
+        // OFF must not inherit the injected accent, while ON must use it.
+        await host(page, "accent", "yellow");
+        const offAccent = await paintedPixels(page, [[track.x + track.width - 4 * zoom, track.y + track.height / 2]]);
+        expect(offAccent.colors[0]).toEqual(off.colors[0]);
+        await click(page, "compact-toggle");
+        await expect.poll(async () => {
+          const delta = (await probe(page, "compact-toggle-knob")).x - knob.x;
+          return [Math.floor(12 * zoom), Math.ceil(12 * zoom)].includes(delta);
+        }).toBe(true);
+        const onTrack = await probe(page, "compact-toggle-visual");
+        const onKnob = await probe(page, "compact-toggle-knob");
+        const on = await paintedPixels(page, [[onTrack.x + 4 * zoom, onTrack.y + onTrack.height / 2], [onKnob.x + onKnob.width / 2, onKnob.y + onKnob.height / 2]]);
+        expect(on.colors[0]).not.toEqual(off.colors[0]);
+        expect(on.colors[1]).toEqual([255, 255, 255]);
+        expectSnappedLength(onKnob.x - knob.x, 12 * zoom);
+        const requests = (await observed(page)).requests;
+        await page.keyboard.press("Tab"); await frames(page);
+        expect((await probe(page, "lane-compact-toggle")).focused).toBe(true);
+        expect((await observed(page)).requests).toBe(requests);
+        expect((await observed(page)).graphLaneCompact).toBe(false);
+        const hash = await reveal(page, "settings-copy-hash");
+        const branch = await probe(page, "settings-copy-branch");
+        expect(Math.abs(hash.width - branch.width)).toBeLessThanOrEqual(1);
+        expect(hash.selected).toBe(true);
+        expect(branch.selected).toBe(false);
+        const hashPaint = (await probe(page, "settings-copy-hash-label")).paint!;
+        const branchPaint = (await probe(page, "settings-copy-branch-label")).paint!;
+        expect(hashPaint.fontWeight).toBe(500);
+        expect(branchPaint.fontWeight).toBe(400);
+        expect(hashPaint.textColor).not.toBe(branchPaint.textColor);
+        // Original label-derived segments, not the removed 144pt-per-item bank.
+        expect(hash.width).toBeLessThan(100 * zoom);
+        await pane(page, "smart_commit");
+        for (const id of ["sc-provider-select", "sc-model-select"]) {
+          const popup = await reveal(page, id);
+          expect(popup.role).toBe("ComboBox");
+          expect(popup.height).toBeGreaterThanOrEqual(Math.floor(28 * zoom));
+          const visible = await probe(page, `${id}-visual`);
+          expectSnappedLength(visible.height, 24 * zoom);
+          const beforeOpen = (await observed(page)).requests;
+          await click(page, id);
+          await page.keyboard.press("Escape"); await frames(page);
+          expect((await probe(page, id)).focused).toBe(true);
+          expect((await observed(page)).requests).toBe(beforeOpen);
+        }
+        await pane(page, "appearance");
+        for (const id of ["zoom-dec", "zoom-inc", "compact-threshold-dec", "compact-threshold-inc", "settings-theme-reload", "settings-theme-guide"]) {
+          const control = await reveal(page, id);
+          const visual = await probe(page, `${id}-visual`);
+          expect(control.height).toBeGreaterThanOrEqual(Math.floor(28 * zoom));
+          expectSnappedLength(visual.height, 24 * zoom);
+          expect(visual.y).toBeGreaterThanOrEqual(control.y);
+          expect(visual.y + visual.height).toBeLessThanOrEqual(control.y + control.height);
+          if (id.endsWith("-dec") || id.endsWith("-inc")) expectSnappedLength(visual.width, 24 * zoom);
+        }
+        // A real button's hover/press are presentation-only until release.
+        const button = await reveal(page, "settings-theme-reload");
+        const visual = await probe(page, "settings-theme-reload-visual");
+        const sample = [visual.x + 7 * zoom, visual.y + visual.height / 2];
+        await page.mouse.move(2, 2); await frames(page);
+        const rest = await paintedPixels(page, [sample]);
+        const before = await observed(page);
+        await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2); await frames(page);
+        const hover = await paintedPixels(page, [sample]);
+        expect(hover.colors).not.toEqual(rest.colors);
+        await page.mouse.down(); await frames(page);
+        const pressed = await paintedPixels(page, [sample]);
+        expect(pressed.colors).not.toEqual(hover.colors);
+        expect((await observed(page)).requests).toBe(before.requests);
+        await page.mouse.move(2, 2); await page.mouse.up(); await frames(page);
+        expect((await observed(page)).requests).toBe(before.requests);
+        await info.attach("production-fidelity.png", { body: pressed.png, contentType: "image/png" });
+      });
+    }
+  }
+}
+
+test("production groups reserve identical Light/Dark border and separator geometry", async ({ page }) => {
+  await page.setViewportSize({ width: 715, height: 640 });
+  await boot(page);
+  const geometry: number[][] = [];
+  for (const appearance of ["apple-light", "apple-dark"]) {
+    await host(page, "appearance", appearance);
+    await pane(page, "graph");
+    const group = await reveal(page, "settings-graph-group");
+    const separator = await probe(page, "settings-graph-group-separator-0");
+    const first = await probe(page, "compact-toggle");
+    const second = await probe(page, "lane-compact-toggle");
+    expect(separator.height).toBe(1);
+    // 12pt row inset inside the identically reserved 1px outer border.
+    expect(separator.x - group.x).toBe(13);
+    expect(group.x + group.width - separator.x - separator.width).toBe(13);
+    expect(separator.y).toBeGreaterThanOrEqual(first.y + first.height);
+    expect(separator.y + separator.height).toBeLessThanOrEqual(second.y);
+    geometry.push([group.x, group.y, group.width, group.height, separator.x, separator.y, separator.width, separator.height, first.y, second.y]);
+    await page.mouse.move(2, 2); await frames(page);
+    const paint = await paintedPixels(page, [
+      [separator.x + separator.width / 2, separator.y],
+      [separator.x + separator.width / 2, separator.y - 2],
+      [group.x, group.y + group.height / 2],
+      [group.x + 2, group.y + group.height / 2],
+    ]);
+    expect(paint.colors[0]).not.toEqual(paint.colors[1]);
+    if (appearance === "apple-light") expect(paint.colors[2]).not.toEqual(paint.colors[3]);
+  }
+  expect(geometry[1]).toEqual(geometry[0]);
+});
+
+for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"]] as const) {
+  test(`sidebar overflow preserves original roles at 715x640 200%: ${language}`, async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 715, height: 640 });
+    await boot(page);
+    await host(page, "language", language);
+    await host(page, "appearance", appearance);
+    for (const zoom of [1, 1.67]) {
+      await host(page, "zoom", String(zoom));
+      const sidebar = await probe(page, "settings-sidebar");
+      expectSnappedLength(sidebar.width, 212 * zoom);
+      for (const destination of panes) {
+        const item = await probe(page, `settings-pane-${destination}`);
+        expectSnappedLength(item.height, 32 * zoom);
+      }
+    }
+    await host(page, "zoom", "2");
+    await pane(page, "appearance");
+    const viewport = await probe(page, "settings-sidebar");
+    expect(viewport.width).toBeLessThan(212 * 2);
+    const contains = (outer: Probe, inner: Probe) => {
+      expect(inner.x, `${inner.id} left`).toBeGreaterThanOrEqual(outer.x);
+      expect(inner.y, `${inner.id} top`).toBeGreaterThanOrEqual(outer.y);
+      expect(inner.x + inner.width, `${inner.id} right`).toBeLessThanOrEqual(outer.x + outer.width);
+      expect(inner.y + inner.height, `${inner.id} bottom`).toBeLessThanOrEqual(outer.y + outer.height);
+    };
+    const before = await observed(page);
+    const lastBefore = await probe(page, "settings-pane-general");
+    expect(lastBefore.y + lastBefore.height).toBeGreaterThan(viewport.y + viewport.height);
+    for (const [index, destination] of panes.entries()) {
+      const item = await probe(page, `settings-pane-${destination}`);
+      expect(item.focused).toBe(true);
+      expect(item.name.length).toBeGreaterThan(0);
+      expectSnappedLength(item.height, 64);
+      contains(viewport, item);
+      contains(viewport, await probe(page, `${item.id}-focus-ring`));
+      expect((await observed(page)).pane).toBe("appearance");
+      expect((await observed(page)).requests).toBe(before.requests);
+      if (index < panes.length - 1) {
+        await page.keyboard.press("ArrowDown"); await frames(page);
+      }
+    }
+    await page.keyboard.press("Enter"); await frames(page);
+    expect((await observed(page)).pane).toBe("general");
+    expect((await probe(page, "settings-pane-general")).selected).toBe(true);
+    await page.keyboard.press("Home"); await frames(page);
+    contains(viewport, await probe(page, "settings-pane-appearance-focus-ring"));
+    await page.keyboard.press("Enter"); await frames(page);
+    const firstBeforeWheel = await probe(page, "settings-pane-appearance");
+    const beforeWheel = (await observed(page)).requests;
+    await page.mouse.move(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
+    await page.mouse.wheel(0, 1000); await frames(page);
+    const browsed = await probe(page, "settings-pane-appearance");
+    expect(browsed.y).toBeLessThan(firstBeforeWheel.y);
+    contains(viewport, await probe(page, "settings-pane-general"));
+    await host(page, "reseed");
+    expect((await probe(page, "settings-pane-appearance")).y).toBeCloseTo(browsed.y);
+    expect((await observed(page)).requests).toBe(beforeWheel);
+    for (const destination of panes) {
+      await pane(page, destination);
+      const item = await probe(page, `settings-pane-${destination}`);
+      expect(item.selected).toBe(true);
+      contains(viewport, item);
+      await info.attach(`${destination}-200.png`, { body: await page.screenshot(), contentType: "image/png" });
+    }
+    await pane(page, "appearance");
+    for (const prefix of ["zoom", "compact-threshold"]) {
+      await reveal(page, `${prefix}-inc`);
+      const decrease = await probe(page, `${prefix}-dec`);
+      const increase = await probe(page, `${prefix}-inc`);
+      const value = await probe(page, `${prefix}-value`);
+      const detail = await probe(page, "settings-detail-scroll");
+      const row = await probe(page, prefix === "zoom" ? "settings-zoom-row" : "settings-threshold-row");
+      for (const control of [decrease, value, increase]) {
+        contains(detail, control);
+        contains(row, control);
+      }
+      expect(increase.x + increase.width - decrease.x).toBeGreaterThanOrEqual(224 - 0.5);
+      expect(Math.abs(decrease.y + decrease.height / 2 - increase.y - increase.height / 2)).toBeLessThanOrEqual(0.5);
+      await info.attach(`${prefix}-200.png`, { body: await page.screenshot(), contentType: "image/png" });
+    }
+  });
+}
+
+for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "apple-dark", 1.67]] as const) {
+  test(`production popup eligibility and live model catalogs: ${language} ${zoom}`, async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 715, height: 640 });
+    await boot(page);
+    await host(page, "language", language);
+    await host(page, "appearance", appearance);
+    await host(page, "zoom", String(zoom));
+    await pane(page, "smart_commit");
+    const beforeProvider = (await observed(page)).requests;
+    await click(page, "sc-provider-select");
+    const providers = (await observed(page)).controls.filter(control => control.role === "MenuItemRadio");
+    expect(providers.map(control => control.id)).toEqual(expect.arrayContaining([
+      "sc-provider-ollama", "sc-provider-claude-code", "sc-provider-codex",
+    ]));
+    expect(providers.filter(control => control.selected)).toHaveLength(1);
+    expect(providers.find(control => control.id === "sc-provider-claude-code")!.disabled).toBe(true);
+    await page.keyboard.press("ArrowUp"); await frames(page);
+    expect((await observed(page)).requests).toBe(beforeProvider);
+    await info.attach("provider-menu.png", { body: await page.screenshot(), contentType: "image/png" });
+    await page.keyboard.press("Enter"); await frames(page);
+    expect((await observed(page)).smartProvider).toBe("codex");
+    await click(page, "sc-provider-select");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter"); await frames(page);
+    expect((await observed(page)).smartProvider).toBe("ollama");
+    for (const count of [0, 1, 20]) {
+      const models = Array.from({ length: count }, (_, index) =>
+        `モデル-${index}-long-local-model-name-01234567890123456789`);
+      await host(page, "models", JSON.stringify(models));
+      const before = await observed(page);
+      const opener = await probe(page, "sc-model-select");
+      expect(opener.disabled).toBe(count === 0);
+      await click(page, "sc-model-select");
+      if (count === 0) {
+        expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
+        expect((await observed(page)).smartModel).toBe(before.smartModel);
+        expect((await observed(page)).requests).toBe(before.requests);
+        continue;
+      }
+      // The previous saved value remains visible but disabled, before the new
+      // eligible catalog. Real menu keys must skip it without reordering data.
+      if (before.smartModel && !models.includes(before.smartModel)) {
+        expect((await probe(page, `sc-model-${before.smartModel}`)).disabled).toBe(true);
+      }
+      await page.keyboard.press(count === 1 ? "ArrowDown" : "ArrowUp");
+      await frames(page);
+      expect((await observed(page)).smartModel).toBe(before.smartModel);
+      expect((await observed(page)).requests).toBe(before.requests);
+      await page.keyboard.press("Enter"); await frames(page);
+      expect((await observed(page)).smartModel).toBe(models.at(-1));
+      expect((await observed(page)).requests).toBe(before.requests + 1);
+      await click(page, "sc-model-select");
+      const rows = (await observed(page)).controls.filter(control => control.role === "MenuItemRadio");
+      expect(rows).toHaveLength(count);
+      expect(rows.filter(control => control.selected)).toHaveLength(1);
+      for (const [index, model] of models.entries()) {
+        const item = await reveal(page, `sc-model-${model}`);
+        expect(item.name).toBe(model);
+        expect(item.disabled).toBe(false);
+        if (index === 0 || index === models.length - 1) {
+          await info.attach(`models-${count}-${index}.png`, { body: await page.screenshot(), contentType: "image/png" });
+        }
+      }
+      const selected = (await observed(page)).smartModel;
+      await host(page, "models", "[]");
+      expect((await observed(page)).smartModel).toBe(selected);
+      expect((await probe(page, "sc-provider-select")).focused).toBe(true);
+      expect((await probe(page, "sc-model-select")).disabled).toBe(true);
+      expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
+    }
+    expect((await observed(page)).smartEnabled).toBe(false);
+    expect((await observed(page)).pendingConsent).toBe(false);
+  });
+}

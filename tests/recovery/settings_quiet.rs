@@ -55,6 +55,22 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                     crate::settings_controls::draw(cx, window);
                     crate::settings_controls::click(cx, window, "settings-pane-general");
                     let palette = theme::theme();
+                    // Independent PR1814 role oracle, not production kit helpers.
+                    let window_fill = if palette.dark {
+                        palette.bg_base
+                    } else {
+                        palette.panel
+                    };
+                    let card_fill = if palette.dark {
+                        fidelity_mix(palette.bg_base, palette.surface, 0.42)
+                    } else {
+                        palette.bg_base
+                    };
+                    let sidebar_fill = fidelity_mix(
+                        window_fill,
+                        palette.surface,
+                        if palette.dark { 0.22 } else { 0.35 },
+                    );
                     let heading =
                         crate::settings_controls::probe(cx, window, "settings-pane-title")
                             .expect("actual shared pane title is painted");
@@ -71,13 +87,13 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                     assert_eq!(paint.font_weight, FontWeight::BOLD);
                     assert_eq!(
                         paint.font_size,
-                        theme::scaled_px(13. * 16. / theme::BASE_REM_PX)
+                        theme::scaled_px(15. * 16. / theme::BASE_REM_PX)
                     );
-                    let (title, panel) = (luminance(palette.text_main), luminance(palette.panel));
+                    let (title, panel) = (luminance(palette.text_main), luminance(window_fill));
                     assert!((title.max(panel) + 0.05) / (title.min(panel) + 0.05) >= 4.5);
                     // Descriptions sit on the group fill; section content sits
                     // directly on the pane, without the removed nested cards.
-                    for background in [palette.bg_base, palette.panel] {
+                    for background in [card_fill, window_fill] {
                         let (label, fill) = (luminance(palette.text_sub), luminance(background));
                         assert!(
                             (label.max(fill) + 0.05) / (label.min(fill) + 0.05) >= 4.5,
@@ -130,15 +146,15 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                 sidebar.left() + gpui::px(2.),
                                 sidebar.top() + gpui::px(2.),
                             ),
-                            palette.surface,
+                            sidebar_fill,
                         ),
                         (
                             gpui::point(detail.left() + gpui::px(2.), detail.center().y),
-                            palette.panel,
+                            window_fill,
                         ),
                         (
                             gpui::point(group.left() + gpui::px(2.), group.center().y),
-                            palette.bg_base,
+                            card_fill,
                         ),
                     ];
                     cx.update_window(window, |_, window, _| {
@@ -197,6 +213,34 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         zoom,
                     );
                     let hit = crate::settings_controls::bounds(cx, window, language).unwrap();
+                    let selected_label =
+                        crate::settings_controls::probe(cx, window, &format!("{language}-label"))
+                            .expect("selected segment label is the actual production text");
+                    assert_eq!(
+                        selected_label
+                            .paint
+                            .expect("resolved selected text")
+                            .font_weight,
+                        FontWeight::MEDIUM,
+                    );
+                    let other_language = if lang == kagi::ui::i18n::Lang::En {
+                        "ja"
+                    } else {
+                        "en"
+                    };
+                    let unselected_label = crate::settings_controls::probe(
+                        cx,
+                        window,
+                        &format!("settings-language-{other_language}-label"),
+                    )
+                    .expect("unselected segment label");
+                    assert_eq!(
+                        unselected_label
+                            .paint
+                            .expect("resolved unselected text")
+                            .font_weight,
+                        FontWeight::NORMAL,
+                    );
                     let track =
                         crate::settings_controls::bounds(cx, window, "settings-language-visual")
                             .unwrap();
@@ -237,6 +281,15 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
         }
     }
     unmount(cx, app, window);
+}
+
+fn fidelity_mix(a: u32, b: u32, amount: f32) -> u32 {
+    let channel = |shift| {
+        let a = ((a >> shift) & 255) as f32;
+        let b = ((b >> shift) & 255) as f32;
+        (a + (b - a) * amount).round() as u32
+    };
+    (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
 fn assert_hover_fill(

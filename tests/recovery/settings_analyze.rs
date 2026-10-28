@@ -552,14 +552,15 @@ fn provider_unavailable_help(
             .bounds,
         "full provider help and unavailable reasons are visible without hover",
     );
+    click(cx, window, "sc-provider-select");
     for id in ["sc-provider-claude-code", "sc-provider-codex"] {
         let unavailable = crate::settings_controls::probe(cx, window, id).unwrap();
         assert!(unavailable.disabled && !unavailable.selected);
-        cx.update_window(window, |_, window, cx| {
-            view.update(cx, |view, cx| assert!(view.focus_control(id, window, cx)));
-        })
-        .unwrap();
-        crate::keyboard_nav::keys(cx, window, "space enter");
+        assert_eq!(unavailable.role, gpui::Role::MenuItemRadio);
+        // PopupMenu owns focus and skips disabled items. Navigate/confirm the
+        // only available provider, then reopen to exercise disabled pointer hits.
+        crate::keyboard_nav::keys(cx, window, "escape enter down down enter");
+        click(cx, window, "sc-provider-select");
         click(cx, window, id);
         let unchanged = crate::settings_controls::probe(cx, window, id).unwrap();
         assert!(
@@ -575,6 +576,7 @@ fn provider_unavailable_help(
             saved_provider
         );
     }
+    crate::keyboard_nav::keys(cx, window, "escape");
 }
 pub fn scenario_settings_analyze_reset_confirm(cx: &mut VisualTestAppContext) {
     matrix(cx, "analyze", reset_leg);

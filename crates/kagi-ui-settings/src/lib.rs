@@ -1,10 +1,13 @@
 //! The single production Settings renderer for native and browser hosts.
 //! Hosts own effects; effective seeds never emit requests or overwrite drafts.
 mod analyze;
+mod control_parts;
 mod controls;
 mod focus_ring;
+mod kit_style;
 mod model;
 mod panes;
+mod popups;
 mod theme_cards;
 use gpui::{prelude::*, *};
 use gpui_component::input::{InputEvent, InputState};
@@ -36,6 +39,12 @@ pub struct ControlPaint {
     pub text_color: Hsla,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct ControlReveal {
+    viewport: Size<Pixels>,
+    focused: bool,
+}
+
 pub struct SettingsView {
     snapshot: SettingsSnapshot,
     pane: Pane,
@@ -43,13 +52,15 @@ pub struct SettingsView {
     revision: u64,
     analyze: analyze::AnalyzeState,
     focus: BTreeMap<String, FocusHandle>,
-    revealed: BTreeMap<String, Rc<std::cell::Cell<bool>>>,
+    revealed: BTreeMap<String, Rc<std::cell::Cell<Option<ControlReveal>>>>,
     groups: BTreeMap<String, usize>,
     scroll: ScrollHandle,
-    theme_scroll: ScrollHandle,
+    sidebar_scroll: ScrollHandle,
+    theme_scroll: [ScrollHandle; 2],
     // Last presentation request, not another source of selected-theme state.
     theme_reveal: Option<(SharedString, usize, Option<usize>, f32, usize)>,
-    theme_viewport: Rc<std::cell::Cell<Size<Pixels>>>,
+    theme_viewport: [Rc<std::cell::Cell<Size<Pixels>>>; 2],
+    popup: Option<popups::SettingsPopup>,
     detail_slot: Option<DetailSlot>,
     content_measure: Option<ContentMeasure>,
     detail_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
@@ -83,9 +94,11 @@ impl SettingsView {
             revealed: BTreeMap::new(),
             groups: BTreeMap::new(),
             scroll: ScrollHandle::new(),
-            theme_scroll: ScrollHandle::new(),
+            sidebar_scroll: ScrollHandle::new(),
+            theme_scroll: std::array::from_fn(|_| ScrollHandle::new()),
             theme_reveal: None,
-            theme_viewport: Rc::default(),
+            theme_viewport: std::array::from_fn(|_| Rc::default()),
+            popup: None,
             detail_slot: None,
             content_measure: None,
             chrome_heights: Rc::new(RefCell::new((px(0.), px(0.)))),
@@ -117,6 +130,15 @@ impl SettingsView {
     }
     pub fn seed_effective(&mut self, snapshot: SettingsSnapshot, cx: &mut Context<Self>) {
         if !self.snapshot.same_effective(&snapshot) {
+            if !self
+                .snapshot
+                .themes
+                .iter()
+                .map(|theme| theme.key())
+                .eq(snapshot.themes.iter().map(|theme| theme.key()))
+            {
+                self.theme_reveal = None;
+            }
             self.snapshot = snapshot;
             cx.notify();
         }
@@ -216,6 +238,7 @@ impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(feature = "gui-e2e")]
         self.probes.borrow_mut().clear();
+        self.close_obsolete_popup(window, cx);
         self.repair_focus(window, cx);
         let sidebar = self.sidebar(window, cx);
         let content = self.render_pane(window, cx);
@@ -225,8 +248,8 @@ impl Render for SettingsView {
             canvas(
                 move |mut bounds, window, cx| {
                     let (title, sidebar) = *chrome.borrow();
-                    bounds.size.height =
-                        (bounds.size.height + title + controls::pt(36.)).max(sidebar);
+                    bounds.size.height = (bounds.size.height + title + kit_style::pt(20.))
+                        .max(sidebar + kit_style::pt(16.));
                     if let Some(measure) = measure {
                         measure(bounds, window, cx);
                     }
@@ -283,7 +306,9 @@ impl Render for SettingsView {
                                 detail.style().restrict_scroll_to_axis = Some(true);
                                 detail
                             })
-                            .p(controls::pt(18.))
+                            .pl(kit_style::pt(kit_style::metrics::DETAIL_PADDING_LEFT))
+                            .pr(kit_style::pt(kit_style::metrics::DETAIL_PADDING_RIGHT))
+                            .pb(kit_style::pt(20.))
                             .child(content),
                     )
                     // Measure the fixed viewport, not a child translated by scroll.
@@ -311,9 +336,9 @@ impl Render for SettingsView {
             .flex_1()
             .min_h_0()
             .flex()
-            .bg(rgb(kagi_ui_core::theme::theme().panel))
-            .text_color(rgb(kagi_ui_core::theme::theme().text_main))
-            .text_size(controls::pt(13.))
+            .bg(rgb(kit_style::ink::window()))
+            .text_color(kit_style::ink::text())
+            .text_size(kit_style::pt(kit_style::metrics::BODY))
             .font(kagi_ui_core::theme::ui_font())
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let direction = match event.keystroke.key.as_str() {
@@ -339,7 +364,7 @@ impl Render for SettingsView {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(kit_style::detail_min_width())
                     .flex()
                     .flex_col()
                     .child(
@@ -348,8 +373,10 @@ impl Render for SettingsView {
                             .relative()
                             .role(Role::Heading)
                             .flex_shrink_0()
-                            .px(controls::pt(18.))
-                            .py(controls::pt(14.))
+                            .h(kit_style::pt(52.))
+                            .px(kit_style::pt(14.))
+                            .flex()
+                            .items_center()
                             .child(
                                 canvas(
                                     move |bounds, _, _| {
@@ -362,6 +389,7 @@ impl Render for SettingsView {
                                 .left_0()
                                 .size_full(),
                             )
+                            .text_size(kit_style::pt(kit_style::metrics::TITLE))
                             .font_weight(FontWeight::BOLD)
                             .child(self.pane.title())
                             .children(cfg!(feature = "gui-e2e").then(|| {
@@ -378,5 +406,6 @@ impl Render for SettingsView {
                     )
                     .child(viewport),
             )
+            .children(self.popup_element())
     }
 }

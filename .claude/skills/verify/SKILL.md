@@ -16,7 +16,7 @@ the Git states needed to exercise safety-sensitive flows.
 
 The production Settings boundary is also exercised in the browser: build with
 `CARGO_BUILD_JOBS=4 bash scripts/build-web.sh`, then run
-`cd e2e && npx playwright test settings.spec.ts --workers=1`.
+`cd e2e && npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1`.
 The `?story=settings` verification host mounts `kagi-ui-settings::SettingsView`,
 the same entity used by native Settings; it does not copy its input handlers.
 Its deterministic adapter records typed requests and seeds effective values
@@ -42,18 +42,25 @@ Long names also require the painted `StyledText` layout's actual ellipsis text
 and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
 Do not replace this with the original full label: a correct 138px truncation
 measurement can still be hard-clipped if the final text leaf is allocated 165px.
-The compact theme chooser is a horizontal radio group, not a value slider.
-Before native compilation, run the scoped browser cases:
-`npx playwright test settings.spec.ts --workers=1 --grep 'horizontal theme chooser|short theme captions|composite numeric controls|pale accent active focus'`.
+The compact chooser has two independent Light/Dark horizontal strips, one
+global radio selection and Light-then-Dark keyboard order, not a value slider.
+Classify from the fixture's actual `themeCatalog.dark`, never names or colors.
+Before native compilation, run the focused production fidelity and chooser cases:
+`npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1 --grep 'production (kit|groups|popup)|sidebar overflow|horizontal theme chooser|Smart Commit|pale accent|selected hover|captions|numeric controls'`.
 The new chooser matrix uses715×640 at EN/JA and100%/167%. Compare measured
 RadioButton count with the host catalog, visit every card using real arrow keys,
 and sample both pixels of all four first/last focus-ring edges from one PNG.
 Home/End and Space retain their focus/selection semantics. Real horizontal
-wheel browsing must survive unchanged seeds; vertical wheel over the strip
-must still move the form without changing its horizontal position. Check
-selected reveal after pane return, host reopen and actual viewport resize,
-all eight sidebar destinations, and lower Appearance content. Caption tests
-must first reveal each real card rather than sampling offscreen grid coordinates.
+wheel browsing must survive unchanged seeds and focus loss to the already-selected
+Appearance destination. Browsing either strip must not move the other; vertical
+wheel over either strip must still move the form without changing its X offset.
+Check selected reveal after pane return, host reopen, same-count catalog change
+and actual viewport resize (including640×640/167%). The200% sidebar case keeps
+the715×640 host and original row/tile/control metrics: wheel and keyboard must
+reach all eight destinations, reveal the complete focus ring, and leave the
+whole numeric unit inside its row/detail. Normal/167% sidebar geometry stays
+unchanged. Caption tests must reveal each real card rather than sampling
+offscreen grid coordinates.
 Native `settings_window_screen_fit` additionally bounds content height to640;
 its existing saved-frame/display/position and final-control reachability
 assertions remain. The original tall-grid captures are historical, not approval
@@ -70,7 +77,32 @@ top/bottom insets against the actual hit bounds (≤0.5px per edge). GPUI's pinn
 `taffy.rs:342-403` snaps absolute near/far edges separately: at 167% the observed
 hit47/track41/pill33 satisfies those edges, although41 differs from24×1.67 by0.92.
 Do not repin41 or widen a height tolerance to hide this distinction. Wrapped
-labels may grow; the 18-point mini switch is separate and unchanged.
+labels may grow. The restored final-kit small switch is 28×16 with a 12-point
+white knob; its transparent hit target is at least 28 points, not the old 18-point
+track. Compare actual OFF/ON pixels, not a theme token that can make OFF blue.
+`settings-fidelity.spec.ts` additionally checks original 24-point capsule/stepper
+visuals, equal label-derived segment widths, selected text emphasis, card fills,
+one-pixel non-layout hairlines and real rest/hover/pressed/focus paint. One screenshot
+per unchanged state supplies all pixel samples; do not substitute accessible text
+for visible caption or component-quality evidence.
+New DPR1 fixed-role length assertions accept only floor/ceil of the intended
+scaled length because the two absolute edges snap independently;100% and200%
+remain exact. This does not loosen the existing per-edge segment, focus-ring,
+contrast or containment assertions. Wait for actual switch motion to settle
+before sampling its final knob, rather than disabling motion to make a test pass.
+
+Provider/model choices use the real popup: opening and arrow navigation emit no
+preference, Escape returns focus, and only an enabled confirmed item changes the
+host. Cover0/1/20 models, disabled-first/wrap, inert disabled openers and stale
+open catalogs. An unavailable saved model remains readable in its disabled
+opener; it is not an operable all-disabled menu. The latter's keyboard contract
+belongs to the separately exercised fork menu suite.
+The native `settings_provider_keys` consumer activates the existing AccessKit
+adapter and inspects actual `MenuItemRadio` roots/full labels/toggled state and
+owner-scoped active descendants, not recorder children. The pinned debug JSON
+does not serialize disabled flags; disabled behavior is checked by real input,
+and raw-node disabled-state evidence belongs to the separately identified fork
+renderer test. Do not relabel that diagnostic as OS accessibility delivery.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
 Run the focused browser paint/geometry tests before heavy native gates.
@@ -92,7 +124,7 @@ settings_window_screen_fit` and real lower-pane images. Do not repeat unchanged
 window-lifetime scenarios solely for a row-allocation change; retain their exact
 prior source/artifact evidence instead.
 The pale-accent regression injects an effective Yellow snapshot, uses real
-keyboard focus on an unselected theme, ON switch, disabled provider and segment.
+keyboard focus on an unselected theme, ON switch, disabled capsule and segment.
 It measures the actual outer decoration and samples both pixels of every edge
 against all three gap pixels, accounting for the theme card's existing border.
 Reverse segment and sidebar navigation put focus immediately before a selected
@@ -1356,8 +1388,10 @@ For #1298 / #1299 use
 with KEEP_GOING; run `settings_` for the neighboring baseline. These two
 scenarios explicitly select the production 715px macOS Settings host in
 EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
-shared renderer's RadioButton name/selected/disabled probes and real Enter/Space
-down/up after focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+shared renderer's real ComboBox triggers and opened GPUI MenuItem
+name/checked/disabled probes. Enter/Space opens, Up/Down traverses enabled
+choices, Enter commits and Escape returns focus without changing values.
+Exercise 0/1/20 models, unavailable CLI refusal, stale-menu closure, persisted
 values and no generation modal. Analyze clicks actual visible/scroll-reachable
 Save/Reset controls against a directory at the target path and a mode-000
 settings directory: errors retain the draft/dirty marker and original bytes;

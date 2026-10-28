@@ -187,21 +187,24 @@ in a multi-row grid, and a shorter default Settings window. Extend the existing
 second renderer, preference owner, carousel manager or stored scroll position.
 The shared/native/browser boundary in ADR-0121 is unchanged.
 
-The role remains an open-density Settings choice. Keep the approved palette
-cards, captions, selected checkmark and fixed category tiles; the multi-row
-grid is no longer the layout reference. Reuse the existing Editor tab-strip
-horizontal scrollbar and nearest-item reveal pattern. This is a continuously
-scrollable radio group, not a numeric slider, auto-playing carousel or pager.
+The role remains an open-density Settings choice. Preserve the final PR #1814
+144-point palette cards, centered captions, preview selection ring and fixed-hue
+tiles, rather than the first port's approximations. The owner's subsequent
+reference splits Light Mode above Dark Mode: both labeled horizontal strips
+remain mounted, classified by `Theme.dark`. Reuse the existing Editor tab-strip
+scrollbar and nearest-item reveal pattern. This is one continuously scrollable
+radio group, not dual preferences, a numeric slider, auto-playing carousel or pager.
 Apple's Scroll views guidance says: “It's alright to place a horizontal scroll
 view inside a vertical scroll view (or vice versa), however.”
 
 State contract: rest/hover/pressed use the existing card and activation handler;
-selection remains the effective theme, while focus is independent. Arrow and
-Home/End navigation reveals the focused card including its complete ring;
-Space/Return applies that choice. Selected-theme reveal runs on opening,
-returning to Appearance, changed selection/catalog/zoom and viewport resize,
-not ordinary redraws or manual horizontal browsing. First and last cards keep
-local ring clearance. Horizontal gestures and the scrollbar browse themes;
+selection remains the single effective theme, while focus is independent.
+Global Light-then-Dark arrows and Home/End reveal the focused card including its
+complete ring; Space/Return applies that choice. Each strip owns its horizontal
+offset. Selected-theme reveal runs on opening, returning to Appearance, changed
+selection/catalog/zoom and viewport resize, not ordinary redraws, focus loss or
+manual browsing. First and last cards keep local ring clearance. Horizontal
+gestures and the scrollbar browse the targeted strip without moving the other;
 vertical wheel input still scrolls the containing form. Full names, constrained
 caption ellipses, palette swatches and low-contrast explanations remain.
 Theme loading/error and unavailable filesystem actions remain native-adapter
@@ -214,7 +217,13 @@ where possible and content-driven shrinkage. Previously auto-saved tall heights
 are clamped, not discarded; position, display identity, unknown settings and
 normal bounds/quit flushing remain intact. The window was already non-resizable,
 so this does not remove user resizing. Keep its 715-point width and native chrome.
-Browser evidence must exercise 715×640 at EN/JA and 100%/167%, all eight sidebar
-destinations, horizontal endpoints, selected/focused reveal, manual-scroll
-retention, captions and lower Appearance rows before another native build.
+Browser evidence must exercise 715×640 at EN/JA and 100%/167%, the existing
+640×640/167% resize, and 715×640/200% overflow. Keep the original sidebar metrics
+at the normal/167% baseline; at 200%, all eight destinations must be reachable
+by wheel and keyboard with the focused/selected row and its ring revealed.
+The sidebar may flex below its 55% ceiling to preserve whole detail controls.
+Verify horizontal endpoints, selected/focused reveal, manual-scroll retention,
+same-count catalog replacement, captions and lower Appearance rows before
+another native build. The actual host has no explicit minimum width: these
+bounded cases do not claim support for arbitrary smaller OS display widths.
 

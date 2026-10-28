@@ -103,12 +103,32 @@ fn theme_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
     assert_eq!(ax.role, gpui::Role::RadioButton);
     assert_eq!(ax.name, theme::theme().display_name());
     assert!(ax.selected);
+    assert!((ax.bounds.size.width - gpui::px(144. * theme::zoom())).abs() <= gpui::px(0.5));
+    assert_eq!(
+        probe(cx, app, &format!("settings-theme-caption-text-{slug}"))
+            .paint
+            .expect("actual selected caption text")
+            .font_weight,
+        gpui::FontWeight::SEMIBOLD,
+    );
     focus_theme(cx, app, window);
     keys(cx, window, "right");
     draw(cx, window);
     let target = focused(cx, app).expect("theme card retains keyboard focus");
     assert_ne!(target, id);
     assert!(!probe(cx, app, &target).selected, "focus is not selection");
+    let target_slug = target.strip_prefix("settings-theme-").unwrap();
+    assert_eq!(
+        probe(
+            cx,
+            app,
+            &format!("settings-theme-caption-text-{target_slug}")
+        )
+        .paint
+        .expect("actual unselected caption text")
+        .font_weight,
+        gpui::FontWeight::NORMAL,
+    );
     assert_eq!(
         theme::theme().slug,
         slug,

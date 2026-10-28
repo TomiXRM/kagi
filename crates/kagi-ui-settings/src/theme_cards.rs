@@ -1,11 +1,24 @@
 //! Palette-derived theme choices; preview colors never substitute invented art.
-use super::{controls::pt, *};
+use super::{
+    kit_style::{ink, metrics, pt},
+    *,
+};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use kagi_ui_core::{theme::theme, tooltip::HoverTooltip as _};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 impl SettingsView {
     pub(crate) fn theme_cards(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let themes = self.snapshot.themes.clone();
+        // Stable partition: keyboard order is the same as visual order.
+        let themes: Vec<_> = [false, true]
+            .into_iter()
+            .flat_map(|dark| {
+                self.snapshot
+                    .themes
+                    .iter()
+                    .filter(move |palette| palette.dark == dark)
+                    .cloned()
+            })
+            .collect();
         let ids: Vec<_> = themes
             .iter()
             .map(|theme| format!("settings-theme-{}", theme.slug))
@@ -19,9 +32,8 @@ impl SettingsView {
                 .get(id)
                 .is_some_and(|focus| focus.is_focused(window))
         });
-        if focused_index.is_none() {
-            self.groups.insert("themes".into(), selected_index);
-        }
+        self.groups
+            .insert("themes".into(), focused_index.unwrap_or(selected_index));
         let selection_changed =
             self.theme_reveal
                 .as_ref()
@@ -33,19 +45,16 @@ impl SettingsView {
         } else {
             focused_index.unwrap_or(selected_index)
         };
-        if self
-            .theme_reveal
-            .as_ref()
-            .is_none_or(|(slug, selected, focused, zoom, count)| {
-                slug != &self.snapshot.theme_slug
-                    || *selected != selected_index
-                    || (focused_index.is_some() && *focused != focused_index)
-                    || *zoom != self.snapshot.zoom
-                    || *count != themes.len()
-            })
-        {
-            self.theme_scroll.scroll_to_item(target);
-        }
+        let reveal =
+            self.theme_reveal
+                .as_ref()
+                .is_none_or(|(slug, selected, focused, zoom, count)| {
+                    slug != &self.snapshot.theme_slug
+                        || *selected != selected_index
+                        || (focused_index.is_some() && *focused != focused_index)
+                        || *zoom != self.snapshot.zoom
+                        || *count != themes.len()
+                });
         self.theme_reveal = Some((
             self.snapshot.theme_slug.clone(),
             selected_index,
@@ -53,249 +62,374 @@ impl SettingsView {
             self.snapshot.zoom,
             themes.len(),
         ));
-        let mut cards = div()
+        let mut sections = div()
             .id("settings-theme-cards")
             .role(Role::RadioGroup)
             .aria_label(Msg::SettingsTheme.t())
             .flex()
-            .flex_nowrap()
-            .items_start()
-            .gap(pt(12.))
+            .flex_col()
+            .gap(pt(16.))
             .min_w_0()
-            .w_full()
-            .overflow_x_scroll()
-            .track_scroll(&self.theme_scroll)
-            .map(|mut strip| {
-                // Vertical gestures belong to the containing Settings form.
-                strip.style().restrict_scroll_to_axis = Some(true);
-                strip
-            });
-        for (index, palette) in themes.iter().enumerate() {
-            let selected = palette.slug.as_ref() == self.snapshot.theme_slug.as_ref();
-            let rgb_tuple =
-                |(r, g, b): (u8, u8, u8)| ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-            let term_bg = rgb_tuple(palette.term_bg);
-            let term_fg = rgb_tuple(palette.term_fg);
-            let readable = contrast(palette.bg_base, palette.text_main) >= 4.5
-                && contrast(term_bg, term_fg) >= 4.5;
-            let preview = div()
-                .rounded(pt(5.))
-                .p(pt(10.))
-                .h(pt(74.))
-                .flex()
-                .justify_between()
-                .bg(rgb(palette.bg_base))
-                .when(readable, |el| {
-                    el.child(
-                        div()
-                            .text_size(pt(22.))
-                            .text_color(rgb(palette.text_main))
-                            .child("Aa"),
-                    )
-                    .child(
-                        div()
-                            .p(pt(6.))
-                            .rounded(pt(3.))
-                            .bg(rgb(term_bg))
-                            .text_color(rgb(term_fg))
-                            .child("~/"),
-                    )
-                })
-                .when(!readable, |el| {
-                    el.child(div().w_full().h_full().bg(rgb(term_bg)))
-                });
-            let name: SharedString =
-                kagi_domain::text_safety::sanitize_control_bytes(palette.display_name()).into();
-            let caption_text = StyledText::new(name.clone());
-            #[cfg(feature = "gui-e2e")]
-            let caption_text_probe = {
-                let layout = caption_text.layout().clone();
-                let probes = self.probes.clone();
-                let id = format!("settings-theme-caption-text-{}", palette.slug);
-                let name = name.to_string();
-                Some(
-                    canvas(
-                        |_, _, _| (),
-                        move |_, _, window, _| {
-                            let style = window.text_style();
-                            probes.borrow_mut().insert(
-                                id.clone(),
-                                ControlProbe {
-                                    id: id.clone(),
-                                    bounds: layout.bounds(),
-                                    focused: false,
-                                    selected: false,
-                                    disabled: false,
-                                    role: Role::Label,
-                                    name: name.clone(),
-                                    value: layout.text(),
-                                    paint: Some(ControlPaint {
-                                        font_size: style.font_size.to_pixels(window.rem_size()),
-                                        font_weight: style.font_weight,
-                                        text_color: style.color,
-                                    }),
-                                },
-                            );
-                        },
-                    )
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size(px(0.))
-                    .into_any_element(),
+            .w_full();
+        let light_count = themes.iter().take_while(|palette| !palette.dark).count();
+        for mode in 0..2 {
+            let (start, end, label, scroll_id) = if mode == 0 {
+                (
+                    0,
+                    light_count,
+                    Msg::SettingsLightMode,
+                    "settings-themes-light-scroll",
+                )
+            } else {
+                (
+                    light_count,
+                    themes.len(),
+                    Msg::SettingsDarkMode,
+                    "settings-themes-dark-scroll",
                 )
             };
-            #[cfg(not(feature = "gui-e2e"))]
-            let caption_text_probe = None::<AnyElement>;
-            #[cfg(feature = "gui-e2e")]
-            let caption_probe = Some(self.measured(
-                format!("settings-theme-caption-{}", palette.slug),
-                Role::Label,
-                name.to_string(),
-                String::new(),
-                false,
-                false,
-                false,
-            ));
-            #[cfg(not(feature = "gui-e2e"))]
-            let caption_probe = None::<AnyElement>;
-            let card = self
-                .control(
-                    ids[index].clone(),
-                    name.clone(),
-                    selected,
-                    true,
-                    Role::RadioButton,
-                    theme().panel,
-                    px(2.),
-                    SettingsIntent::Theme(palette.slug.to_string().into()),
-                    Some(("themes".into(), index, ids.clone())),
-                    window,
-                    cx,
-                )
-                .w(pt(152.))
-                .min_w_0()
-                .max_w_full()
-                .p(pt(5.))
+            let target_in_strip = (start..end).contains(&target);
+            let local_target = target.saturating_sub(start);
+            if reveal && target_in_strip {
+                self.theme_scroll[mode].scroll_to_item(local_target);
+            }
+            let mut cards = div()
+                .id(SharedString::from(format!("{scroll_id}-items")))
                 .flex()
-                .flex_col()
-                .gap(pt(6.))
-                .border_2()
-                .border_color(if selected {
-                    rgb(self.snapshot.effective_accent)
-                } else {
-                    rgb(theme().surface)
-                })
-                .child(preview)
-                .child(
-                    div().flex().gap(pt(4.)).children(
-                        [
-                            ("HEAD", palette.color_head),
-                            ("Branch", palette.color_branch),
-                            ("Remote", palette.color_remote),
-                            ("Tag", palette.color_tag),
-                        ]
-                        .into_iter()
-                        .map(|(label, color)| {
-                            div()
-                                .id(SharedString::from(format!(
-                                    "settings-theme-swatch-{}-{label}",
-                                    palette.slug
-                                )))
-                                .role(Role::Image)
-                                .aria_label(format!("{label}: #{color:06x}"))
-                                .size(pt(12.))
-                                .rounded_full()
-                                .border_1()
-                                .border_color(rgb(theme().text_main))
-                                .bg(rgb(color))
-                        }),
-                    ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .justify_between()
-                        .gap(pt(4.))
-                        .child(
-                            div()
-                                .relative()
-                                // Stretch the text leaf to the allocated caption width,
-                                // rather than retaining its block max-content width.
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .children(caption_probe)
-                                .child(caption_text)
-                                .children(caption_text_probe),
-                        )
-                        .when(selected, |el| el.child("✓")),
-                )
-                .when(!readable, |el| {
-                    el.child(
-                        div()
-                            .text_size(pt(11.5))
-                            .child(Msg::SettingsThemeContrastWarning.t()),
-                    )
+                .flex_nowrap()
+                .items_start()
+                .gap(pt(10.))
+                .min_w_0()
+                .w_full()
+                .overflow_x_scroll()
+                .track_scroll(&self.theme_scroll[mode])
+                .map(|mut strip| {
+                    // Vertical gestures belong to the containing Settings form.
+                    strip.style().restrict_scroll_to_axis = Some(true);
+                    strip
                 });
-            // The scroll item includes the complete 2px ring and 3px gap.
-            // A transparent wrapper is not another visual card.
-            cards = cards.child(
-                div()
-                    .w(pt(152.) + px(14.))
-                    .max_w_full()
+            for (index, palette) in themes.iter().enumerate().take(end).skip(start) {
+                let selected = palette.slug.as_ref() == self.snapshot.theme_slug.as_ref();
+                let rgb_tuple =
+                    |(r, g, b): (u8, u8, u8)| ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                let term_bg = rgb_tuple(palette.term_bg);
+                let term_fg = rgb_tuple(palette.term_fg);
+                let readable = contrast(palette.bg_base, palette.text_main) >= 4.5
+                    && contrast(term_bg, term_fg) >= 4.5;
+                let preview = div()
+                    .w_full()
+                    .rounded(pt(metrics::GROUP_RADIUS))
+                    .p(pt(10.))
+                    .h(pt(88.))
                     .flex_shrink_0()
-                    .p(px(7.))
-                    .child(card.hover_tooltip(
-                        SharedString::from(format!("settings-theme-name-{}", palette.slug)),
-                        name,
-                    )),
-            );
-        }
-        let viewport = self.theme_viewport.clone();
-        let scroll = self.theme_scroll.clone();
-        let resize = canvas(
-            move |bounds, window, _| {
-                if viewport.replace(bounds.size) != bounds.size {
-                    scroll.scroll_to_item(target);
-                    window.on_next_frame(|window, _| window.refresh());
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
-        let persistent =
-            gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling;
-        div()
-            .id("settings-themes-area")
-            .relative()
-            .min_w_0()
-            .w_full()
-            .when(persistent, |area| area.pb(px(16.)))
-            .child(cards)
-            .child(resize)
-            .children(cfg!(feature = "gui-e2e").then(|| {
-                self.measured(
-                    "settings-themes-scroll".into(),
-                    Role::Group,
-                    Msg::SettingsTheme.t().into(),
+                    .flex()
+                    .flex_col()
+                    .justify_between()
+                    .bg(rgb(palette.bg_base))
+                    .border_1()
+                    .border_color(rgb(palette.text_muted))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .when(readable, |el| {
+                                el.child(
+                                    div()
+                                        .text_size(pt(25.))
+                                        .text_color(rgb(palette.text_main))
+                                        .child("Aa"),
+                                )
+                            })
+                            .when(!readable, |el| {
+                                el.child(
+                                    div()
+                                        .text_size(pt(metrics::SECONDARY))
+                                        .role(Role::Label)
+                                        .aria_label(Msg::SettingsThemeContrastWarning.t())
+                                        .text_color(ink::text())
+                                        .bg(rgb(ink::window()))
+                                        .rounded(pt(3.))
+                                        .px(pt(4.))
+                                        .child("!")
+                                        .hover_tooltip(
+                                            SharedString::from(format!(
+                                                "settings-theme-contrast-{}",
+                                                palette.slug
+                                            )),
+                                            SharedString::from(
+                                                Msg::SettingsThemeContrastWarning.t(),
+                                            ),
+                                        ),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(pt(6.))
+                                    .child(
+                                        div()
+                                            .px(pt(5.))
+                                            .h(pt(26.))
+                                            .flex()
+                                            .items_center()
+                                            .rounded(pt(5.))
+                                            .bg(rgb(term_bg))
+                                            .text_color(rgb(term_fg))
+                                            .text_size(pt(16.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .when(readable, |el| el.child("~/")),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(pt(10.))
+                                            .h(pt(26.))
+                                            .rounded(pt(3.))
+                                            .bg(rgb(rgb_tuple(palette.term_cursor))),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div().flex().items_center().justify_between().children(
+                            [
+                                ("black", palette.term_black),
+                                ("red", palette.term_red),
+                                ("green", palette.term_green),
+                                ("yellow", palette.term_yellow),
+                                ("blue", palette.term_blue),
+                                ("magenta", palette.term_magenta),
+                                ("cyan", palette.term_cyan),
+                                ("white", palette.term_white),
+                            ]
+                            .into_iter()
+                            .map(|(label, color)| {
+                                let color = rgb_tuple(color);
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "settings-theme-swatch-{}-{label}",
+                                        palette.slug
+                                    )))
+                                    .role(Role::Image)
+                                    .aria_label(format!("{label}: #{color:06x}"))
+                                    .size(pt(11.))
+                                    .flex_shrink_0()
+                                    .rounded(pt(6.))
+                                    .bg(rgb(color))
+                            }),
+                        ),
+                    );
+                let name: SharedString =
+                    kagi_domain::text_safety::sanitize_control_bytes(palette.display_name()).into();
+                let caption_text = StyledText::new(name.clone());
+                #[cfg(feature = "gui-e2e")]
+                let caption_text_probe = {
+                    let layout = caption_text.layout().clone();
+                    let probes = self.probes.clone();
+                    let id = format!("settings-theme-caption-text-{}", palette.slug);
+                    let name = name.to_string();
+                    Some(
+                        canvas(
+                            |_, _, _| (),
+                            move |_, _, window, _| {
+                                let style = window.text_style();
+                                probes.borrow_mut().insert(
+                                    id.clone(),
+                                    ControlProbe {
+                                        id: id.clone(),
+                                        bounds: layout.bounds(),
+                                        focused: false,
+                                        selected: false,
+                                        disabled: false,
+                                        role: Role::Label,
+                                        name: name.clone(),
+                                        value: layout.text(),
+                                        paint: Some(ControlPaint {
+                                            font_size: style.font_size.to_pixels(window.rem_size()),
+                                            font_weight: style.font_weight,
+                                            text_color: style.color,
+                                        }),
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size(px(0.))
+                        .into_any_element(),
+                    )
+                };
+                #[cfg(not(feature = "gui-e2e"))]
+                let caption_text_probe = None::<AnyElement>;
+                #[cfg(feature = "gui-e2e")]
+                let caption_probe = Some(self.measured(
+                    format!("settings-theme-caption-{}", palette.slug),
+                    Role::Label,
+                    name.to_string(),
                     String::new(),
                     false,
                     false,
                     false,
-                )
-            }))
-            .child(
-                Scrollbar::horizontal(&self.theme_scroll)
-                    .id("settings-themes-scrollbar")
-                    .when(persistent, |bar| bar.scrollbar_show(ScrollbarShow::Always)),
+                ));
+                #[cfg(not(feature = "gui-e2e"))]
+                let caption_probe = None::<AnyElement>;
+                let card = self
+                    .control(
+                        ids[index].clone(),
+                        name.clone(),
+                        selected,
+                        true,
+                        Role::RadioButton,
+                        ink::window(),
+                        px(0.),
+                        16.,
+                        Some(SettingsIntent::Theme(palette.slug.to_string().into())),
+                        Some(("themes".into(), index, ids.clone())),
+                        window,
+                        cx,
+                    )
+                    .w(pt(super::kit_style::metrics::THEME_CARD_WIDTH))
+                    .h(pt(146.))
+                    .min_w_0()
+                    .rounded(pt(16.))
+                    .p(px(2.))
+                    .hover(|style| style.bg(rgb(ink::control_hover())))
+                    .active(|style| style.bg(rgb(ink::control_pressed())))
+                    .flex()
+                    .flex_col()
+                    .gap(pt(5.))
+                    .child(
+                        div()
+                            .rounded(pt(metrics::GROUP_RADIUS + 4.))
+                            .p(pt(2.))
+                            .border_2()
+                            .border_color(if selected {
+                                rgb(self.snapshot.effective_accent)
+                            } else {
+                                rgba(0)
+                            })
+                            .child(preview),
+                    )
+                    .child(
+                        div()
+                            .relative()
+                            // Stretch the styled leaf so ellipsis is genuinely painted.
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .min_w_0()
+                            .text_center()
+                            .text_size(pt(metrics::SECONDARY))
+                            .line_height(pt(16.))
+                            .text_color(if selected {
+                                ink::text()
+                            } else {
+                                ink::secondary()
+                            })
+                            .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                            .truncate()
+                            .children(caption_probe)
+                            .child(caption_text)
+                            .children(caption_text_probe),
+                    );
+                // The scroll item includes the complete 2px ring and 3px gap.
+                // A transparent wrapper is not another visual card.
+                cards = cards.child(
+                    div()
+                        .w(pt(super::kit_style::metrics::THEME_CARD_WIDTH)
+                            + px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN * 2.))
+                        .flex_shrink_0()
+                        .p(px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN))
+                        .child(card.hover_tooltip(
+                            SharedString::from(format!("settings-theme-name-{}", palette.slug)),
+                            name,
+                        )),
+                );
+            }
+            let viewport = self.theme_viewport[mode].clone();
+            let scroll = self.theme_scroll[mode].clone();
+            let detail_scroll = self.scroll.clone();
+            let resize = canvas(
+                move |bounds, window, cx| {
+                    let resized = viewport.replace(bounds.size) != bounds.size;
+                    if target_in_strip && (reveal || resized) {
+                        scroll.scroll_to_item(local_target);
+                        // Reuse the detail owner; never focus or reset manual browsing.
+                        let visible = detail_scroll.bounds();
+                        let margin = px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN);
+                        let delta = if bounds.top() < visible.top() + margin {
+                            visible.top() + margin - bounds.top()
+                        } else if bounds.bottom() > visible.bottom() - margin {
+                            visible.bottom() - margin - bounds.bottom()
+                        } else {
+                            px(0.)
+                        };
+                        let old = detail_scroll.offset();
+                        let offset = point(
+                            old.x,
+                            (old.y + delta).clamp(-detail_scroll.max_offset().y, px(0.)),
+                        );
+                        if offset != old {
+                            let detail_scroll = detail_scroll.clone();
+                            window.defer(cx, move |window, _| {
+                                detail_scroll.set_offset(offset);
+                                window.refresh();
+                            });
+                        }
+                        window.on_next_frame(|window, _| window.refresh());
+                    }
+                },
+                |_, _, _, _| {},
             )
-            .into_any_element()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full();
+            let persistent =
+                gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling;
+            let area = div()
+                .id(SharedString::from(scroll_id))
+                .relative()
+                .min_w_0()
+                .w_full()
+                .when(persistent, |area| area.pb(px(16.)))
+                .child(cards)
+                .child(resize)
+                .children(cfg!(feature = "gui-e2e").then(|| {
+                    self.measured(
+                        scroll_id.into(),
+                        Role::Group,
+                        label.t().into(),
+                        String::new(),
+                        false,
+                        false,
+                        false,
+                    )
+                }))
+                .child(
+                    Scrollbar::horizontal(&self.theme_scroll[mode])
+                        .id(SharedString::from(format!("{scroll_id}-scrollbar")))
+                        .when(persistent, |bar| bar.scrollbar_show(ScrollbarShow::Always)),
+                );
+            sections = sections.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .w_full()
+                    .gap(pt(6.))
+                    .child(
+                        div()
+                            .role(Role::Heading)
+                            .text_size(pt(metrics::SECONDARY))
+                            .text_color(ink::secondary())
+                            .child(label.t()),
+                    )
+                    .child(area),
+            );
+        }
+        sections.into_any_element()
     }
 }
 fn contrast(a: u32, b: u32) -> f32 {

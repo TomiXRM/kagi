@@ -97,29 +97,46 @@ fn matrix(
     cx.update(|cx| cx.set_global(SettingsHostForE2e { native: previous }));
 }
 
-fn focus(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    models: bool,
-    slot: usize,
-) {
-    cx.update_window(window, |_, w, cx| {
-        let view = app.read(cx).settings_entity().unwrap();
-        let id = if models {
-            format!(
-                "sc-model-{}",
-                app.read(cx).smart_commit.detected_models[slot]
-            )
+fn open_popup(cx: &mut VisualTestAppContext, window: AnyWindowHandle, models: bool) {
+    click(
+        cx,
+        window,
+        if models {
+            "sc-model-select"
         } else {
-            format!("sc-provider-{}", ["ollama", "claude-code", "codex"][slot])
-        };
-        view.update(cx, |view, cx| assert!(view.focus_control(&id, w, cx)));
-    })
-    .unwrap();
+            "sc-provider-select"
+        },
+    );
+}
+
+fn assert_popup_radio_tree(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    visible: &kagi_ui_settings::ControlProbe,
+) {
+    let tree = crate::native_ax::tree(cx, window);
+    let mut matches = tree["nodes"].as_object().unwrap().values().filter(|node| {
+        node["aria"]["role"] == "MenuItemRadio" && node["aria"]["label"] == visible.name
+    });
+    let node = matches.next().unwrap_or_else(|| {
+        panic!(
+            "missing actual named popup radio root {}: {tree}",
+            visible.name
+        )
+    });
+    assert!(
+        matches.next().is_none(),
+        "one semantic root per visible menu item"
+    );
+    assert_eq!(
+        node["aria"]["toggled"],
+        if visible.selected { "True" } else { "False" }
+    );
 }
 
 fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    crate::native_ax::activate(cx);
+    draw(cx, window);
     for count in [0, 1, 20] {
         app.update(cx, |app, cx| {
             app.smart_commit.provider = SmartProvider::Ollama;
@@ -134,94 +151,124 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             app.seed_settings(cx);
         });
         draw(cx, window);
-        let tabs = cx.read(|cx| {
-            let view = app.read(cx).settings_entity().unwrap();
-            ["ollama", "claude-code", "codex"].map(|slug| {
-                view.read(cx)
-                    .control_probe(&format!("sc-provider-{slug}"))
-                    .unwrap()
-            })
+        let saved_provider = settings::read_setting("smart_commit_provider");
+        open_popup(cx, window, false);
+        assert_eq!(
+            settings::read_setting("smart_commit_provider"),
+            saved_provider
+        );
+        let options = ["ollama", "claude-code", "codex"].map(|slug| {
+            probe(cx, window, &format!("sc-provider-{slug}")).expect("actual open menu option")
         });
-        assert_eq!(tabs.len(), 3, "all providers remain visible");
-        assert_eq!(tabs.iter().filter(|t| t.selected).count(), 1);
-        assert!(tabs
+        assert_eq!(
+            options.len(),
+            3,
+            "all providers remain discoverable in the real menu"
+        );
+        assert_eq!(options.iter().filter(|option| option.selected).count(), 1);
+        assert!(options
             .iter()
-            .all(|t| t.role == gpui::Role::RadioButton && !t.name.is_empty()));
-        assert_eq!(tabs[2].name, "Codex");
-        assert!(probe(cx, window, "settings-provider-help")
+            .all(|option| option.role == gpui::Role::MenuItemRadio && !option.name.is_empty()));
+        assert_eq!(options[2].name, "Codex");
+        assert!(options[2].disabled && !options[2].selected);
+        for option in &options {
+            assert_popup_radio_tree(cx, window, option);
+        }
+        assert!(probe(cx, window, "settings-provider-availability")
             .unwrap()
             .value
             .contains(&i18n::provider_not_found_hint("Codex")));
-        assert!(tabs[2].disabled && !tabs[2].selected);
-        focus(cx, app, window, false, 0);
-        keys(cx, window, "right");
+        click(cx, window, "sc-provider-codex");
+        assert_eq!(
+            cx.read(|cx| app.read(cx).smart_commit.provider),
+            SmartProvider::Ollama
+        );
+        assert_eq!(
+            settings::read_setting("smart_commit_provider"),
+            saved_provider
+        );
+        keys(cx, window, "escape");
+        draw(cx, window);
+        assert!(probe(cx, window, "sc-provider-select").unwrap().focused);
+        // PopupMenu owns keyboard focus; disabled rows are skipped, not fake
+        // independently focusable radios. Down starts at the first menu item.
+        keys(cx, window, "enter down down");
         assert_eq!(
             cx.read(|cx| app.read(cx).smart_commit.provider),
             SmartProvider::Ollama,
-            "roving focus does not select a provider"
+            "menu navigation does not select a provider",
+        );
+        draw(cx, window);
+        let tree = crate::native_ax::tree(cx, window);
+        let active = tree["active_descendant_focus"]
+            .as_str()
+            .unwrap_or_else(|| panic!("owning popup focus must name its active row: {tree}"));
+        let active = &tree["nodes"][active]["aria"];
+        assert_eq!(active["role"], "MenuItemRadio");
+        assert_eq!(active["label"], options[usize::from(count > 0)].name);
+        assert_eq!(
+            active["toggled"],
+            if count > 0 { "False" } else { "True" },
+            "keyboard focus does not change the checked preference"
         );
         keys(cx, window, "enter");
+        draw(cx, window);
         assert_eq!(
             cx.read(|cx| app.read(cx).smart_commit.provider),
             if count > 0 {
                 SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode)
             } else {
                 SmartProvider::Ollama
-            }
+            },
+            "keyboard skips unavailable choices and commits only an enabled provider",
         );
-        draw(cx, window);
-        keys(cx, window, "right");
-        let unavailable = probe(cx, window, "sc-provider-codex").unwrap();
-        assert!(
-            unavailable.focused && unavailable.disabled && !unavailable.selected,
-            "unavailable choices explain themselves without becoming selected"
-        );
-        keys(cx, window, "space");
         assert_ne!(
             settings::read_setting("smart_commit_provider").as_deref(),
             Some("codex")
         );
-        keys(cx, window, "home space");
-        draw(cx, window);
+        open_popup(cx, window, false);
+        click(cx, window, "sc-provider-ollama");
         if count > 0 {
-            focus(cx, app, window, true, 0);
-            keys(cx, window, "end space");
-            assert_eq!(
-                settings::read_setting("smart_commit_model"),
-                cx.read(|cx| app.read(cx).smart_commit.detected_models.last().cloned())
-            );
+            open_popup(cx, window, true);
+            // Up from the unopened selection traverses to the actual last item,
+            // replacing the segmented bank's Home/End shortcut contract.
+            keys(cx, window, "up enter");
             draw(cx, window);
             assert_eq!(
-                cx.read(|cx| {
-                    let view = app.read(cx).settings_entity().unwrap();
-                    view.read(cx)
-                        .control_probes()
-                        .iter()
-                        .filter(|probe| probe.id.starts_with("sc-model-") && probe.selected)
-                        .count()
-                }),
-                1
+                settings::read_setting("smart_commit_model"),
+                cx.read(|cx| app.read(cx).smart_commit.detected_models.last().cloned()),
             );
-        }
-        assert!(
-            cx.read(|cx| app.read(cx).smart_commit_modal().is_none()),
-            "selection does not start generation"
-        );
-        let bounds = bounds(cx, window, "sc-provider-ollama").unwrap();
-        let width = cx
-            .update_window(window, |_, w, _| w.viewport_size().width)
-            .unwrap();
-        assert!(bounds.left() >= gpui::px(0.) && bounds.right() <= width);
-        for model in cx.read(|cx| app.read(cx).smart_commit.detected_models.clone()) {
-            let bounds = self::bounds(cx, window, &format!("sc-model-{model}")).unwrap();
-            assert!(
-                bounds.left() >= gpui::px(0.) && bounds.right() <= width,
-                "long model fits Settings"
-            );
-        }
-        if count > 0 {
-            focus(cx, app, window, true, 0);
-            let selected_model = cx.read(|cx| app.read(cx).smart_commit.model.clone());
+            open_popup(cx, window, true);
+            let selected = cx.read(|cx| {
+                app.read(cx)
+                    .settings_entity()
+                    .unwrap()
+                    .read(cx)
+                    .control_probes()
+                    .iter()
+                    .filter(|probe| {
+                        probe.id.starts_with("sc-model-")
+                            && probe.id != "sc-model-select"
+                            && probe.selected
+                    })
+                    .count()
+            });
+            assert_eq!(selected, 1, "one actual checked model menu item");
+            let width = cx
+                .update_window(window, |_, w, _| w.viewport_size().width)
+                .unwrap();
+            for model in cx.read(|cx| app.read(cx).smart_commit.detected_models.clone()) {
+                let rect = reveal(cx, window, &format!("sc-model-{model}"));
+                assert!(
+                    rect.left() >= gpui::px(0.) && rect.right() <= width,
+                    "long model fits Settings"
+                );
+                let option = probe(cx, window, &format!("sc-model-{model}")).unwrap();
+                assert_popup_radio_tree(cx, window, &option);
+            }
+            let selected_model = cx
+                .read(|cx| app.read(cx).smart_commit.model.clone())
+                .unwrap();
             let persisted_model = settings::read_setting("smart_commit_model");
             app.update(cx, |app, cx| {
                 app.smart_commit.provider =
@@ -230,19 +277,11 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             });
             draw(cx, window);
             assert!(
-                probe(cx, window, "sc-provider-claude-code")
-                    .unwrap()
-                    .focused,
-                "a hidden model group repairs focus to the effective provider"
+                probe(cx, window, "sc-provider-select").unwrap().focused,
+                "an obsolete open model menu repairs focus to the effective provider trigger"
             );
-            assert!(!cx.read(|cx| app
-                .read(cx)
-                .settings_entity()
-                .unwrap()
-                .read(cx)
-                .control_probes()
-                .iter()
-                .any(|probe| probe.id.starts_with("sc-model-"))));
+            assert!(probe(cx, window, "sc-model-select").is_none());
+            assert!(probe(cx, window, &format!("sc-model-{selected_model}")).is_none());
             assert_eq!(
                 settings::read_setting("smart_commit_model"),
                 persisted_model,
@@ -254,17 +293,42 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
                 app.seed_settings(cx);
             });
             draw(cx, window);
-            let unavailable =
-                probe(cx, window, &format!("sc-model-{}", selected_model.unwrap())).unwrap();
+            let unavailable = probe(cx, window, "sc-model-select").unwrap();
             assert!(
-                unavailable.selected && unavailable.disabled,
-                "a saved unavailable model stays visible rather than silently selecting another"
+                unavailable.disabled && unavailable.value.contains(&selected_model),
+                "the disabled opener keeps the saved unavailable model readable"
+            );
+            let actual = crate::native_ax::node(cx, window, "sc-model-select".into());
+            assert_eq!(actual["aria"]["role"], "ComboBox");
+            assert!(actual["aria"]["value"]
+                .as_str()
+                .unwrap()
+                .contains(&selected_model));
+            click(cx, window, "sc-model-select");
+            keys(cx, window, "tab");
+            draw(cx, window);
+            assert!(
+                !probe(cx, window, "sc-model-select").unwrap().focused,
+                "the disabled opener is not a keyboard tab stop"
+            );
+            assert!(
+                probe(cx, window, "settings-popup-menu").is_none(),
+                "a disabled popup opener stays inert"
             );
             assert_eq!(
                 settings::read_setting("smart_commit_model"),
                 persisted_model
             );
         }
+        assert!(
+            cx.read(|cx| app.read(cx).smart_commit_modal().is_none()),
+            "selection does not start generation"
+        );
+        let rect = bounds(cx, window, "sc-provider-select").unwrap();
+        let width = cx
+            .update_window(window, |_, w, _| w.viewport_size().width)
+            .unwrap();
+        assert!(rect.left() >= gpui::px(0.) && rect.right() <= width);
     }
 }
 
@@ -280,13 +344,21 @@ pub(crate) fn reveal(
 ) -> gpui::Bounds<gpui::Pixels> {
     draw(cx, window);
     let mut bounds = self::bounds(cx, window, name).unwrap();
-    let viewport = if name.starts_with("settings-pane-") || probe(cx, window, name).is_none() {
+    let viewport = if name.starts_with("settings-pane-") {
+        self::bounds(cx, window, "settings-sidebar").expect("production sidebar viewport")
+    } else if probe(cx, window, name).is_none() {
         cx.update_window(window, |_, w, _| {
             gpui::Bounds::new(gpui::point(gpui::px(0.), gpui::px(0.)), w.viewport_size())
         })
         .unwrap()
     } else {
-        self::bounds(cx, window, "settings-detail-scroll").expect("production detail viewport")
+        let viewport_id =
+            if probe(cx, window, name).is_some_and(|item| item.role == gpui::Role::MenuItemRadio) {
+                "settings-popup-menu"
+            } else {
+                "settings-detail-scroll"
+            };
+        self::bounds(cx, window, viewport_id).expect("production scroll viewport")
     };
     for _ in 0..20 {
         if bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom() {
@@ -320,7 +392,14 @@ pub(crate) fn reveal(
     if probe(cx, window, name).is_some_and(|probe| {
         probe.role == gpui::Role::RadioButton && name.starts_with("settings-theme-")
     }) {
-        let strip = self::bounds(cx, window, "settings-themes-scroll").unwrap();
+        let palette = theme::theme_by_slug(name.strip_prefix("settings-theme-").unwrap())
+            .expect("theme card has an authoritative palette");
+        let strip_id = if palette.dark {
+            "settings-themes-dark-scroll"
+        } else {
+            "settings-themes-light-scroll"
+        };
+        let strip = self::bounds(cx, window, strip_id).unwrap();
         let margin = gpui::px(7.);
         for _ in 0..20 {
             let delta = if bounds.left() < strip.left() + margin {

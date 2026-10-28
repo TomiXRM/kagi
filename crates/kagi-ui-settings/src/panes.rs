@@ -1,8 +1,10 @@
 use super::{
-    controls::{pt, section},
+    controls::section,
+    kit_style::{ink, metrics, pt},
     *,
 };
 use gpui_component::input::Input;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use kagi_ui_core::{
     i18n::{self, Lang},
     settings::{CopyTarget, MarkdownDefaultView, ToolbarDisplay},
@@ -10,7 +12,11 @@ use kagi_ui_core::{
 };
 
 impl SettingsView {
-    pub(crate) fn render_pane(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_pane(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let content = match self.pane {
             Pane::Appearance => self.appearance(window, cx),
             Pane::Graph => self.graph(window, cx),
@@ -38,6 +44,7 @@ impl SettingsView {
                 );
                 section(
                     Msg::SettingsMarkdownSection,
+                    None,
                     self.group("settings-editor-group").child(self.row(
                         Msg::SettingsMarkdownDefaultView,
                         Msg::SettingsMarkdownDefaultViewDesc.t(),
@@ -56,6 +63,7 @@ impl SettingsView {
                 );
                 section(
                     Msg::SettingsWorktreesSection,
+                    None,
                     self.group("settings-terminal-group").child(self.row(
                         Msg::SettingsTerminalAutoLock,
                         Msg::SettingsTerminalAutoLockDesc.t(),
@@ -74,6 +82,7 @@ impl SettingsView {
                 );
                 section(
                     Msg::SettingsFetchSection,
+                    None,
                     self.group("settings-network-group").child(self.row(
                         Msg::SettingsAutoFetch,
                         Msg::SettingsAutoFetchDesc.t(),
@@ -104,6 +113,7 @@ impl SettingsView {
                 );
                 section(
                     Msg::SettingsLanguage,
+                    None,
                     self.group("settings-language-group").child(self.row(
                         Msg::SettingsInterfaceLang,
                         Msg::SettingsInterfaceLangDesc.t(),
@@ -122,7 +132,7 @@ impl SettingsView {
     }
     fn appearance(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let themes = self.theme_cards(window, cx);
-        let mut interface = self.group("settings-interface-group");
+        let mut theme_controls = self.group("settings-theme-controls-group");
         if self.snapshot.accent_applicable {
             let selected = self.snapshot.follows_system_accent;
             let choices = self.choices(
@@ -145,7 +155,7 @@ impl SettingsView {
                 window,
                 cx,
             );
-            interface = interface.child(self.row(
+            theme_controls = theme_controls.child(self.row(
                 Msg::SettingsAccent,
                 self.snapshot.accent_description.clone(),
                 choices,
@@ -182,7 +192,8 @@ impl SettingsView {
             window,
             cx,
         );
-        interface = interface
+        let layout = self
+            .group("settings-layout-group")
             .child(self.row(
                 Msg::SettingsToolbarDisplay,
                 Msg::SettingsToolbarDisplayDesc.t(),
@@ -193,12 +204,12 @@ impl SettingsView {
                 Msg::SettingsCompactThreshold,
                 Msg::SettingsCompactThresholdDesc.t(),
                 threshold,
-            ))
-            .child(self.row(
-                Msg::SettingsReduceMotion,
-                Msg::SettingsReduceMotionDesc.t(),
-                motion,
             ));
+        let motion = self.group("settings-motion-group").child(self.row(
+            Msg::SettingsReduceMotion,
+            Msg::SettingsReduceMotionDesc.t(),
+            motion,
+        ));
         let folder = self
             .snapshot
             .theme_folder
@@ -208,7 +219,7 @@ impl SettingsView {
             "settings-theme-folder-open",
             Msg::SettingsCustomThemesOpen.t().into(),
             self.snapshot.can_open_theme_folder,
-            theme().bg_base,
+            ink::card(),
             SettingsIntent::OpenThemeFolder,
             window,
             cx,
@@ -217,7 +228,7 @@ impl SettingsView {
             "settings-theme-reload",
             Msg::SettingsCustomThemesReload.t().into(),
             true,
-            theme().panel,
+            ink::card(),
             SettingsIntent::ReloadThemes,
             window,
             cx,
@@ -226,7 +237,7 @@ impl SettingsView {
             "settings-theme-guide",
             Msg::SettingsCustomThemesGuide.t().into(),
             true,
-            theme().panel,
+            ink::card(),
             SettingsIntent::OpenThemeGuide,
             window,
             cx,
@@ -235,46 +246,57 @@ impl SettingsView {
             .flex()
             .flex_col()
             .gap(pt(20.))
-            .child(section(Msg::SettingsColorTheme, themes))
-            .child(section(Msg::SettingsInterface, interface))
             .child(section(
-                Msg::SettingsCustomThemes,
+                Msg::SettingsColorTheme,
+                None,
                 div()
                     .flex()
                     .flex_col()
                     .gap(pt(8.))
-                    .child(self.group("settings-theme-folder-group").child(self.row(
-                        Msg::SettingsCustomThemes,
-                        folder,
-                        open,
-                    )))
+                    .child(themes)
+                    .when(self.snapshot.accent_applicable, |content| {
+                        content.child(theme_controls)
+                    }),
+            ))
+            .child(section(Msg::SettingsLayout, None, layout))
+            .child(section(Msg::SettingsMotion, None, motion))
+            .child(section(
+                Msg::SettingsCustomThemes,
+                Some(
+                    div()
+                        .id("settings-custom-themes-help")
+                        .relative()
+                        .role(Role::Label)
+                        .aria_label(Msg::SettingsCustomThemesDesc.t())
+                        .child(Msg::SettingsCustomThemesDesc.t())
+                        .children(cfg!(feature = "gui-e2e").then(|| {
+                            self.measured(
+                                "settings-custom-themes-help".into(),
+                                Role::Label,
+                                Msg::SettingsCustomThemes.t().into(),
+                                Msg::SettingsCustomThemesDesc.t().into(),
+                                false,
+                                false,
+                                false,
+                            )
+                        }))
+                        .into_any_element(),
+                ),
+                self.group("settings-custom-themes-group")
+                    .child(self.row(Msg::SettingsThemeFolder, folder, div()))
                     .child(
                         div()
+                            .min_w_0()
+                            .w_full()
+                            .py(pt(10.))
                             .flex()
                             .flex_wrap()
+                            .items_center()
+                            .justify_end()
                             .gap(pt(8.))
-                            .text_color(rgb(theme().link))
+                            .child(open)
                             .child(reload)
                             .child(guide),
-                    )
-                    .child(
-                        div()
-                            .id("settings-custom-themes-help")
-                            .relative()
-                            .text_size(pt(11.5))
-                            .text_color(rgb(theme().text_sub))
-                            .child(Msg::SettingsCustomThemesDesc.t())
-                            .children(cfg!(feature = "gui-e2e").then(|| {
-                                self.measured(
-                                    "settings-custom-themes-help".into(),
-                                    Role::Label,
-                                    Msg::SettingsCustomThemes.t().into(),
-                                    Msg::SettingsCustomThemesDesc.t().into(),
-                                    false,
-                                    false,
-                                    false,
-                                )
-                            })),
                     ),
             ))
             .into_any_element()
@@ -304,12 +326,14 @@ impl SettingsView {
             .flex()
             .flex_nowrap()
             .items_center()
-            .gap(pt(6.))
+            .gap(pt(metrics::STEPPER_GAP))
             .child(decrease)
             .child(
                 div()
                     .id("zoom-value")
                     .relative()
+                    .min_w(pt(metrics::STEPPER_VALUE_WIDTH))
+                    .text_center()
                     .role(Role::Status)
                     .aria_label(i18n::settings_zoom_value(&value))
                     .children(cfg!(feature = "gui-e2e").then(|| {
@@ -357,12 +381,14 @@ impl SettingsView {
                     .flex()
                     .flex_nowrap()
                     .items_center()
-                    .gap(pt(6.))
+                    .gap(pt(metrics::STEPPER_GAP))
                     .child(decrease)
                     .child(
                         div()
                             .id("compact-threshold-value")
                             .relative()
+                            .min_w(pt(metrics::STEPPER_VALUE_WIDTH))
+                            .text_center()
                             .role(Role::Status)
                             .aria_label(description.clone())
                             .child(format!("{value}rem"))
@@ -444,6 +470,7 @@ impl SettingsView {
             .gap(pt(20.))
             .child(section(
                 Msg::SettingsPresentation,
+                None,
                 self.group("settings-graph-group")
                     .child(self.row(Msg::SettingsCompact, Msg::SettingsCompactDesc.t(), compact))
                     .child(self.row(
@@ -454,6 +481,7 @@ impl SettingsView {
             ))
             .child(section(
                 Msg::SettingsCopySection,
+                None,
                 self.group("settings-copy-group").child(self.row(
                     Msg::SettingsGraphCopy,
                     Msg::SettingsGraphCopyDesc.t(),
@@ -462,7 +490,7 @@ impl SettingsView {
             ))
             .into_any_element()
     }
-    fn smart(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn smart(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let intent = if !self.snapshot.smart_enabled && !self.snapshot.smart_consent_accepted {
             SettingsIntent::SmartConsentRequested
         } else {
@@ -495,16 +523,29 @@ impl SettingsView {
                 )
             })
             .collect();
-        let providers = self.choices("settings-provider-choices", entries, window, cx);
-        let mut provider_help = Msg::SettingsSmartProviderDesc.t().to_owned();
+        let providers = self.popup_control(
+            "sc-provider-select",
+            Msg::SettingsSmartProvider,
+            entries,
+            window,
+            cx,
+        );
+        let mut unavailable = String::new();
         for availability in &self.snapshot.providers {
             if !availability.available {
                 if let Some(reason) = &availability.reason {
-                    provider_help.push('\n');
-                    provider_help.push_str(reason);
+                    if !unavailable.is_empty() {
+                        unavailable.push('\n');
+                    }
+                    unavailable.push_str(reason);
                 }
             }
         }
+        let provider_help = if unavailable.is_empty() {
+            Msg::SettingsSmartProviderDesc.t().to_owned()
+        } else {
+            format!("{}\n{unavailable}", Msg::SettingsSmartProviderDesc.t())
+        };
         let mut rows = self
             .group("settings-smart-group")
             .child(self.row(
@@ -541,24 +582,46 @@ impl SettingsView {
                     ));
                 }
             }
-            let models = if entries.is_empty() {
-                div()
-                    .child(Msg::SettingsSmartNoModels.t())
-                    .into_any_element()
-            } else {
-                self.choices("settings-model-choices", entries, window, cx)
-            };
+            let models = self.popup_control(
+                "sc-model-select",
+                Msg::SettingsSmartModel,
+                entries,
+                window,
+                cx,
+            );
             rows = rows.child(self.row(
                 Msg::SettingsSmartModel,
                 Msg::SettingsSmartModelDesc.t(),
                 models,
             ));
         }
-        let mut result = div()
-            .flex()
-            .flex_col()
-            .gap(pt(16.))
-            .child(section(Msg::SettingsGeneration, rows));
+        let mut result = div().flex().flex_col().gap(pt(16.)).child(section(
+            Msg::SettingsGeneration,
+            None,
+            rows,
+        ));
+        if !unavailable.is_empty() {
+            result = result.child(
+                div()
+                    .id("settings-provider-availability")
+                    .relative()
+                    .role(Role::Status)
+                    .text_size(pt(metrics::SECONDARY))
+                    .text_color(ink::secondary())
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            "settings-provider-availability".into(),
+                            Role::Status,
+                            Msg::SettingsSmartProvider.t().into(),
+                            unavailable.clone(),
+                            false,
+                            false,
+                            false,
+                        )
+                    }))
+                    .child(unavailable),
+            );
+        }
         if self.snapshot.smart_detecting {
             result = result.child(
                 div()
@@ -601,7 +664,7 @@ impl SettingsView {
             "settings-analyze-reset",
             Msg::SettingsAnalyzeIgnoreReset.t().into(),
             true,
-            theme().panel,
+            ink::card(),
             SettingsIntent::ResetAnalyze(request.clone()),
             window,
             cx,
@@ -610,7 +673,7 @@ impl SettingsView {
             "settings-analyze-save",
             Msg::SettingsAnalyzeIgnoreSave.t().into(),
             dirty,
-            theme().panel,
+            ink::card(),
             SettingsIntent::SaveAnalyze(request),
             window,
             cx,
@@ -622,116 +685,135 @@ impl SettingsView {
         } else {
             Msg::SettingsAnalyzeIgnoreClean
         };
-        section(
-            Msg::SettingsExclusions,
-            div()
-                .id("settings-analyze-section")
-                .relative()
-                .flex()
-                .flex_col()
-                .gap(pt(12.))
-                .child(Msg::SettingsAnalyzeIgnore.t())
-                .children(cfg!(feature = "gui-e2e").then(|| {
-                    self.measured(
-                        "settings-analyze-section".into(),
-                        Role::Group,
-                        Msg::SettingsExclusions.t().into(),
-                        String::new(),
-                        false,
-                        false,
-                        false,
-                    )
-                }))
-                .child(
-                    div()
-                        .id("settings-analyze-help")
-                        .relative()
-                        .text_size(pt(11.5))
-                        .text_color(rgb(theme().text_sub))
-                        .child(Msg::SettingsAnalyzeIgnoreDesc.t())
-                        .children(cfg!(feature = "gui-e2e").then(|| {
-                            self.measured(
-                                "settings-analyze-help".into(),
-                                Role::Label,
-                                Msg::SettingsAnalyzeIgnore.t().into(),
-                                Msg::SettingsAnalyzeIgnoreDesc.t().into(),
-                                false,
-                                false,
-                                false,
-                            )
-                        })),
+        let help = div()
+            .id("settings-analyze-help")
+            .relative()
+            .role(Role::Label)
+            .aria_label(Msg::SettingsAnalyzeIgnoreSummary.t())
+            .aria_description(Msg::SettingsAnalyzeIgnoreDesc.t())
+            .child(Msg::SettingsAnalyzeIgnoreSummary.t())
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    "settings-analyze-help".into(),
+                    Role::Label,
+                    Msg::SettingsAnalyzeIgnore.t().into(),
+                    Msg::SettingsAnalyzeIgnoreSummary.t().into(),
+                    false,
+                    false,
+                    false,
                 )
-                .child(
-                    div()
-                        .id("settings-analyze-input")
-                        .relative()
-                        .min_h(pt(220.))
-                        .child(
-                            Input::new(&self.input)
-                                .context_menu(kagi_ui_core::input::context_menu(&self.input, false))
-                                .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
-                                .appearance(true)
-                                .bordered(true),
-                        )
-                        .children(cfg!(feature = "gui-e2e").then(|| {
-                            self.measured(
-                                "settings-analyze-input".into(),
-                                Role::TextInput,
-                                Msg::A11yAnalyzeIgnorePatterns.t().into(),
-                                self.input.read(cx).value().to_string(),
-                                false,
-                                false,
-                                false,
-                            )
-                        })),
+            }))
+            .hover_tooltip(
+                "settings-analyze-help-full",
+                Msg::SettingsAnalyzeIgnoreDesc.t(),
+            );
+        let input = div()
+            .id("settings-analyze-input")
+            .relative()
+            .min_w_0()
+            .min_h(pt(220.))
+            .child(
+                Input::new(&self.input)
+                    .context_menu(kagi_ui_core::input::context_menu(&self.input, false))
+                    .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
+                    .appearance(true)
+                    .bordered(true),
+            )
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    "settings-analyze-input".into(),
+                    Role::TextInput,
+                    Msg::A11yAnalyzeIgnorePatterns.t().into(),
+                    self.input.read(cx).value().to_string(),
+                    false,
+                    false,
+                    false,
                 )
-                .child(
+            }));
+        let status = div()
+            .id("settings-analyze-status")
+            .relative()
+            .role(Role::Status)
+            .mr_auto()
+            .text_size(pt(metrics::SECONDARY))
+            .text_color(ink::secondary())
+            .child(status.t())
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    "settings-analyze-status".into(),
+                    Role::Status,
+                    status.t().into(),
+                    status.t().into(),
+                    false,
+                    false,
+                    false,
+                )
+            }));
+        let content = div()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(pt(8.))
+            .child(
+                self.group("settings-analyze-group")
+                    .child(div().min_w_0().w_full().py(pt(12.)).child(input))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .w_full()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .justify_end()
+                            .gap(pt(8.))
+                            .py(pt(10.))
+                            .child(status)
+                            .child(reset)
+                            .child(save),
+                    ),
+            )
+            .when_some(self.analyze.error.clone(), |content, error| {
+                content.child(
                     div()
-                        .id("settings-analyze-status")
+                        .id("settings-analyze-error")
                         .relative()
                         .role(Role::Status)
-                        .child(status.t())
+                        .text_color(rgb(theme().color_blocker))
                         .children(cfg!(feature = "gui-e2e").then(|| {
                             self.measured(
-                                "settings-analyze-status".into(),
+                                "settings-analyze-error".into(),
                                 Role::Status,
-                                status.t().into(),
-                                status.t().into(),
+                                error.to_string(),
+                                error.to_string(),
                                 false,
                                 false,
                                 false,
                             )
-                        })),
+                        }))
+                        .child(error),
                 )
-                .when_some(self.analyze.error.clone(), |el, error| {
-                    el.child(
-                        div()
-                            .id("settings-analyze-error")
-                            .relative()
-                            .text_color(rgb(theme().color_blocker))
-                            .children(cfg!(feature = "gui-e2e").then(|| {
-                                self.measured(
-                                    "settings-analyze-error".into(),
-                                    Role::Status,
-                                    error.to_string(),
-                                    error.to_string(),
-                                    false,
-                                    false,
-                                    false,
-                                )
-                            }))
-                            .child(error),
-                    )
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(pt(8.))
-                        .child(reset)
-                        .child(save),
-                ),
-        )
+            });
+        div()
+            .id("settings-analyze-section")
+            .relative()
+            .min_w_0()
+            .child(section(
+                Msg::SettingsAnalyzeIgnore,
+                Some(help.into_any_element()),
+                content,
+            ))
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    "settings-analyze-section".into(),
+                    Role::Group,
+                    Msg::SettingsAnalyzeIgnore.t().into(),
+                    String::new(),
+                    false,
+                    false,
+                    false,
+                )
+            }))
+            .into_any_element()
     }
 }
 #[cfg(test)]

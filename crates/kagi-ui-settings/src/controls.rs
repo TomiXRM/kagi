@@ -1,32 +1,129 @@
-//! Production adaptation of the approved settings_kit: grouped rows, equal
-//! segments and fixed-hue tiles. Real focus replaces the experiment's Forced state.
+//! Shared interaction, grouped rows and navigation for the final settings kit.
+use super::kit_style::{ink, metrics, pt};
 use super::*;
 use gpui_component::{ElementExt as _, Icon, IconName, Sizable, Size};
 use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
-pub(crate) fn pt(n: f32) -> Pixels {
-    theme::scaled_px(n * 16. / theme::BASE_REM_PX)
+#[derive(IntoElement)]
+pub(crate) struct SettingsGroup {
+    container: Stateful<Div>,
+    rows: usize,
+    #[cfg(feature = "gui-e2e")]
+    id: &'static str,
+    #[cfg(feature = "gui-e2e")]
+    probes: Rc<RefCell<BTreeMap<String, ControlProbe>>>,
 }
 
-pub(crate) fn section(title: Msg, content: impl IntoElement) -> AnyElement {
+impl ParentElement for SettingsGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        for element in elements {
+            let element = if self.rows > 0 {
+                let separator = div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(1.))
+                    .bg(rgb(ink::hairline()));
+                #[cfg(feature = "gui-e2e")]
+                let separator = {
+                    let id = format!("{}-separator-{}", self.id, self.rows - 1);
+                    let probes = self.probes.clone();
+                    separator.on_prepaint(move |bounds, _, _| {
+                        probes.borrow_mut().insert(
+                            id.clone(),
+                            ControlProbe {
+                                id: id.clone(),
+                                bounds,
+                                role: Role::Image,
+                                name: String::new(),
+                                value: String::new(),
+                                paint: None,
+                                focused: false,
+                                selected: false,
+                                disabled: false,
+                            },
+                        );
+                    })
+                };
+                div()
+                    .relative()
+                    .min_w_0()
+                    .w_full()
+                    .child(element)
+                    .child(separator)
+                    .into_any_element()
+            } else {
+                element
+            };
+            self.container.extend([element]);
+            self.rows += 1;
+        }
+    }
+}
+
+impl RenderOnce for SettingsGroup {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        self.container
+    }
+}
+
+pub(crate) fn section(
+    title: Msg,
+    subtitle: Option<AnyElement>,
+    content: impl IntoElement,
+) -> AnyElement {
     div()
+        .role(Role::Group)
+        .aria_label(title.t())
         .min_w_0()
         .flex()
         .flex_col()
         .gap(pt(8.))
-        .child(div().font_weight(FontWeight::SEMIBOLD).child(title.t()))
+        .child(
+            div()
+                .px(pt(metrics::GROUP_PADDING_X) + px(1.))
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(pt(2.))
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "settings-heading-{}",
+                            title.t()
+                        )))
+                        .role(Role::Heading)
+                        .font_weight(FontWeight::BOLD)
+                        .child(title.t()),
+                )
+                .children(subtitle.map(|subtitle| {
+                    div()
+                        .text_size(pt(metrics::SECONDARY + 0.5))
+                        .text_color(ink::secondary())
+                        .child(subtitle)
+                })),
+        )
         .child(content)
         .into_any_element()
 }
 impl SettingsView {
-    pub(crate) fn group(&self, id: &'static str) -> Stateful<Div> {
-        div()
+    pub(crate) fn group(&self, id: &'static str) -> SettingsGroup {
+        let container = div()
             .id(id)
             .relative()
             .min_w_0()
             .w_full()
-            .rounded(pt(10.))
-            .bg(rgb(theme().bg_base))
+            .rounded(pt(metrics::GROUP_RADIUS))
+            .px(pt(metrics::GROUP_PADDING_X))
+            .border_1()
+            .border_color(if theme().dark {
+                transparent_black()
+            } else {
+                rgb(ink::hairline()).into()
+            })
+            .bg(rgb(ink::card()))
             .flex()
             .flex_col()
             .children(cfg!(feature = "gui-e2e").then(|| {
@@ -39,7 +136,15 @@ impl SettingsView {
                     false,
                     false,
                 )
-            }))
+            }));
+        SettingsGroup {
+            container,
+            rows: 0,
+            #[cfg(feature = "gui-e2e")]
+            id,
+            #[cfg(feature = "gui-e2e")]
+            probes: self.probes.clone(),
+        }
     }
     pub(crate) fn row(
         &self,
@@ -48,6 +153,18 @@ impl SettingsView {
         control: impl IntoElement,
     ) -> AnyElement {
         let description = description.into();
+        let summary = match title {
+            Msg::SettingsLaneCompact => Some(Msg::SettingsLaneCompactSummary),
+            Msg::SettingsAutoFetch => Some(Msg::SettingsAutoFetchSummary),
+            Msg::SettingsGraphCopy => Some(Msg::SettingsGraphCopySummary),
+            Msg::SettingsReduceMotion => Some(Msg::SettingsReduceMotionSummary),
+            Msg::SettingsTerminalAutoLock => Some(Msg::SettingsTerminalAutoLockSummary),
+            Msg::SettingsSmartEnable => Some(Msg::SettingsSmartEnableSummary),
+            Msg::SettingsSmartProvider => Some(Msg::SettingsSmartProviderSummary),
+            _ => None,
+        };
+        let visible: SharedString =
+            summary.map_or_else(|| description.clone(), |text| text.t().into());
         let id = match title {
             Msg::SettingsLaneCompact => "settings-avatar-help",
             Msg::SettingsAutoFetch => "settings-fetch-help",
@@ -56,7 +173,7 @@ impl SettingsView {
             Msg::SettingsTerminalAutoLock => "settings-terminal-lock-help",
             Msg::SettingsSmartEnable => "settings-smart-enable-help",
             Msg::SettingsSmartProvider => "settings-provider-help",
-            Msg::SettingsCustomThemes => "settings-theme-folder-help",
+            Msg::SettingsThemeFolder => "settings-theme-folder-help",
             Msg::SettingsAccent => "settings-accent-help",
             Msg::SettingsToolbarDisplay => "settings-toolbar-help",
             Msg::SettingsZoom => "settings-zoom-help",
@@ -67,16 +184,27 @@ impl SettingsView {
             Msg::SettingsSmartModel => "settings-model-help",
             _ => unreachable!("only Settings row titles are accepted"),
         };
-        div()
+        let row = div()
+            .id(SharedString::from(format!(
+                "{}-row",
+                id.trim_end_matches("-help")
+            )))
+            .role(Role::Group)
+            .aria_label(title.t())
+            .aria_description(description.clone())
             .relative()
             .min_w_0()
             .w_full()
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(pt(10.))
-            .px(pt(12.))
-            .py(pt(10.))
+            .min_h(pt(if description.is_empty() {
+                metrics::ROW
+            } else {
+                metrics::ROW_WITH_SUBTITLE
+            }))
+            .gap(pt(12.))
+            .py(pt(7.))
             .children(cfg!(feature = "gui-e2e").then(|| {
                 self.measured(
                     format!("{}-row", id.trim_end_matches("-help")),
@@ -94,33 +222,48 @@ impl SettingsView {
                     .min_w(pt(140.))
                     .flex()
                     .flex_col()
-                    .gap(pt(4.))
+                    .gap(pt(2.))
                     .child(title.t())
-                    .child(
+                    .children((!visible.is_empty()).then(|| {
                         div()
                             .id(id)
                             .relative()
-                            .text_size(pt(11.5))
-                            .text_color(rgb(theme().text_sub))
+                            .role(Role::Label)
+                            .aria_label(visible.clone())
+                            .aria_description(description.clone())
+                            .text_size(pt(metrics::SECONDARY))
+                            .text_color(ink::secondary())
                             .children(cfg!(feature = "gui-e2e").then(|| {
                                 self.measured(
                                     id.into(),
                                     Role::Label,
                                     title.t().into(),
-                                    description.to_string(),
+                                    visible.to_string(),
                                     false,
                                     false,
                                     false,
                                 )
                             }))
-                            .child(description),
-                    ),
+                            .child(visible)
+                    })),
             )
             // Wrap the whole composite below its label, not its internal controls.
-            .child(div().flex_shrink_0().min_w_0().max_w_full().child(control))
-            .into_any_element()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .min_w_0()
+                    .max_w_full()
+                    .ml_auto()
+                    .child(control),
+            );
+        if summary.is_some() {
+            row.hover_tooltip(SharedString::from(format!("{id}-full")), description)
+                .into_any_element()
+        } else {
+            row.into_any_element()
+        }
     }
-    fn handle(&mut self, id: &str, cx: &mut App) -> FocusHandle {
+    pub(super) fn handle(&mut self, id: &str, cx: &mut App) -> FocusHandle {
         self.focus
             .entry(id.to_owned())
             .or_insert_with(|| cx.focus_handle())
@@ -198,7 +341,8 @@ impl SettingsView {
         role: Role,
         focus_background: u32,
         border_inset: Pixels,
-        intent: SettingsIntent,
+        focus_radius: f32,
+        intent: Option<SettingsIntent>,
         roving: Option<(String, usize, Vec<String>)>,
         window: &Window,
         cx: &mut Context<Self>,
@@ -213,8 +357,20 @@ impl SettingsView {
         let key_focus = handle.clone();
         let reveal_focus = handle.clone();
         let revealed = self.revealed.entry(id.clone()).or_default().clone();
-        let scroll = self.scroll.clone();
-        let in_detail = !id.starts_with("settings-pane-");
+        let scroll = if id.starts_with("settings-pane-") {
+            self.sidebar_scroll.clone()
+        } else {
+            self.scroll.clone()
+        };
+        let reveal_selected = role == Role::Tab
+            && selected
+            && roving.as_ref().is_some_and(|(_, _, ids)| {
+                ids.iter().all(|id| {
+                    self.focus
+                        .get(id)
+                        .is_none_or(|focus| !focus.is_focused(window))
+                })
+            });
         let focus_overlay = focused.then(|| {
             let ring_color =
                 super::focus_ring::color(self.snapshot.effective_accent, focus_background);
@@ -225,7 +381,7 @@ impl SettingsView {
                     div()
                         .absolute()
                         .inset_0()
-                        .rounded(pt(10.))
+                        .rounded(pt(focus_radius))
                         .border(px(5.))
                         .border_color(rgb(focus_background)),
                 )
@@ -233,7 +389,7 @@ impl SettingsView {
                     div()
                         .absolute()
                         .inset_0()
-                        .rounded(pt(10.))
+                        .rounded(pt(focus_radius))
                         .border_2()
                         .border_color(ring_color),
                 )
@@ -261,11 +417,12 @@ impl SettingsView {
             )
         });
         div()
+            .group(SharedString::from(id.clone()))
             .id(SharedString::from(id))
             .relative()
-            .min_h(pt(28.))
-            .min_w(pt(28.))
-            .rounded(pt(7.))
+            .min_h(pt(metrics::CONTROL_HIT_HEIGHT))
+            .min_w(pt(metrics::CONTROL_HIT_HEIGHT))
+            .rounded(pt(metrics::CONTROL_RADIUS))
             .track_focus(&handle.tab_index(0).tab_stop(tab_stop && enabled))
             .role(role)
             .aria_label(label)
@@ -283,21 +440,23 @@ impl SettingsView {
                 })
             })
             .when(enabled, |el| el.cursor_pointer())
-            .when(enabled && !selected && role != Role::RadioButton, |el| {
-                el.hover(|s| s.bg(rgb(theme().surface)))
-            })
             .children(focus_overlay)
             .children(probe)
             .on_prepaint(move |bounds, window, cx| {
-                if !reveal_focus.is_focused(window) {
-                    revealed.set(false);
-                    return;
-                }
-                if !in_detail || revealed.get() {
+                let focused = reveal_focus.is_focused(window);
+                if !focused && !reveal_selected {
+                    revealed.set(None);
                     return;
                 }
                 let viewport = scroll.bounds();
-                let margin = px(7.);
+                let marker = ControlReveal {
+                    viewport: viewport.size,
+                    focused,
+                };
+                if revealed.get() == Some(marker) {
+                    return;
+                }
+                let margin = px(metrics::FOCUS_REVEAL_MARGIN);
                 let delta = if bounds.size.height > viewport.size.height - margin * 2.
                     || bounds.top() < viewport.top() + margin
                 {
@@ -305,7 +464,7 @@ impl SettingsView {
                 } else if bounds.bottom() > viewport.bottom() - margin {
                     viewport.bottom() - margin - bounds.bottom()
                 } else {
-                    revealed.set(true);
+                    revealed.set(Some(marker));
                     return;
                 };
                 let old = scroll.offset();
@@ -317,13 +476,15 @@ impl SettingsView {
                         window.refresh();
                     });
                 } else {
-                    revealed.set(true);
+                    revealed.set(Some(marker));
                 }
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 if enabled {
                     window.focus(&focus, cx);
-                    this.emit(click_intent.clone(), window, cx);
+                    if let Some(intent) = click_intent.clone() {
+                        this.emit(intent, window, cx);
+                    }
                     cx.notify();
                 }
             }))
@@ -357,242 +518,6 @@ impl SettingsView {
                 }
             }))
     }
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn button(
-        &mut self,
-        id: &str,
-        label: SharedString,
-        enabled: bool,
-        focus_background: u32,
-        intent: SettingsIntent,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.control(
-            id.into(),
-            label.clone(),
-            false,
-            enabled,
-            Role::Button,
-            focus_background,
-            px(0.),
-            intent,
-            None,
-            window,
-            cx,
-        )
-        .flex()
-        .items_center()
-        .justify_center()
-        .flex_shrink_0()
-        .whitespace_nowrap()
-        .px(pt(10.))
-        .py(pt(3.))
-        .bg(rgb(theme().surface))
-        .child(div().opacity(if enabled { 1. } else { 0.5 }).child(label))
-        .into_any_element()
-    }
-    pub(crate) fn stepper_button(
-        &mut self,
-        id: &str,
-        label: SharedString,
-        enabled: bool,
-        intent: SettingsIntent,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.control(
-            id.into(),
-            label,
-            false,
-            enabled,
-            Role::Button,
-            theme().bg_base,
-            px(0.),
-            intent,
-            None,
-            window,
-            cx,
-        )
-        .size(pt(28.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(rgb(theme().surface))
-        .child(
-            div()
-                .opacity(if enabled { 1. } else { 0.5 })
-                .child(if id.ends_with("-inc") { "+" } else { "−" }),
-        )
-        .into_any_element()
-    }
-    pub(crate) fn toggle(
-        &mut self,
-        id: &str,
-        title: Msg,
-        checked: bool,
-        intent: SettingsIntent,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.control(
-            id.into(),
-            title.t().into(),
-            checked,
-            true,
-            Role::Switch,
-            theme().bg_base,
-            px(0.),
-            intent,
-            None,
-            window,
-            cx,
-        )
-        .w(pt(40.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .relative()
-                .w(pt(32.))
-                .h(pt(18.))
-                .rounded_full()
-                .bg(rgb(if checked {
-                    self.snapshot.effective_accent
-                } else {
-                    theme().selected
-                }))
-                .child(
-                    div()
-                        .absolute()
-                        .top(pt(2.))
-                        .left(pt(if checked { 16. } else { 2. }))
-                        .size(pt(14.))
-                        .rounded_full()
-                        .bg(white())
-                        .shadow_sm(),
-                ),
-        )
-        .into_any_element()
-    }
-    pub(crate) fn choices(
-        &mut self,
-        group: &str,
-        entries: Vec<(String, SharedString, bool, bool, SettingsIntent)>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let ids: Vec<_> = entries.iter().map(|entry| entry.0.clone()).collect();
-        let selected = entries.iter().position(|entry| entry.2).unwrap_or(0);
-        if !ids.iter().any(|id| {
-            self.focus
-                .get(id)
-                .is_some_and(|focus| focus.is_focused(window))
-        }) {
-            let entry = entries
-                .iter()
-                .position(|entry| entry.2 && entry.3)
-                .or_else(|| entries.iter().position(|entry| entry.3))
-                .unwrap_or(selected);
-            self.groups.insert(group.into(), entry);
-        }
-        let mut track = div()
-            .id(SharedString::from(group.to_owned()))
-            .relative()
-            .min_w_0()
-            .w(pt(144. * entries.len() as f32))
-            .max_w_full()
-            .flex()
-            .flex_wrap()
-            .gap(pt(4.).max(px(6.)))
-            .px(pt(2.))
-            .role(Role::RadioGroup)
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(pt(2.))
-                    .bottom(pt(2.))
-                    .rounded(pt(6.))
-                    .bg(rgb(theme().surface))
-                    .when(cfg!(feature = "gui-e2e"), |visual| {
-                        visual.child(self.measured(
-                            format!("{group}-visual"),
-                            Role::Image,
-                            String::new(),
-                            String::new(),
-                            false,
-                            false,
-                            false,
-                        ))
-                    }),
-            );
-        for (index, (id, label, selected, enabled, intent)) in entries.into_iter().enumerate() {
-            let control = self
-                .control(
-                    id,
-                    label.clone(),
-                    selected,
-                    enabled,
-                    Role::RadioButton,
-                    theme().bg_base,
-                    px(0.),
-                    intent,
-                    Some((group.into(), index, ids.clone())),
-                    window,
-                    cx,
-                )
-                .flex_1()
-                .min_w(pt(64.))
-                .px(pt(8.))
-                .py(pt(4.))
-                .line_height(pt(20.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_center()
-                .when(selected, |el| {
-                    // The Settings segment is raised, not an inactive row (#1816).
-                    let fill = match theme().slug.as_ref() {
-                        "apple-light" => white(),
-                        "apple-dark" => rgb(0x66666c).into(),
-                        _ => theme().segment_selected_bg(),
-                    };
-                    el.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .top(pt(4.))
-                            .bottom(pt(4.))
-                            .rounded(pt(4.))
-                            .bg(fill)
-                            .shadow_sm()
-                            .when(cfg!(feature = "gui-e2e"), |visual| {
-                                visual.child(self.measured(
-                                    format!("{}-visual", ids[index]),
-                                    Role::Image,
-                                    String::new(),
-                                    String::new(),
-                                    false,
-                                    false,
-                                    false,
-                                ))
-                            }),
-                    )
-                })
-                .child(
-                    div()
-                        .min_w_0()
-                        .opacity(if enabled { 1. } else { 0.5 })
-                        .child(label),
-                );
-            track = track.child(control);
-        }
-        track.into_any_element()
-    }
     pub(crate) fn sidebar(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let ids: Vec<_> = Pane::ALL
             .iter()
@@ -609,14 +534,14 @@ impl SettingsView {
             );
         }
         let mut sidebar = div()
-            .id("settings-sidebar")
-            .w(pt(176.))
+            .id("settings-sidebar-items")
+            .w_full()
+            .min_w_0()
             .flex_shrink_0()
             .p(pt(8.))
             .flex()
             .flex_col()
-            .gap(pt(4.).max(px(6.)))
-            .bg(rgb(theme().surface))
+            .gap(pt(2.).max(px(6.)))
             .role(Role::TabList);
         for (index, pane) in Pane::ALL.into_iter().enumerate() {
             let (icon, light, dark) = match pane {
@@ -630,6 +555,7 @@ impl SettingsView {
                 Pane::General => (IconName::Settings2, 0x8e8e93, 0x6e6e73),
             };
             let selected = pane == self.pane;
+            let hue = if theme().dark { dark } else { light };
             let item = self
                 .control(
                     ids[index].clone(),
@@ -637,30 +563,43 @@ impl SettingsView {
                     selected,
                     true,
                     Role::Tab,
-                    theme().surface,
+                    ink::sidebar(),
                     px(0.),
-                    SettingsIntent::Pane(pane),
+                    10.,
+                    Some(SettingsIntent::Pane(pane)),
                     Some(("sidebar".into(), index, ids.clone())),
                     window,
                     cx,
                 )
                 .flex()
                 .items_center()
-                .gap(pt(8.))
+                .min_h(pt(metrics::SIDEBAR_ROW))
+                .gap(pt(9.))
                 .px(pt(6.))
-                .py(pt(5.))
+                .py(pt(2.))
                 .when(selected, |el| el.bg(rgb(theme().selected)))
+                .when(!selected, |el| {
+                    el.hover(|s| s.bg(rgb(ink::control_hover())))
+                        .active(|s| s.bg(rgb(ink::control_pressed())))
+                })
                 .child(
                     div()
                         .relative()
-                        .size(pt(20.))
+                        .size(pt(metrics::TILE))
                         .flex_shrink_0()
                         .rounded(pt(5.))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(rgb(if theme().dark { dark } else { light }))
-                        .text_color(white())
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(
+                                rgb(super::kit_style::mix(hue, 0xffffff, 0.22)).into(),
+                                0.,
+                            ),
+                            linear_color_stop(rgb(hue).into(), 1.),
+                        ))
+                        .text_color(rgb(theme::on_accent_foreground(hue)))
                         .when(cfg!(feature = "gui-e2e"), |tile| {
                             tile.child(self.measured(
                                 format!("settings-pane-tile-{}", pane.id()),
@@ -674,15 +613,41 @@ impl SettingsView {
                         })
                         .child(Icon::new(icon).with_size(Size::Size(pt(12.4)))),
                 )
-                .child(div().min_w_0().child(pane.title()));
-            sidebar = sidebar.child(item);
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(if selected {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .when(cfg!(feature = "gui-e2e"), |label| {
+                            label.child(self.measured(
+                                format!("{}-label", ids[index]),
+                                Role::Label,
+                                pane.title().into(),
+                                String::new(),
+                                false,
+                                selected,
+                                false,
+                            ))
+                        })
+                        .child(pane.title()),
+                );
+            sidebar = sidebar.child(item.hover_tooltip(
+                SharedString::from(format!("settings-pane-name-{}", pane.id())),
+                pane.title(),
+            ));
         }
         let chrome = self.chrome_heights.clone();
         let sidebar = sidebar
             .relative()
             .children(cfg!(feature = "gui-e2e").then(|| {
                 self.measured(
-                    "settings-sidebar".into(),
+                    "settings-sidebar-items".into(),
                     Role::TabList,
                     Msg::SettingsTitle.t().into(),
                     String::new(),
@@ -702,10 +667,59 @@ impl SettingsView {
                 .size_full(),
             );
         div()
+            .relative()
             .h_full()
-            .flex_shrink_0()
-            .bg(rgb(theme().surface))
-            .child(sidebar)
+            .w(pt(metrics::SIDEBAR_WIDTH + 16.))
+            .max_w(relative(0.55))
+            .min_w_0()
+            .flex_shrink(1.)
+            .p(pt(8.))
+            .bg(rgb(ink::window()))
+            .child(
+                div()
+                    .absolute()
+                    .inset(pt(8.))
+                    .rounded(pt(12.))
+                    .border_1()
+                    .border_color(rgb(ink::hairline()))
+                    .bg(rgb(ink::sidebar())),
+            )
+            .child(
+                div()
+                    .id("settings-sidebar-scrollbar")
+                    .relative()
+                    .size_full()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("settings-sidebar")
+                            .size_full()
+                            .min_h_0()
+                            .min_w_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.sidebar_scroll)
+                            .map(|mut viewport| {
+                                viewport.style().restrict_scroll_to_axis = Some(true);
+                                viewport
+                            })
+                            .child(sidebar),
+                    )
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            "settings-sidebar".into(),
+                            Role::TabList,
+                            Msg::SettingsTitle.t().into(),
+                            String::new(),
+                            false,
+                            false,
+                            false,
+                        )
+                    }))
+                    .child(
+                        gpui_component::scroll::Scrollbar::vertical(&self.sidebar_scroll)
+                            .id("settings-sidebar-scrollbar"),
+                    ),
+            )
             .into_any_element()
     }
     pub(crate) fn repair_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -741,31 +755,19 @@ impl SettingsView {
                 }
             }
         }
-        let focused_model_missing = self
+        let model_focused = self
             .focus
-            .iter()
-            .find(|(_, focus)| focus.is_focused(window))
-            .and_then(|(id, _)| id.strip_prefix("sc-model-"))
-            .is_some_and(|model| {
-                !self
-                    .snapshot
-                    .models
-                    .iter()
-                    .any(|candidate| candidate.as_ref() == model)
-            });
+            .get("sc-model-select")
+            .is_some_and(|focus| focus.is_focused(window));
         if self.pane != Pane::SmartCommit
             || self.snapshot.smart_provider != SmartProvider::Ollama
             || !self.snapshot.smart_ollama_available
             || self.snapshot.smart_detecting
-            || focused_model_missing
+            || self.snapshot.models.is_empty()
         {
-            let model_focused = self
-                .focus
-                .iter()
-                .any(|(id, focus)| id.starts_with("sc-model-") && focus.is_focused(window));
             if model_focused {
                 let id = if self.pane == Pane::SmartCommit {
-                    format!("sc-provider-{}", self.snapshot.smart_provider.slug())
+                    "sc-provider-select".to_owned()
                 } else {
                     format!("settings-pane-{}", self.pane.id())
                 };

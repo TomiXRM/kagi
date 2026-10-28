@@ -390,6 +390,31 @@ impl SettingsFixture {
                         .map(SharedString::from)
                         .collect();
             }
+            "reorder-theme-catalog" => {
+                let selected = self
+                    .snapshot
+                    .themes
+                    .iter()
+                    .find(|palette| palette.slug == self.snapshot.theme_slug.as_ref())
+                    .ok_or("Selected theme is absent from fixture catalog")?;
+                let dark = selected.dark;
+                let mut indices = self
+                    .snapshot
+                    .themes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, palette)| {
+                        palette.dark == dark && palette.slug != self.snapshot.theme_slug.as_ref()
+                    })
+                    .map(|(index, _)| index);
+                let first = indices
+                    .next()
+                    .ok_or("Fixture catalog needs another same-mode theme")?;
+                let second = indices
+                    .next()
+                    .ok_or("Fixture catalog needs two other same-mode themes")?;
+                self.snapshot.themes.swap(first, second);
+            }
             "reseed" => {}
             _ => return Err(format!("Unsupported fixture command: {command}")),
         }
@@ -405,9 +430,16 @@ impl SettingsFixture {
             "width": f32::from(probe.bounds.size.width), "height": f32::from(probe.bounds.size.height),
             "focused": probe.focused, "selected": probe.selected, "disabled": probe.disabled,
             "name": probe.name, "value": probe.value, "role": format!("{:?}", probe.role),
+            "paint": probe.paint.map(|paint| json!({
+                "fontSize": f32::from(paint.font_size), "fontWeight": paint.font_weight.0,
+                "textColor": u32::from(paint.text_color.to_rgb()) >> 8,
+            })),
         })).collect();
         json!({ "language": self.snapshot.language.slug(), "theme": self.snapshot.theme_slug.as_ref(),
             "themeCount": self.snapshot.themes.len(),
+            "themeCatalog": self.snapshot.themes.iter().map(|palette| json!({
+                "slug": palette.slug.as_ref(), "dark": palette.dark,
+            })).collect::<Vec<_>>(),
             "pane": view.pane().id(), "requests": self.requests.len(), "events": self.requests,
             "visible": self.visible, "unsupported": self.unsupported, "pendingSaves": self.pending_saves.len(),
             "pendingReset": self.pending_reset.is_some(), "pendingConsent": self.pending_consent,

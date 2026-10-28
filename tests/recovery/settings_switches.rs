@@ -121,6 +121,18 @@ pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
             let start = probe(cx, window, id).expect("production switch");
             assert_eq!(start.role, gpui::Role::Switch);
             assert_eq!(start.name, title.t());
+            let visual = bounds(cx, window, &format!("{id}-visual")).expect("actual switch track");
+            let knob = bounds(cx, window, &format!("{id}-knob")).expect("actual white knob");
+            let zoom = kagi::ui::theme::zoom();
+            for (actual, expected) in [
+                (visual.size.width, 28.),
+                (visual.size.height, 16.),
+                (knob.size.width, 12.),
+                (knob.size.height, 12.),
+            ] {
+                assert!((actual - gpui::px(expected * zoom)).abs() <= gpui::px(0.5));
+            }
+            assert!(start.bounds.size.height >= gpui::px(28. * zoom - 0.5));
             let before = key.and_then(settings::read_setting);
             let smart_enabled = settings::read_setting("smart_commit_llm_enabled");
             let consent = settings::read_setting("smart_commit_consent_accepted");
@@ -271,9 +283,12 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                 assert!(!controls.is_empty(), "{} has production content", pane.id());
                 let required: &[&str] = match pane {
                     kagi_ui_settings::Pane::Appearance => &[
-                        "settings-themes-scroll",
-                        "settings-interface-group",
-                        "settings-theme-folder-group",
+                        "settings-themes-light-scroll",
+                        "settings-themes-dark-scroll",
+                        "settings-layout-group",
+                        "settings-motion-group",
+                        "settings-theme-controls-group",
+                        "settings-custom-themes-group",
                         "settings-theme-folder-open",
                         "settings-theme-reload",
                         "settings-theme-guide",
@@ -303,9 +318,8 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
                     kagi_ui_settings::Pane::SmartCommit => &[
                         "settings-smart-group",
                         "sc-enabled-toggle",
-                        "sc-provider-ollama",
-                        "sc-provider-claude-code",
-                        "sc-provider-codex",
+                        "sc-provider-select",
+                        "sc-model-select",
                     ],
                     kagi_ui_settings::Pane::Analyze => &[
                         "settings-analyze-input",

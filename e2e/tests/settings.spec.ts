@@ -1,86 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { observed, frames, host, boot, probe, reveal, click, pane, paintedPixels, luminance, panes, themeStrip, expectSnappedLength, type Probe } from "./settings-helpers";
 
-type Probe = { id: string; x: number; y: number; width: number; height: number; focused: boolean; selected: boolean; disabled: boolean; name: string; value: string; role: string };
-type Observed = {
-  language: string; theme: string; themeCount: number; pane: string; requests: number; events: string[];
-  visible: boolean; unsupported: string[]; pendingSaves: number; pendingReset: boolean; pendingConsent: boolean;
-  smartEnabled: boolean; smartProvider: string; smartModel: string | null; graphCompact: boolean; graphLaneCompact: boolean;
-  terminalAutoLock: boolean; autoFetch: boolean; reduceMotion: boolean; zoom: number; toolbar: string;
-  followsSystemAccent: boolean; compactThreshold: number; copyTarget: string; markdown: string;
-  draft: string; baseline: string; dirty: boolean; controls: Probe[];
-  scrollY: number; scrollMax: number;
-};
-declare global {
-  interface Window {
-    kagiSettingsObserved: () => Observed;
-    kagiSettingsCommand: (command: string, value?: string) => void;
-  }
-}
-const panes = ["appearance", "graph", "editor", "terminal", "network", "smart_commit", "analyze", "general"] as const;
-const observed = (page: Page) => page.evaluate(() => window.kagiSettingsObserved());
-async function frames(page: Page) {
-  await page.evaluate(() => {
-    const { promise, resolve } = Promise.withResolvers<void>();
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    return promise;
-  });
-}
-async function host(page: Page, command: string, value?: string) {
-  await page.evaluate(({ command, value }) => window.kagiSettingsCommand(command, value), { command, value });
-  await frames(page);
-}
-async function boot(page: Page) {
-  await page.goto("/?story=settings");
-  await page.waitForSelector("body[data-kagi-ready='1']");
-  await expect.poll(async () => (await observed(page))?.controls.length ?? 0).toBeGreaterThan(8);
-}
-async function probe(page: Page, id: string) {
-  await expect.poll(async () => (await observed(page)).controls.some(control => control.id === id)).toBe(true);
-  return (await observed(page)).controls.find(control => control.id === id)!;
-}
-// Geometry comes from the actual production element after layout. Scroll and
-// pointer/keyboard events still go through Chromium/GPUI, not fixture callbacks.
-async function reveal(page: Page, id: string) {
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const control = await probe(page, id);
-    const size = page.viewportSize()!;
-    const viewport = id.startsWith("settings-pane-")
-      ? { x: 0, y: 0, width: size.width, height: size.height }
-      : await probe(page, "settings-detail-scroll");
-    const top = viewport.y + 1;
-    const bottom = viewport.y + viewport.height - 1;
-    if (control.y < top || control.y + control.height > bottom) {
-      await page.mouse.move(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
-      await page.mouse.wheel(0, control.y < top ? control.y - top : control.y + control.height - bottom);
-      await frames(page);
-      continue;
-    }
-    if (control.role === "RadioButton" && id.startsWith("settings-theme-")) {
-      const strip = await probe(page, "settings-themes-scroll");
-      const left = strip.x + 7;
-      const right = strip.x + strip.width - 7;
-      if (control.x < left || control.x + control.width > right) {
-        await page.mouse.move(strip.x + strip.width / 2, control.y + control.height / 2);
-        await page.mouse.wheel(control.x < left ? control.x - left : control.x + control.width - right, 0);
-        await frames(page);
-        continue;
-      }
-    }
-    expect(control.x).toBeGreaterThanOrEqual(viewport.x - 1);
-    expect(control.x + control.width).toBeLessThanOrEqual(viewport.x + viewport.width + 1);
-    return control;
-  }
-  throw new Error(`Production control ${id} did not become visible: ${JSON.stringify(await probe(page, id))}`);
-}
-async function click(page: Page, id: string) {
-  const control = await reveal(page, id);
-  await page.mouse.click(control.x + control.width / 2, control.y + control.height / 2);
-  await frames(page);
-}
-async function pane(page: Page, id: string) {
-  await click(page, `settings-pane-${id}`);
-  await expect.poll(async () => (await observed(page)).pane).toBe(id);
-}
 async function replaceDraft(page: Page, text: string) {
   await click(page, "settings-analyze-input");
   // wasm32 uses GPUI's non-macOS binding table. Type real key events: the
@@ -137,35 +57,6 @@ test("theme focus is separate from selection and switch focus is separate from O
   expect((await observed(page)).graphLaneCompact).toBe(true);
 });
 
-async function paintedPixels(page: Page, points: number[][]) {
-  // One real frame per state: recapturing the GPU for each pixel is both slow
-  // and less coherent than sampling all assertions from the attached image.
-  const png = await page.screenshot({ type: "png" });
-  const colors = await page.evaluate(async ({ encoded, points }) => {
-    const bytes = Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0));
-    const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-    const canvas = document.createElement("canvas");
-    canvas.width = image.width;
-    canvas.height = image.height;
-    const context = canvas.getContext("2d")!;
-    context.drawImage(image, 0, 0);
-    image.close();
-    return points.map(([x, y]) => {
-      const pixelX = Math.floor(Math.floor(x) * canvas.width / innerWidth);
-      const pixelY = Math.floor(Math.floor(y) * canvas.height / innerHeight);
-      if (pixelX < 0 || pixelY < 0 || pixelX >= canvas.width || pixelY >= canvas.height) {
-        throw new Error(`Paint sample is outside the actual screenshot: ${x},${y}`);
-      }
-      return Array.from(context.getImageData(pixelX, pixelY, 1, 1).data).slice(0, 3);
-    });
-  }, { encoded: png.toString("base64"), points });
-  return { png, colors };
-}
-
-const luminance = (rgb: number[]) => rgb.reduce((sum, value, channel) => {
-  const s = value / 255;
-  return sum + (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][channel];
-}, 0);
 
 test("pale accent active focus paint contrasts on unselected themes, ON switches and adjacent selections", async ({ page }, info) => {
   test.setTimeout(90_000);
@@ -180,7 +71,7 @@ test("pale accent active focus paint contrasts on unselected themes, ON switches
     await frames(page);
     const theme = (await observed(page)).controls.find(control => control.id.startsWith("settings-theme-") && control.focused)!;
     expect(theme.selected).toBe(false);
-    for (const kind of ["unselected-theme", "on-switch", "disabled-provider", "segment", "segment-reverse", "sidebar-reverse"]) {
+    for (const kind of ["unselected-theme", "on-switch", "disabled-capsule", "segment", "segment-reverse", "sidebar-reverse"]) {
       let control = theme;
       if (kind === "on-switch") {
         await pane(page, "graph");
@@ -189,12 +80,12 @@ test("pale accent active focus paint contrasts on unselected themes, ON switches
         control = await probe(page, "compact-toggle");
         expect(control.selected).toBe(true);
       }
-      if (kind === "disabled-provider") {
-        await pane(page, "smart_commit");
-        await click(page, "sc-provider-ollama");
-        await page.keyboard.press("ArrowRight");
-        await frames(page);
-        control = await probe(page, "sc-provider-claude-code");
+      if (kind === "disabled-capsule") {
+        // PopupMenu skips disabled options; retain the disabled focus paint
+        // oracle on the real unavailable native-folder capsule instead.
+        await pane(page, "appearance");
+        await click(page, "settings-theme-folder-open");
+        control = await probe(page, "settings-theme-folder-open");
         expect(control.disabled).toBe(true);
         const requests = (await observed(page)).requests;
         await page.keyboard.press("Space");
@@ -543,14 +434,26 @@ test("Smart Commit requires host consent; disabled provider and disappearing mod
   await click(page, "sc-enabled-toggle");
   await host(page, "consent", "accept");
   expect((await observed(page)).smartEnabled).toBe(true);
+  const beforePopup = (await observed(page)).requests;
+  await click(page, "sc-provider-select");
+  expect((await observed(page)).requests).toBe(beforePopup);
   expect((await probe(page, "sc-provider-claude-code")).disabled).toBe(true);
   await click(page, "sc-provider-claude-code");
   expect((await observed(page)).smartProvider).toBe("ollama");
+  await page.keyboard.press("ArrowDown"); await frames(page);
+  expect((await observed(page)).smartProvider).toBe("ollama");
+  await page.keyboard.press("Escape"); await frames(page);
+  expect((await probe(page, "sc-provider-select")).focused).toBe(true);
+  expect((await observed(page)).requests).toBe(beforePopup);
+  await click(page, "sc-model-select");
   await click(page, "sc-model-llama3.2:3b");
   expect((await observed(page)).smartModel).toBe("llama3.2:3b");
+  await click(page, "sc-model-select");
   await host(page, "models", "[]");
   expect((await observed(page)).smartModel).toBe("llama3.2:3b");
-  expect((await observed(page)).controls.some(control => control.id.startsWith("sc-model-") && control.focused)).toBe(false);
+  expect((await observed(page)).controls.some(control => control.id.startsWith("sc-model-") && control.id !== "sc-model-select" && !control.id.startsWith("sc-model-select-"))).toBe(false);
+  expect((await probe(page, "sc-model-select")).value).toContain("llama3.2:3b");
+  await click(page, "sc-provider-select");
   await click(page, "sc-provider-codex");
   expect((await observed(page)).smartProvider).toBe("codex");
 });
@@ -680,15 +583,26 @@ for (const [language, appearance, zoom] of [
     await host(page, "appearance", appearance);
     await host(page, "zoom", String(zoom));
     const initial = await observed(page);
-    const cards = initial.controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-")).sort((a, b) => a.x - b.x);
+    const catalog = [false, true].flatMap(dark => initial.themeCatalog.filter(theme => theme.dark === dark));
+    const actualCards = initial.controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"));
+    expect(actualCards.map(card => card.id).sort()).toEqual(catalog.map(theme => `settings-theme-${theme.slug}`).sort());
+    expect(new Set(catalog.map(theme => theme.slug)).size).toBe(initial.themeCount);
+    const cards = catalog.map(theme => actualCards.find(card => card.id === `settings-theme-${theme.slug}`)!);
+    const light = await probe(page, "settings-themes-light-scroll");
+    const dark = await probe(page, "settings-themes-dark-scroll");
+    expect(light.y + light.height).toBeLessThan(dark.y);
+    for (const card of cards) expectSnappedLength(card.width, 144 * zoom);
     expect(cards).toHaveLength(initial.themeCount);
     expect(cards.length).toBeGreaterThan(2);
     const inStrip = async (control: Probe, margin = 0) => {
-      const strip = await probe(page, "settings-themes-scroll");
+      const strip = await themeStrip(page, control.id);
       expect(control.x - margin).toBeGreaterThanOrEqual(strip.x);
       expect(control.x + control.width + margin).toBeLessThanOrEqual(strip.x + strip.width);
       expect(control.y - margin).toBeGreaterThanOrEqual(strip.y);
       expect(control.y + control.height + margin).toBeLessThanOrEqual(strip.y + strip.height);
+      const detail = await probe(page, "settings-detail-scroll");
+      expect(control.y - margin).toBeGreaterThanOrEqual(detail.y);
+      expect(control.y + control.height + margin).toBeLessThanOrEqual(detail.y + detail.height);
     };
     await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
     await info.attach("appearance-initial.png", { body: await page.screenshot(), contentType: "image/png" });
@@ -700,6 +614,7 @@ for (const [language, appearance, zoom] of [
       const card = await probe(page, cards[index].id);
       expect(card.focused).toBe(true);
       expect((await observed(page)).theme).toBe(initial.theme);
+      expect((await observed(page)).controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-") && control.selected)).toHaveLength(1);
       await inStrip(card, 7);
       const ring = await probe(page, `${card.id}-focus-ring`);
       await inStrip(ring);
@@ -726,21 +641,47 @@ for (const [language, appearance, zoom] of [
     await page.keyboard.press("Space"); await frames(page);
     expect((await observed(page)).theme).toBe(cards.at(-1)!.id.slice("settings-theme-".length));
     await click(page, `settings-theme-${initial.theme}`);
-    let strip = await probe(page, "settings-themes-scroll");
-    const firstX = (await probe(page, cards[0].id)).x;
-    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
+    const beforeBrowse = await observed(page);
+    for (const sectionDark of [false, true]) {
+      const section = catalog.filter(theme => theme.dark === sectionDark);
+      const firstId = `settings-theme-${section[0].slug}`;
+      await reveal(page, firstId);
+      const strip = await themeStrip(page, firstId);
+      const otherId = `settings-theme-${catalog.find(theme => theme.dark !== sectionDark)!.slug}`;
+      const otherX = (await probe(page, otherId)).x;
+      const firstX = (await probe(page, firstId)).x;
+      await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
+      await page.mouse.wheel(400, 0); await frames(page);
+      const browsedX = (await probe(page, firstId)).x;
+      expect(browsedX).toBeLessThan(firstX);
+      expect((await probe(page, otherId)).x).toBeCloseTo(otherX);
+      await host(page, "reseed");
+      expect((await probe(page, firstId)).x).toBeCloseTo(browsedX);
+      await click(page, "settings-pane-appearance");
+      expect((await probe(page, firstId)).x).toBeCloseTo(browsedX);
+      await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
+      const beforeVertical = (await observed(page)).scrollY;
+      await page.mouse.wheel(0, 120); await frames(page);
+      expect((await observed(page)).scrollY).toBeLessThan(beforeVertical);
+      expect((await probe(page, firstId)).x).toBeCloseTo(browsedX);
+      expect((await probe(page, otherId)).x).toBeCloseTo(otherX);
+      expect((await observed(page)).theme).toBe(beforeBrowse.theme);
+      expect((await observed(page)).requests).toBe(beforeBrowse.requests);
+    }
+    const selectedId = `settings-theme-${initial.theme}`;
+    await reveal(page, selectedId);
+    const selectedStrip = await themeStrip(page, selectedId);
+    const selectedX = (await probe(page, selectedId)).x;
+    await page.mouse.move(selectedStrip.x + selectedStrip.width / 2, selectedStrip.y + selectedStrip.height / 2);
     await page.mouse.wheel(400, 0); await frames(page);
-    const browsedX = (await probe(page, cards[0].id)).x;
-    expect(browsedX).toBeLessThan(firstX);
-    await host(page, "reseed");
-    expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
-    await click(page, "settings-pane-appearance");
-    expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
-    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
-    const beforeVertical = (await observed(page)).scrollY;
-    await page.mouse.wheel(0, 120); await frames(page);
-    expect((await observed(page)).scrollY).toBeLessThan(beforeVertical);
-    expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
+    expect((await probe(page, selectedId)).x).toBeLessThan(selectedX);
+    await host(page, "reorder-theme-catalog");
+    const reordered = await observed(page);
+    expect(reordered.themeCount).toBe(initial.themeCount);
+    expect(reordered.themeCatalog).not.toEqual(initial.themeCatalog);
+    expect(reordered.theme).toBe(initial.theme);
+    expect(reordered.requests).toBe(beforeBrowse.requests);
+    await inStrip(await probe(page, selectedId), 7);
     await page.mouse.wheel(0, -100000); await frames(page);
     await pane(page, "graph"); await pane(page, "appearance");
     await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);

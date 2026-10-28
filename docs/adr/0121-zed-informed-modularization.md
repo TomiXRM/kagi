@@ -216,3 +216,51 @@ The browser host embeds the same pinned component icon bytes via the asset
 crate's published Cargo build metadata. It must not silently omit symbols or
 depend on CDN timing: fixture-only transport/assets differ, production
 rendering, control semantics and palette data do not.
+
+### Preserve the final experiment's component contract
+
+The owner's quality baseline is PR #1814's final i10 kit and v9 skill
+(`1c6486202fdd28d5c2f600da18baaade645ef5d6`), not the old production Settings.
+The port wires production state and input into those roles; matching the pane
+inventory or a generic HIG checklist does not authorize reconstructing their
+visual vocabulary. `kit_style` owns the original metrics and theme-derived ink;
+`controls` owns grouping/navigation/interaction, `control_parts` owns the used
+switch/segment/capsule/stepper roles, and `popups` uses the existing GPUI menu.
+Pages compose Theme, Layout, Motion and Custom themes instead of drawing parts
+or collecting unrelated preferences in Interface.
+
+Carry forward 40/52-point rows, 10-point groups, non-layout one-pixel hairlines,
+15/13/11.5-point title/body/secondary hierarchy, label-derived equal segments,
+24-point visible controls, capsule geometry and top-lit fixed-hue tiles.
+The original theme card is 144 points wide, with an 88-point palette preview,
+terminal cursor, eight actual ANSI swatches and a centered 11.5-point caption.
+The original small switch is 28×16 with a 12-point knob; the earlier port's
+152-point cards and 32×18 switches were not owner constraints.
+
+Do not restore the experiment's known defects: keyboard focus remains a
+separate gapped, translucent contrast-safe ring; Light selection is white and
+both switch knobs are white. Retain at least 28-point hit targets, selected
+indication under hover, real caption ellipses/full accessible names, Japanese
+wrapping and no nested cards. Disabled controls and popup options remain inert;
+opening or navigating a popup does not emit a preference. Native effect owners,
+consent, persistence and Analyze revision handling are unchanged.
+Visible summaries and full hover/accessibility descriptions remain separate;
+the Analyze input and trailing actions compose one group with a non-layout
+separator. Switch motion respects both the effective system policy and the
+app preference. Equal segment widths use the actual UI font's shaped labels,
+not the experiment's Latin-only character-width estimate.
+
+The requested Light/Dark presentation extends the same theme owner: classify
+with `Theme.dark`, mount two labeled horizontal strips, retain one global theme
+value and one Light-then-Dark roving group, and keep each strip's browsing state
+independent. There are no per-mode defaults, copied gallery or new backend API.
+
+The original 212-point sidebar/32-point rows are not compressed to fit zoom.
+Its outer width has a 55% ceiling and can flex below that ceiling to leave the
+detail's role-derived minimum: a whole numeric unit plus group insets, or a
+144-point theme card plus its full physical focus clearance, whichever is wider.
+One existing-style vertical scroll handle owns overflow and keyboard reveal.
+Full sidebar names remain accessible and available on hover when truncated.
+This preserves the 715-point host/640-point ceiling; it is not a new minimum
+window policy or a promise about arbitrarily tiny displays.
+

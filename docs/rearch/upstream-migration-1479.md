@@ -37,6 +37,22 @@ Kit: `https://github.com/longbridge/gpui-component/blob/1188c11003b5cb5b83bc07d3
   allocated width, preserving full accessible names and hover help.
   The `caf5007` source links below remain historical investigation evidence.
 
+- Approved bounded amendment to the existing Kit patch (#1816, 2026-10-28):
+  component/assets and the transitive macro package share
+  [`24833cd2f3b6e907720129e49d655b397be49c6c`](https://github.com/TomiXRM/gpui-kit/commit/24833cd2f3b6e907720129e49d655b397be49c6c).
+  The real custom popup-item root carries its full name, explicit radio checked
+  state and disabled state; ordinary menu actions retain their ordinary role.
+  First/wrap/confirm navigation respects eligibility. Only a selected, enabled
+  row whose own popup holds keyboard focus may claim an active descendant, so
+  pointer hover in a nested submenu cannot compete with the focused parent.
+  This does not add a new dependency family or change the Zed `edfc6891` pin.
+  #1479-S6 must preserve those actual menu-root and keyboard contracts through
+  public official APIs, not an accessible recorder child or enabled-first
+  catalog reordering. The fork's two ordinary keyboard tests and isolated
+  raw-tree diagnostic used its `90b3aa0` baseline; the diagnostic seam is not
+  published and is not evidence of Kagi's native OS accessibility delivery.
+  The Kagi consumer must be verified separately on its unchanged GPUI family.
+
 ### 全 slice 共通の merge 規則
 
 1. regression は **同じ PR 内で先に書く**（必要なら手元で red→green）。失敗するテストだけを dev に merge しない。挙動変更・テスト oracle・ADR/changelog を一つの green merge unit にする。

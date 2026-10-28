@@ -1,6 +1,6 @@
 //! #1199 / #1201: neutral Settings hierarchy and circular radio mark.
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::{FontWeight, VisualTestAppContext, rgb};
+use gpui::{rgb, FontWeight, VisualTestAppContext};
 use kagi::ui::{e2e, theme};
 
 pub(crate) fn luminance(color: u32) -> f64 {

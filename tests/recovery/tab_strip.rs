@@ -1,6 +1,6 @@
 //! Repository strip overflow and close-action accessibility regressions.
 use crate::macos::unmount;
-use gpui::{AnyWindowHandle, MouseButton, Role, VisualTestAppContext, px, size};
+use gpui::{px, size, AnyWindowHandle, MouseButton, Role, VisualTestAppContext};
 use kagi::ui::e2e;
 use kagi_ui_core::{i18n, theme};
 use std::{cell::RefCell, rc::Rc};

@@ -3,12 +3,12 @@ use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, drain_native_events, mount, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{
-    KagiApp, ToastKind, e2e,
+    e2e,
     i18n::{self, Msg},
     settings,
     settings_view::SettingsHostForE2e,
     smart_commit::SmartProvider,
-    theme,
+    theme, KagiApp, ToastKind,
 };
 
 pub(crate) fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
@@ -166,22 +166,18 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             "all providers remain discoverable in the real menu"
         );
         assert_eq!(options.iter().filter(|option| option.selected).count(), 1);
-        assert!(
-            options
-                .iter()
-                .all(|option| option.role == gpui::Role::MenuItemRadio && !option.name.is_empty())
-        );
+        assert!(options
+            .iter()
+            .all(|option| option.role == gpui::Role::MenuItemRadio && !option.name.is_empty()));
         assert_eq!(options[2].name, "Codex");
         assert!(options[2].disabled && !options[2].selected);
         for option in &options {
             assert_popup_radio_tree(cx, window, option);
         }
-        assert!(
-            probe(cx, window, "settings-provider-availability")
-                .unwrap()
-                .value
-                .contains(&i18n::provider_not_found_hint("Codex"))
-        );
+        assert!(probe(cx, window, "settings-provider-availability")
+            .unwrap()
+            .value
+            .contains(&i18n::provider_not_found_hint("Codex")));
         click(cx, window, "sc-provider-codex");
         assert_eq!(
             cx.read(|cx| app.read(cx).smart_commit.provider),
@@ -304,12 +300,10 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             );
             let actual = crate::native_ax::node(cx, window, "sc-model-select".into());
             assert_eq!(actual["aria"]["role"], "ComboBox");
-            assert!(
-                actual["aria"]["value"]
-                    .as_str()
-                    .unwrap()
-                    .contains(&selected_model)
-            );
+            assert!(actual["aria"]["value"]
+                .as_str()
+                .unwrap()
+                .contains(&selected_model));
             click(cx, window, "sc-model-select");
             keys(cx, window, "tab");
             draw(cx, window);
@@ -688,12 +682,10 @@ fn unwritable_directory(
             cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()),
             "draft-ignore\n"
         );
-        assert!(
-            probe(cx, window, "settings-analyze-error")
-                .unwrap()
-                .value
-                .contains("Permission denied")
-        );
+        assert!(probe(cx, window, "settings-analyze-error")
+            .unwrap()
+            .value
+            .contains("Permission denied"));
         drop(restore);
         assert_eq!(std::fs::read(path).unwrap(), b"saved bytes");
         dismiss_feedback(cx, app, window);
@@ -738,11 +730,9 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
             ToastKind::Error,
             "failed Analyze write shows an error toast"
         );
-        assert!(
-            error
-                .message
-                .starts_with(Msg::SettingsAnalyzeIgnoreFailed.t())
-        );
+        assert!(error
+            .message
+            .starts_with(Msg::SettingsAnalyzeIgnoreFailed.t()));
         assert!(error.message.contains("analyze_ignore"));
         assert!(error.message.contains("directory") || error.message.contains("Directory"));
         assert!(error.message.chars().count() <= 241);

@@ -2,8 +2,8 @@
 use super::kit_style::{ink, metrics, pt};
 use super::*;
 use gpui_component::{
-    ElementExt as _, Icon, IconName, Sizable, Size,
     menu::{PopupMenu, PopupMenuItem},
+    ElementExt as _, Icon, IconName, Sizable, Size,
 };
 use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::cell::Cell;

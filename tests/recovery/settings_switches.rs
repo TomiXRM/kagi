@@ -5,7 +5,7 @@ use crate::macos::{build_fixture, mount, unmount};
 use crate::settings_controls::{bounds, click, draw, probe};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::i18n::Msg;
-use kagi::ui::{KagiApp, settings};
+use kagi::ui::{settings, KagiApp};
 
 const SWITCHES: [(&str, &str, Option<&str>, Msg); 6] = [
     (

@@ -12,10 +12,12 @@ pane selection, control focus and detail scrolling. The native adapter retains
 store/effect ownership, with no second Settings store or repository read model
 in this host. Other platforms keep the portable overlay around the same entity.
 
-The 715-logical-point window is non-resizable and non-modal, with standard
-close/minimize lights and disabled zoom. The transparent unified compact frame
-sets app_owns_titlebar_drag and owns dragging only on its blank/title surface,
-not pane controls. The #1816 panes are Appearance, Graph, Editor, Terminal,
+The 900-logical-point window is non-resizable and non-modal, with standard
+close/minimize lights and disabled zoom. Its transparent unified frame places
+the traffic lights inside the canonical sidebar's top inset. Kagi draws no
+additional title band: the shared detail title names the pane exactly once.
+The host owns dragging in the blank top inset, not pane controls.
+The #1816 panes are Appearance, Graph, Editor, Terminal,
 Network & Sync, Smart Commit, Analyze and General (language). Pane selection,
 position and the last content height are saved through settings::; invalid or
 missing selections display Appearance, but a missing preference is not written
@@ -23,10 +25,11 @@ merely by opening Settings. Existing legacy selections migrate once.
 Disconnected-display positions recenter. Restoring height avoids an unnecessary
 initial resize on every reopen.
 The selected pane determines content height through real layout, with a
-500-logical-point floor when the display permits it. The owner's compact
-Settings amendment below sets the initial height and content-height ceiling
-to 640 points, further bounded by the current display's visible frame.
-Oversized pages remain reachable through the existing vertical scrollbar.
+500-logical-point floor when the display permits it. Initial height is 760
+points, matching the canonical theme chooser; restored and content-driven
+height are bounded only by the current display's visible frame, not by a
+compact-height ceiling. Oversized pages remain reachable through the existing
+vertical scrollbar.
 Width does not scale with UI zoom.
 Both position and height are saved on bounds changes as one flat-string
 settings_window_frame value ("x,y,content-height[,display-uuid]"), not alternating
@@ -187,11 +190,12 @@ in a multi-row grid, and a shorter default Settings window. Extend the existing
 second renderer, preference owner, carousel manager or stored scroll position.
 The shared/native/browser boundary in ADR-0121 is unchanged.
 
-The role remains an open-density Settings choice. Preserve the final PR #1814
-144-point palette cards, centered captions, preview selection ring and fixed-hue
-tiles, rather than the first port's approximations. The owner's subsequent
-reference splits Light Mode above Dark Mode: both labeled horizontal strips
-remain mounted, classified by `Theme.dark`. Reuse the existing Editor tab-strip
+The role remains an open-density Settings choice. The subsequent owner
+canonical ruling below selects the final PR #1814 `lab_i10_h` geometry:
+132×84-point previews, centered captions and fixed-hue tiles. Preview content
+uses real theme palettes rather than gallery fixture colors. Both labeled
+strips remain mounted, Light Mode above Dark Mode, classified by `Theme.dark`.
+Reuse the existing Editor tab-strip
 scrollbar and nearest-item reveal pattern. This is one continuously scrollable
 radio group, not dual preferences, a numeric slider, auto-playing carousel or pager.
 Apple's Scroll views guidance says: “It's alright to place a horizontal scroll
@@ -211,19 +215,36 @@ Theme loading/error and unavailable filesystem actions remain native-adapter
 states, not new carousel states; the normal catalog contains built-ins.
 There is no new destructive, approval, IME or persistence behavior.
 
-Both initial/restored height and content fitting are bounded to 640 points
-(or the smaller visible display area), retaining the existing 500-point floor
-where possible and content-driven shrinkage. Previously auto-saved tall heights
-are clamped, not discarded; position, display identity, unknown settings and
-normal bounds/quit flushing remain intact. The window was already non-resizable,
-so this does not remove user resizing. Keep its 715-point width and native chrome.
-Browser evidence must exercise 715×640 at EN/JA and 100%/167%, the existing
-640×640/167% resize, and 715×640/200% overflow. Keep the original sidebar metrics
-at the normal/167% baseline; at 200%, all eight destinations must be reachable
-by wheel and keyboard with the focused/selected row and its ring revealed.
-The sidebar may flex below its 55% ceiling to preserve whole detail controls.
-Verify horizontal endpoints, selected/focused reveal, manual-scroll retention,
-same-count catalog replacement, captions and lower Appearance rows before
-another native build. The actual host has no explicit minimum width: these
-bounded cases do not claim support for arbitrary smaller OS display widths.
+Initial/restored and content-driven heights fit the visible display area,
+retaining the existing 500-point floor where possible. Position, display
+identity, unknown settings and normal bounds/quit flushing remain intact.
+The window remains non-resizable. Browser narrow-width and zoom cases exercise
+shared-view containment; they are not the native window-size or chrome oracle.
+At large zoom, all eight destinations remain reachable by wheel and keyboard
+with the focused/selected row revealed. The sidebar may flex below its 55%
+ceiling to preserve whole detail controls on smaller display areas.
+
+## Amendment — 2026-10-29: owner-designated canonical composition (#1818)
+
+The owner-designated source is `origin/experiment/kagi-settings-skill` at
+`1c6486202`: `src/ui/settings_kit/{mod,controls}.rs`,
+`experiments/settings-skill/runs/i10/lab_i10_s8.rs.txt` and
+`lab_i10_h.rs.txt`. It supersedes the compact host dimensions and extra native
+title band, not native ownership, persistence, focus or consent behavior.
+The owner explicitly selected canonical 132×84 previews over the later
+144/88 port, direct `segment_selected_bg()` selection over hard-coded white,
+and a 900-point window with initial 760-point/content-driven screen-bounded
+height over the compact ceiling. The eight #1816 panes/order, no Search field
+and one-setting panes remain owner-approved exceptions.
+
+The sidebar panel begins at (8,8), is 212 points wide and extends to the
+bottom inset. Its 40-point top padding accommodates the OS-drawn traffic lights.
+Rows are 32 points with a 2-point gap and neutral selection. Each appearance's
+theme strip sits inside its own group card, and Accent has a section heading.
+The native `settings_window_composition` scenario captures everything Kagi draws
+with `window.render_to_image()` and records actual AppKit traffic-light bounds;
+Metal images do not contain the OS-drawn lights. Composition evidence lives in
+`target/ui-fidelity/settings/`, including the measured table and same-scale
+canonical/native sheets. Bounds relations are asserted on the native owner,
+not on copied implementation constants.
 

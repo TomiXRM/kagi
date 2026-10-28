@@ -1,6 +1,5 @@
 //! Palette-derived theme choices; preview colors never substitute invented art.
 use super::{
-    controls::section,
     kit_style::{ink, metrics, pt},
     *,
 };
@@ -67,7 +66,7 @@ impl SettingsView {
             .aria_label(Msg::SettingsTheme.t())
             .flex()
             .flex_col()
-            .gap(pt(16.))
+            .gap(pt(20.))
             .min_w_0()
             .w_full();
         let light_count = themes.iter().take_while(|palette| !palette.dark).count();
@@ -97,7 +96,7 @@ impl SettingsView {
                 .flex()
                 .flex_nowrap()
                 .items_start()
-                .gap(pt(10.))
+                .gap(pt(8.))
                 .min_w_0()
                 .w_full()
                 .overflow_x_scroll()
@@ -120,17 +119,33 @@ impl SettingsView {
                     && contrast(term_bg, term_fg) >= 4.5
                     && badge_ink.is_some();
                 let preview = div()
+                    .relative()
                     .w_full()
                     .rounded(pt(metrics::GROUP_RADIUS))
                     .p(pt(10.))
-                    .h(pt(88.))
+                    .h(pt(84.))
                     .flex_shrink_0()
                     .flex()
                     .flex_col()
                     .justify_between()
                     .bg(rgb(palette.bg_base))
-                    .border_1()
-                    .border_color(rgb(palette.text_muted))
+                    .border_2()
+                    .border_color(if selected {
+                        rgb(self.snapshot.effective_accent).into()
+                    } else {
+                        transparent_black()
+                    })
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            format!("settings-theme-preview-{}", palette.slug),
+                            Role::Image,
+                            palette.display_name().to_string(),
+                            String::new(),
+                            false,
+                            selected,
+                            false,
+                        )
+                    }))
                     .child(
                         div()
                             .flex()
@@ -282,27 +297,16 @@ impl SettingsView {
                         cx,
                     )
                     .w(pt(super::kit_style::metrics::THEME_CARD_WIDTH))
-                    .h(pt(146.))
+                    .flex_shrink_0()
+                    .h(pt(104.))
                     .min_w_0()
-                    .rounded(pt(16.))
-                    .p(px(2.))
+                    .rounded(pt(metrics::GROUP_RADIUS))
                     .hover(|style| style.bg(rgb(ink::control_hover())))
                     .active(|style| style.bg(rgb(ink::control_pressed())))
                     .flex()
                     .flex_col()
-                    .gap(pt(5.))
-                    .child(
-                        div()
-                            .rounded(pt(metrics::GROUP_RADIUS + 4.))
-                            .p(pt(2.))
-                            .border_2()
-                            .border_color(if selected {
-                                rgb(self.snapshot.effective_accent)
-                            } else {
-                                rgba(0)
-                            })
-                            .child(preview),
-                    )
+                    .gap(pt(6.))
+                    .child(preview)
                     .child(
                         div()
                             .relative()
@@ -313,7 +317,7 @@ impl SettingsView {
                             .min_w_0()
                             .text_center()
                             .text_size(pt(metrics::SECONDARY))
-                            .line_height(pt(16.))
+                            .line_height(pt(14.))
                             .text_color(if selected {
                                 ink::text()
                             } else {
@@ -325,19 +329,10 @@ impl SettingsView {
                             .child(caption_text)
                             .children(caption_text_probe),
                     );
-                // The scroll item includes the complete 2px ring and 3px gap.
-                // A transparent wrapper is not another visual card.
-                cards = cards.child(
-                    div()
-                        .w(pt(super::kit_style::metrics::THEME_CARD_WIDTH)
-                            + px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN * 2.))
-                        .flex_shrink_0()
-                        .p(px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN))
-                        .child(card.hover_tooltip(
-                            SharedString::from(format!("settings-theme-name-{}", palette.slug)),
-                            name,
-                        )),
-                );
+                cards = cards.child(card.hover_tooltip(
+                    SharedString::from(format!("settings-theme-name-{}", palette.slug)),
+                    name,
+                ));
             }
             let viewport = self.theme_viewport[mode].clone();
             let scroll = self.theme_scroll[mode].clone();
@@ -413,7 +408,18 @@ impl SettingsView {
                     .w_full()
                     .flex()
                     .flex_col()
-                    .child(section(label, None, area))
+                    .child(
+                        self.section(
+                            label,
+                            None,
+                            self.group(if mode == 0 {
+                                "settings-themes-light-group"
+                            } else {
+                                "settings-themes-dark-group"
+                            })
+                            .child(div().py(pt(12.)).child(area)),
+                        ),
+                    )
                     // Reveal the real section, including its heading, rather
                     // than clipping that heading above a revealed card strip.
                     .child(resize)

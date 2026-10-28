@@ -9,7 +9,8 @@ use gpui::{
 };
 use gpui_component::Root;
 
-const SETTINGS_HEIGHT: f32 = 640.;
+const SETTINGS_WIDTH: f32 = 900.;
+const SETTINGS_HEIGHT: f32 = 760.;
 
 #[derive(Default)]
 struct SettingsWindowHandle(Option<WindowHandle<Root>>);
@@ -83,13 +84,13 @@ fn window_options(cx: &App) -> WindowOptions {
         })
         .or_else(|| cx.primary_display());
     let visible = display.as_ref().map(|display| display.visible_bounds());
-    let max_height = visible
-        .map_or(SETTINGS_HEIGHT, |bounds| f32::from(bounds.size.height))
-        .min(SETTINGS_HEIGHT);
+    let max_height = visible.map_or(SETTINGS_HEIGHT, |bounds| f32::from(bounds.size.height));
     let height = saved
         .map_or(SETTINGS_HEIGHT, |frame| frame.height)
         .clamp(500_f32.min(max_height), max_height);
-    let width = visible.map_or(px(715.), |bounds| px(715.).min(bounds.size.width));
+    let width = visible.map_or(px(SETTINGS_WIDTH), |bounds| {
+        px(SETTINGS_WIDTH).min(bounds.size.width)
+    });
     let mut bounds = Bounds::centered(None, size(width, px(height)), cx);
     if let Some(visible) = visible {
         let restore = saved.filter(|frame| {
@@ -155,7 +156,7 @@ impl SettingsWindow {
             view.set_content_measure(
                 std::rc::Rc::new(move |bounds, window, cx| {
                     let _ = host.update(cx, |host, cx| {
-                        let height = f32::from(bounds.size.height) + 46.;
+                        let height = f32::from(bounds.size.height);
                         let pane = host.view.read(cx).pane();
                         let zoom = theme::zoom();
                         let displays = display_configuration();
@@ -305,7 +306,13 @@ impl Render for SettingsWindow {
                     });
                 }
             }))
-            .child(titlebar(pane))
+            .on_mouse_down(MouseButton::Left, |event, window, _| {
+                // The canonical sidebar reserves its top inset for native
+                // window controls and dragging, not a second painted titlebar.
+                if event.position.y < theme::scaled_px(40. * 16. / theme::BASE_REM_PX) {
+                    window.start_window_move();
+                }
+            })
             .child(self.view.clone())
             .when_some(
                 owner
@@ -391,13 +398,11 @@ fn fit_content(window: &Window, height: f32, cx: &App) {
         let content: NSRect = msg_send![view, frame];
         let visible: NSRect = msg_send![screen, visibleFrame];
         let inset = current.size.height - content.size.height;
-        let max_content = (visible.size.height - inset)
-            .max(0.)
-            .min(f64::from(SETTINGS_HEIGHT));
+        let max_content = (visible.size.height - inset).max(0.);
         let content_height = f64::from(height).clamp(500_f64.min(max_content), max_content);
         let mut fitted = current;
-        fitted.size.width =
-            (715. + current.size.width - content.size.width).min(visible.size.width);
+        fitted.size.width = (f64::from(SETTINGS_WIDTH) + current.size.width - content.size.width)
+            .min(visible.size.width);
         fitted.size.height = content_height + inset;
         // Preserve the top edge instead of Cocoa setContentSize's bottom anchor.
         fitted.origin.y += current.size.height - fitted.size.height;
@@ -459,24 +464,4 @@ fn close(window: &mut Window, cx: &App) {
     remember_geometry(window, cx);
     settings::flush();
     window.remove_window();
-}
-
-fn titlebar(pane: kagi_ui_settings::Pane) -> gpui::Div {
-    div()
-        .h(px(46.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .pl(px(80.))
-        .child(
-            div()
-                .flex_1()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .pr(px(80.))
-                .child(format!("{} — {}", Msg::SettingsTitle.t(), pane.title()))
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move()),
-        )
 }

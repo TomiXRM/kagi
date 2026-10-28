@@ -1,5 +1,5 @@
 //! Sidebar composition and its fixed-hue category tiles.
-use super::kit_style::{ink, metrics, pt};
+use super::kit_style::{ink, metrics, pt, Hue};
 use super::*;
 use gpui_component::{Icon, IconName, Sizable, Size};
 use kagi_ui_core::theme::{self, theme};
@@ -26,24 +26,26 @@ impl SettingsView {
             .w_full()
             .min_w_0()
             .flex_shrink_0()
-            .p(pt(8.))
+            .px(pt(8.) + px(1.))
+            .pt(pt(40.) + px(1.))
+            .pb(pt(8.))
             .flex()
             .flex_col()
-            .gap(pt(2.).max(px(6.)))
+            .gap(pt(2.))
             .role(Role::TabList);
         for (index, pane) in Pane::ALL.into_iter().enumerate() {
-            let (icon, light, dark) = match pane {
-                Pane::Appearance => (IconName::Palette, 0x5856d6, 0x5e5ce6),
-                Pane::Graph => (IconName::Network, 0xff9500, 0xff9f0a),
-                Pane::Editor => (IconName::File, 0x30b0c7, 0x40c8e0),
-                Pane::Terminal => (IconName::SquareTerminal, 0x8e8e93, 0x6e6e73),
-                Pane::Network => (IconName::Globe, 0x007aff, 0x0a84ff),
-                Pane::SmartCommit => (IconName::Bot, 0xaf52de, 0xbf5af2),
-                Pane::Analyze => (IconName::ChartPie, 0x30b0c7, 0x40c8e0),
-                Pane::General => (IconName::Settings2, 0x8e8e93, 0x6e6e73),
+            let (icon, hue) = match pane {
+                Pane::Appearance => (IconName::Palette, Hue::Indigo),
+                Pane::Graph => (IconName::GalleryVerticalEnd, Hue::Orange),
+                Pane::Editor => (IconName::File, Hue::Teal),
+                Pane::Terminal => (IconName::SquareTerminal, Hue::Gray),
+                Pane::Network => (IconName::Network, Hue::Blue),
+                Pane::SmartCommit => (IconName::Bot, Hue::Purple),
+                Pane::Analyze => (IconName::ChartPie, Hue::Teal),
+                Pane::General => (IconName::Settings2, Hue::Gray),
             };
             let selected = pane == self.pane;
-            let hue = if theme().dark { dark } else { light };
+            let hue = hue.rgb(theme().dark);
             let item = self
                 .control(
                     ids[index].clone(),
@@ -63,9 +65,10 @@ impl SettingsView {
                 .items_center()
                 .min_h(pt(metrics::SIDEBAR_ROW))
                 .gap(pt(9.))
-                .px(pt(6.))
-                .py(pt(2.))
-                .when(selected, |el| el.bg(rgb(theme().selected)))
+                .px(pt(8.))
+                .py(pt(4.))
+                .rounded(pt(8.))
+                .when(selected, |el| el.bg(ink::selected()))
                 .when(!selected, |el| {
                     el.hover(|s| s.bg(rgb(ink::control_hover())))
                         .active(|s| s.bg(rgb(ink::control_pressed())))
@@ -164,12 +167,24 @@ impl SettingsView {
             .bg(rgb(ink::window()))
             .child(
                 div()
+                    .id("settings-sidebar-panel")
                     .absolute()
                     .inset(pt(8.))
                     .rounded(pt(12.))
                     .border_1()
                     .border_color(rgb(ink::hairline()))
-                    .bg(rgb(ink::sidebar())),
+                    .bg(rgb(ink::sidebar()))
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            "settings-sidebar-panel".into(),
+                            Role::Group,
+                            Msg::SettingsTitle.t().into(),
+                            String::new(),
+                            false,
+                            false,
+                            false,
+                        )
+                    })),
             )
             .child(
                 div()

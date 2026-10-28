@@ -1,5 +1,4 @@
 use super::{
-    controls::section,
     kit_style::{ink, metrics, pt},
     *,
 };
@@ -40,7 +39,7 @@ impl SettingsView {
                     window,
                     cx,
                 );
-                section(
+                self.section(
                     Msg::SettingsMarkdownSection,
                     None,
                     self.group("settings-editor-group").child(self.row(
@@ -59,7 +58,7 @@ impl SettingsView {
                     window,
                     cx,
                 );
-                section(
+                self.section(
                     Msg::SettingsWorktreesSection,
                     None,
                     self.group("settings-terminal-group").child(self.row(
@@ -78,7 +77,7 @@ impl SettingsView {
                     window,
                     cx,
                 );
-                section(
+                self.section(
                     Msg::SettingsFetchSection,
                     None,
                     self.group("settings-network-group").child(self.row(
@@ -109,7 +108,7 @@ impl SettingsView {
                     window,
                     cx,
                 );
-                section(
+                self.section(
                     Msg::SettingsLanguage,
                     None,
                     self.group("settings-language-group").child(self.row(
@@ -246,52 +245,54 @@ impl SettingsView {
             .gap(pt(20.))
             .child(themes)
             .when(self.snapshot.accent_applicable, |content| {
-                content.child(theme_controls)
+                content.child(self.section(Msg::SettingsAccent, None, theme_controls))
             })
-            .child(section(Msg::SettingsLayout, None, layout))
-            .child(section(Msg::SettingsMotion, None, motion))
-            .child(section(
-                Msg::SettingsCustomThemes,
-                Some(
-                    div()
-                        .id("settings-custom-themes-help")
-                        .relative()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .role(Role::Label)
-                        .aria_label(Msg::SettingsCustomThemesDesc.t())
-                        .child(Msg::SettingsCustomThemesDesc.t())
-                        .children(cfg!(feature = "gui-e2e").then(|| {
-                            self.measured(
-                                "settings-custom-themes-help".into(),
-                                Role::Label,
-                                Msg::SettingsCustomThemes.t().into(),
-                                Msg::SettingsCustomThemesDesc.t().into(),
-                                false,
-                                false,
-                                false,
-                            )
-                        }))
-                        .into_any_element(),
-                ),
-                self.group("settings-custom-themes-group")
-                    .child(self.row(Msg::SettingsThemeFolder, folder, div()))
-                    .child(
+            .child(self.section(Msg::SettingsLayout, None, layout))
+            .child(self.section(Msg::SettingsMotion, None, motion))
+            .child(
+                self.section(
+                    Msg::SettingsCustomThemes,
+                    Some(
                         div()
+                            .id("settings-custom-themes-help")
+                            .relative()
                             .min_w_0()
-                            .w_full()
-                            .py(pt(10.))
                             .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .justify_end()
-                            .gap(pt(8.))
-                            .child(open)
-                            .child(reload)
-                            .child(guide),
+                            .flex_col()
+                            .role(Role::Label)
+                            .aria_label(Msg::SettingsCustomThemesDesc.t())
+                            .child(Msg::SettingsCustomThemesDesc.t())
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    "settings-custom-themes-help".into(),
+                                    Role::Label,
+                                    Msg::SettingsCustomThemes.t().into(),
+                                    Msg::SettingsCustomThemesDesc.t().into(),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            }))
+                            .into_any_element(),
                     ),
-            ))
+                    self.group("settings-custom-themes-group")
+                        .child(self.row(Msg::SettingsThemeFolder, folder, div()))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .w_full()
+                                .py(pt(10.))
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .justify_end()
+                                .gap(pt(8.))
+                                .child(open)
+                                .child(reload)
+                                .child(guide),
+                        ),
+                ),
+            )
             .into_any_element()
     }
     fn zoom_control(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -462,18 +463,24 @@ impl SettingsView {
             .flex()
             .flex_col()
             .gap(pt(20.))
-            .child(section(
-                Msg::SettingsPresentation,
-                None,
-                self.group("settings-graph-group")
-                    .child(self.row(Msg::SettingsCompact, Msg::SettingsCompactDesc.t(), compact))
-                    .child(self.row(
-                        Msg::SettingsLaneCompact,
-                        Msg::SettingsLaneCompactDesc.t(),
-                        lanes,
-                    )),
-            ))
-            .child(section(
+            .child(
+                self.section(
+                    Msg::SettingsPresentation,
+                    None,
+                    self.group("settings-graph-group")
+                        .child(self.row(
+                            Msg::SettingsCompact,
+                            Msg::SettingsCompactDesc.t(),
+                            compact,
+                        ))
+                        .child(self.row(
+                            Msg::SettingsLaneCompact,
+                            Msg::SettingsLaneCompactDesc.t(),
+                            lanes,
+                        )),
+                ),
+            )
+            .child(self.section(
                 Msg::SettingsCopySection,
                 None,
                 self.group("settings-copy-group").child(self.row(
@@ -535,11 +542,6 @@ impl SettingsView {
                 }
             }
         }
-        let provider_help = if unavailable.is_empty() {
-            Msg::SettingsSmartProviderDesc.t().to_owned()
-        } else {
-            format!("{}\n{unavailable}", Msg::SettingsSmartProviderDesc.t())
-        };
         let mut rows = self
             .group("settings-smart-group")
             .child(self.row(
@@ -547,7 +549,11 @@ impl SettingsView {
                 Msg::SettingsSmartEnableDesc.t(),
                 enabled,
             ))
-            .child(self.row(Msg::SettingsSmartProvider, provider_help, providers));
+            .child(self.row(
+                Msg::SettingsSmartProvider,
+                Msg::SettingsSmartProviderDesc.t(),
+                providers,
+            ));
         if self.snapshot.smart_provider == SmartProvider::Ollama {
             let models_available =
                 self.snapshot.smart_ollama_available && !self.snapshot.smart_detecting;
@@ -589,7 +595,7 @@ impl SettingsView {
                 models,
             ));
         }
-        let mut result = div().flex().flex_col().gap(pt(16.)).child(section(
+        let mut result = div().flex().flex_col().gap(pt(20.)).child(self.section(
             Msg::SettingsGeneration,
             None,
             rows,

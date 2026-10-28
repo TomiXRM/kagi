@@ -500,7 +500,10 @@ fn matrix(cx: &mut VisualTestAppContext, leg: Leg) {
     configurations(cx, |cx| run_cell(cx, leg));
 }
 
-fn run_cell(cx: &mut VisualTestAppContext, leg: Leg) {
+fn run_cell(
+    cx: &mut VisualTestAppContext,
+    leg: impl FnOnce(&mut VisualTestAppContext, AnyWindowHandle, AnyWindowHandle),
+) {
     let lang = i18n::lang();
     let zoom = theme::zoom();
     let fixture = build_fixture();
@@ -542,6 +545,118 @@ fn run_cell(cx: &mut VisualTestAppContext, leg: Leg) {
         cx.run_until_parked();
     }
     unmount(cx, app, repo);
+}
+
+/// G1 captures only composition: no focus, hover, AX or state matrix.
+pub fn scenario_settings_window_composition(cx: &mut VisualTestAppContext) {
+    let _saved = GlobalSettings::capture();
+    let _keys = crate::gui_isolation::SavedKeys::keep(&[
+        "theme",
+        "lang",
+        "ui_zoom",
+        "settings_pane",
+        "settings_window_frame",
+    ]);
+    let _host = SettingsHostGuard::native(cx);
+    i18n::set_lang(i18n::Lang::En);
+    theme::set_zoom(1.);
+    let output = std::path::Path::new("target/ui-fidelity/settings");
+    std::fs::create_dir_all(output).unwrap();
+    for appearance in ["apple-light", "apple-dark"] {
+        theme::set_active(appearance);
+        kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
+        cx.update(theme::sync_gpui_component_theme);
+        run_cell(cx, |cx, _, settings| {
+            for pane in kagi_ui_settings::Pane::ALL {
+                crate::settings_controls::click(
+                    cx,
+                    settings,
+                    &format!("settings-pane-{}", pane.id()),
+                );
+                settle(cx, settings);
+                cx.update_window(settings, |_, window, cx| {
+                    let view =
+                        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                            .unwrap();
+                    let probes: Vec<_> = view
+                        .read(cx)
+                        .control_probes()
+                        .into_iter()
+                        .map(|probe| {
+                            serde_json::json!({
+                                "id": probe.id,
+                                "bounds": [
+                                    f32::from(probe.bounds.left()),
+                                    f32::from(probe.bounds.top()),
+                                    f32::from(probe.bounds.size.width),
+                                    f32::from(probe.bounds.size.height),
+                                ],
+                                "role": format!("{:?}", probe.role),
+                                "name": probe.name,
+                                "value": probe.value,
+                                "selected": probe.selected,
+                            })
+                        })
+                        .collect();
+                    let image = window
+                        .render_to_image()
+                        .expect("whole native Settings render");
+                    let stem = format!("native-{}-{appearance}-en-100", pane.id());
+                    image.save(output.join(format!("{stem}.png"))).unwrap();
+                    let viewport = window.viewport_size();
+                    let receipt = serde_json::json!({
+                        "source": "production native SettingsWindow; window.render_to_image()",
+                        "backing_scale": window.scale_factor(),
+                        "viewport": [f32::from(viewport.width), f32::from(viewport.height)],
+                        "png": [image.width(), image.height()],
+                        "traffic_lights": traffic_light_bounds(window),
+                        "probes": probes,
+                    });
+                    std::fs::write(
+                        output.join(format!("{stem}.json")),
+                        serde_json::to_vec_pretty(&receipt).unwrap(),
+                    )
+                    .unwrap();
+                })
+                .unwrap();
+            }
+        });
+    }
+    eprintln!("[gui-e2e] PASS settings_window_composition");
+}
+
+/// OS-drawn buttons are absent from Metal images; measure their actual AppKit
+/// rectangles in the GPUI content view, without showing or activating a window.
+fn traffic_light_bounds(window: &gpui::Window) -> Vec<[f64; 4]> {
+    use objc2::{msg_send, runtime::AnyObject};
+    use objc2_foundation::NSRect;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = HasWindowHandle::window_handle(window).unwrap();
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        panic!("native Settings requires AppKit");
+    };
+    // SAFETY: the exact live NSView and its NSWindow, on the native main thread.
+    unsafe {
+        let view = handle.ns_view.as_ptr().cast::<AnyObject>();
+        let native: *mut AnyObject = msg_send![view, window];
+        let flipped: bool = msg_send![view, isFlipped];
+        (0_usize..3)
+            .map(|kind| {
+                let button: *mut AnyObject = msg_send![native, standardWindowButton: kind];
+                assert!(!button.is_null(), "native traffic light {kind}");
+                let bounds: NSRect = msg_send![button, bounds];
+                let rect: NSRect = msg_send![button, convertRect: bounds, toView: view];
+                let y = if flipped {
+                    rect.origin.y
+                } else {
+                    f64::from(f32::from(window.viewport_size().height))
+                        - rect.origin.y
+                        - rect.size.height
+                };
+                [rect.origin.x, y, rect.size.width, rect.size.height]
+            })
+            .collect()
+    }
 }
 
 pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {

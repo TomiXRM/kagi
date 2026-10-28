@@ -1,6 +1,5 @@
 //! Analyze pane and accepted baseline, independent from the retained InputState draft.
 use super::{
-    controls::section,
     kit_style::{ink, metrics, pt},
     *,
 };
@@ -229,7 +228,7 @@ impl SettingsView {
             .min_w_0()
             .flex()
             .flex_col()
-            .child(section(
+            .child(self.section(
                 Msg::SettingsAnalyzeIgnore,
                 Some(help.into_any_element()),
                 content,

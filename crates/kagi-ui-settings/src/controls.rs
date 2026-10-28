@@ -71,56 +71,81 @@ impl RenderOnce for SettingsGroup {
     }
 }
 
-pub(crate) fn section(
-    title: Msg,
-    subtitle: Option<AnyElement>,
-    content: impl IntoElement,
-) -> AnyElement {
-    div()
-        .id(SharedString::from(format!(
-            "settings-section-{}",
-            title.t()
-        )))
-        .role(Role::Group)
-        .aria_label(title.t())
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(pt(8.))
-        .child(
-            div()
-                .px(pt(metrics::GROUP_PADDING_X) + px(1.))
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(pt(2.))
-                .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "settings-heading-{}",
-                            title.t()
-                        )))
-                        .role(Role::Heading)
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .font_weight(FontWeight::BOLD)
-                        .child(title.t()),
-                )
-                .children(subtitle.map(|subtitle| {
-                    div()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .text_size(pt(metrics::SECONDARY + 0.5))
-                        .text_color(ink::secondary())
-                        .child(subtitle)
-                })),
-        )
-        .child(content)
-        .into_any_element()
-}
 impl SettingsView {
+    pub(crate) fn section(
+        &self,
+        title: Msg,
+        subtitle: Option<AnyElement>,
+        content: impl IntoElement,
+    ) -> AnyElement {
+        div()
+            .relative()
+            .id(SharedString::from(format!(
+                "settings-section-{}",
+                title.t()
+            )))
+            .role(Role::Group)
+            .aria_label(title.t())
+            .min_w_0()
+            .children(cfg!(feature = "gui-e2e").then(|| {
+                self.measured(
+                    format!("settings-section-{}", title.t()),
+                    Role::Group,
+                    title.t().into(),
+                    String::new(),
+                    false,
+                    false,
+                    false,
+                )
+            }))
+            .flex()
+            .flex_col()
+            .gap(pt(8.))
+            .child(
+                div()
+                    .px(pt(metrics::GROUP_PADDING_X) + px(1.))
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(pt(2.))
+                    .child(
+                        div()
+                            .relative()
+                            .id(SharedString::from(format!(
+                                "settings-heading-{}",
+                                title.t()
+                            )))
+                            .role(Role::Heading)
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .font_weight(FontWeight::BOLD)
+                            .child(title.t())
+                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                self.measured(
+                                    format!("settings-heading-{}", title.t()),
+                                    Role::Heading,
+                                    title.t().into(),
+                                    String::new(),
+                                    false,
+                                    false,
+                                    false,
+                                )
+                            })),
+                    )
+                    .children(subtitle.map(|subtitle| {
+                        div()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .text_size(pt(metrics::SECONDARY + 0.5))
+                            .text_color(ink::secondary())
+                            .child(subtitle)
+                    })),
+            )
+            .child(content)
+            .into_any_element()
+    }
     pub(crate) fn group(&self, id: &'static str) -> SettingsGroup {
         let container = div()
             .id(id)

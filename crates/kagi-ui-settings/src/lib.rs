@@ -346,7 +346,6 @@ impl Render for SettingsView {
         div()
             .id("settings-production")
             .size_full()
-            // Hosts place fixed chrome above this view; use only the remainder.
             .flex_1()
             .min_h_0()
             .flex()

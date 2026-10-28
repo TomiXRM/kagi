@@ -20,7 +20,7 @@ pub(crate) mod metrics {
     pub const CONTROL_HIT_HEIGHT: f32 = 28.;
     pub const STEPPER_GAP: f32 = 8.;
     pub const STEPPER_VALUE_WIDTH: f32 = 40.;
-    pub const THEME_CARD_WIDTH: f32 = 144.;
+    pub const THEME_CARD_WIDTH: f32 = 132.;
     pub const DETAIL_PADDING_LEFT: f32 = 6.;
     pub const DETAIL_PADDING_RIGHT: f32 = 18.;
     /// Unscaled logical pixels: two-pixel ring, three-pixel gap and breathing room.
@@ -47,6 +47,35 @@ pub(crate) fn mix(base: u32, over: u32, amount: f32) -> u32 {
         ((a + (b - a) * amount).round() as u32) << shift
     };
     channel(16) | channel(8) | channel(0)
+}
+
+/// Canonical category palette, independent of the selected theme's accent.
+#[derive(Clone, Copy)]
+pub(crate) enum Hue {
+    Blue,
+    Indigo,
+    Purple,
+    Orange,
+    Teal,
+    Gray,
+}
+
+impl Hue {
+    pub(crate) fn rgb(self, dark: bool) -> u32 {
+        let (light, dark_rgb) = match self {
+            Self::Blue => (0x007aff, 0x0a84ff),
+            Self::Indigo => (0x5856d6, 0x5e5ce6),
+            Self::Purple => (0xaf52de, 0xbf5af2),
+            Self::Orange => (0xff9500, 0xff9f0a),
+            Self::Teal => (0x30b0c7, 0x40c8e0),
+            Self::Gray => (0x8e8e93, 0x6e6e73),
+        };
+        if dark {
+            dark_rgb
+        } else {
+            light
+        }
+    }
 }
 
 pub(crate) mod ink {
@@ -86,14 +115,7 @@ pub(crate) mod ink {
         mix(card(), theme().text_sub, 0.36)
     }
     pub fn selected() -> Hsla {
-        // Retain the reviewed light/dark parity correction, not the experiment's bug.
-        let t = theme();
-        rgb(match t.slug.as_ref() {
-            "apple-light" => 0xffffff,
-            "apple-dark" => 0x66666c,
-            _ => return t.segment_selected_bg(),
-        })
-        .into()
+        theme().segment_selected_bg()
     }
     pub fn text() -> Hsla {
         rgb(theme().text_main).into()

@@ -354,6 +354,12 @@ fn two_natural_tabs(
     let mut natural_widths = None;
     let mut blank_width = None;
     for width in [940., 1200.] {
+        cx.update_window(window, |_, window, _| {
+            window.resize(size(px(width), px(660.)));
+        })
+        .unwrap();
+        crate::macos::drain_native_events();
+        cx.run_until_parked();
         for _ in 0..4 {
             crate::recovery_layout::draw(cx, window, (width, 660.));
         }
@@ -424,6 +430,11 @@ fn two_natural_tabs(
         })
         .unwrap();
     }
+    cx.update_window(window, |_, window, _| {
+        window.resize(size(px(940.), px(660.)));
+    })
+    .unwrap();
+    crate::macos::drain_native_events();
     app.update(cx, |app, cx| {
         app.close_home_tab(cx);
         app.set_theme(&old_theme, cx);

@@ -45,7 +45,8 @@ measurement can still be hard-clipped if the final text leaf is allocated 165px.
 The compact chooser has two independent Light/Dark horizontal strips, one
 global radio selection and Light-then-Dark keyboard order, not a value slider.
 Classify from the fixture's actual `themeCatalog.dark`, never names or colors.
-Before native compilation, run the focused production fidelity and chooser cases:
+Choose the smallest faithful production host for the changed behavior. For portable
+Settings layout/input, the existing browser host is a measured cheap option; run:
 `npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1 --grep 'production (kit|groups|popup|text leaves)|sidebar overflow|horizontal theme chooser|Smart Commit|pale accent|selected hover|captions|numeric controls'`.
 The new chooser matrix uses715×640 at EN/JA and100%/167%. Compare measured
 RadioButton count with the host catalog, visit every card using real arrow keys,
@@ -144,7 +145,10 @@ inherited. Missing-tree diagnostics retain the exact WindowId/active state.
 Do not substitute recorder metadata or force an internal accessibility flag.
 Tier B must leave the pointer over the selected row: moving it away before
 capture would hide a hover rule that erases selection.
-Run the focused browser paint/geometry tests before heavy native gates.
+Choose focused checks by independent coverage and actual iteration cost, not by a
+mandatory browser platform. The current browser paint/geometry cases are the cheap
+Settings layout/input path; native-only window/OS changes use scoped native checks.
+No future component is required to target WASM. Keep the final integration gates.
 Capture one actual PNG per unchanged state, sample all its pixels and attach that
 same image. Hover or state changes require a fresh capture; do not raise test
 deadlines to accommodate a separate GPU screenshot for every sampled pixel.

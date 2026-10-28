@@ -256,8 +256,13 @@ The native host retains its 715-point width and 640-point content-height ceiling
 Initial/reopened Appearance starts at the top; meaningful focus/selection changes
 reveal their target, while ordinary redraws preserve manual browsing.
 
-Start with the shared production browser host, not a separate component drawing.
-Build via `scripts/build-web.sh`; from `e2e`, use the affected
+Choose the smallest faithful production host for the changed behavior, optimizing
+independent verification and change-to-visible/checked time rather than a platform.
+The current shared Settings browser host is a measured cheap option for portable
+layout/input; native-only window or OS changes use the appropriate scoped native
+host. Future components are not required to target WASM. Reuse production components,
+never a separate drawing. For the current browser option, build via
+`scripts/build-web.sh`; from `e2e`, use the affected
 `settings-fidelity.spec.ts` / `settings.spec.ts` cases, e.g.
 `--grep 'production text leaves'` for Editor/Analyze text and
 `--grep 'production popup'` for real popup input, labels and tooltip paint.

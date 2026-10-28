@@ -285,8 +285,8 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
 
 fn fidelity_mix(a: u32, b: u32, amount: f32) -> u32 {
     let channel = |shift| {
-        let a = ((a >> shift) & 255) as f32;
-        let b = ((b >> shift) & 255) as f32;
+        let a = ((a >> shift) & 255_u32) as f32;
+        let b = ((b >> shift) & 255_u32) as f32;
         (a + (b - a) * amount).round() as u32
     };
     (channel(16) << 16) | (channel(8) << 8) | channel(0)

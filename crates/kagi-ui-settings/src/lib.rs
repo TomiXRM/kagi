@@ -8,6 +8,7 @@ mod kit_style;
 mod model;
 mod panes;
 mod popups;
+mod sidebar;
 mod theme_cards;
 use gpui::{prelude::*, *};
 use gpui_component::input::{InputEvent, InputState};

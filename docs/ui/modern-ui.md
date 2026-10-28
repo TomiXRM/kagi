@@ -207,7 +207,7 @@ and i10 kit. Its first sentence remains the construction rule:
 > A settings page is **composed**, not drawn.
 
 Production has one owner, `crates/kagi-ui-settings`, rather than a copied
-gallery or a new page-local approximation. `panes.rs` composes the roles below;
+gallery or a new page-local approximation. `panes.rs` and `analyze.rs` compose the roles below;
 the native adapter supplies snapshots and handles typed intents. Experimental
 `Forced` states, no-op handlers and gallery-only APIs are not production input.
 Do not import unused experiment controls just to reproduce its module surface.
@@ -215,7 +215,7 @@ Do not import unused experiment controls just to reproduce its module surface.
 | Used role | Production owner | Contract carried forward |
 | --- | --- | --- |
 | Metrics and ink | `kit_style.rs` | 15/13/11.5-point hierarchy; theme-derived surfaces, neutral OFF/control fills and distinct hover/pressed fills. No global theme loosening or per-pane restyling. |
-| Sidebar and sections | `controls.rs`, `model.rs` | One selected destination, matching page title, fixed category hues and one 20-point sidebar tile; 212-point sidebar and 32-point rows at normal zoom. |
+| Sidebar and sections | `sidebar.rs`, `controls.rs`, `model.rs` | One selected destination, matching page title, fixed category hues and one 20-point sidebar tile; 212-point sidebar and 32-point rows at normal zoom. |
 | Groups and rows | `controls.rs` | One card per related group; the group inserts non-layout hairlines. 40/52-point row minima may grow for real text. No nested cards. |
 | Switch, segments, capsules, stepper | `control_parts.rs` | Role-specific geometry, not one generic div look: 28×16 switch/12-point knob, 24-point normal visible controls and ≥28-point hits. Label-derived equal segments stay in one rail; long labels may wrap and grow. |
 | Provider/model popup | `popups.rs`, pinned `PopupMenu` | Real named radio menu roots, checked/disabled state and eligible keyboard navigation. Long/open catalogs are menus, not growing segmented rails. |

@@ -332,6 +332,13 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       await info.attach(`long-model-row-${count}.png`, { body: await page.screenshot(), contentType: "image/png" });
       await info.attach(`long-model-row-${count}.json`, { body: JSON.stringify({ group, modelRow, trigger, triggerText }), contentType: "application/json" });
       await click(page, "sc-model-select");
+      const openGroup = await probe(page, "settings-smart-group");
+      const openTrigger = await probe(page, "sc-model-select");
+      expect(openTrigger.x).toBeGreaterThanOrEqual(openGroup.x + 1);
+      expect(openTrigger.x + openTrigger.width).toBeLessThanOrEqual(openGroup.x + openGroup.width - 1);
+      expect(openTrigger.y).toBeGreaterThanOrEqual(openGroup.y + 1);
+      expect(openTrigger.y + openTrigger.height).toBeLessThanOrEqual(openGroup.y + openGroup.height - 1);
+      await info.attach(`open-model-row-${count}.json`, { body: JSON.stringify({ group: openGroup, trigger: openTrigger }), contentType: "application/json" });
       const rows = (await observed(page)).controls.filter(control => control.role === "MenuItemRadio");
       expect(rows).toHaveLength(count);
       expect(rows.filter(control => control.selected)).toHaveLength(1);

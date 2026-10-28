@@ -34,34 +34,32 @@ impl SettingsView {
         });
         self.groups
             .insert("themes".into(), focused_index.unwrap_or(selected_index));
-        let selection_changed =
-            self.theme_reveal
-                .as_ref()
-                .is_none_or(|(slug, selected, _, _, _)| {
-                    slug != &self.snapshot.theme_slug || *selected != selected_index
-                });
+        let focused_theme = focused_index.map(|index| themes[index].clone());
+        let selection_changed = self
+            .theme_reveal
+            .as_ref()
+            .is_none_or(|last| last.selected_slug != self.snapshot.theme_slug);
         let target = if selection_changed {
             selected_index
         } else {
             focused_index.unwrap_or(selected_index)
         };
-        let reveal =
-            self.theme_reveal
-                .as_ref()
-                .is_none_or(|(slug, selected, focused, zoom, count)| {
-                    slug != &self.snapshot.theme_slug
-                        || *selected != selected_index
-                        || (focused_index.is_some() && *focused != focused_index)
-                        || *zoom != self.snapshot.zoom
-                        || *count != themes.len()
-                });
-        self.theme_reveal = Some((
-            self.snapshot.theme_slug.clone(),
-            selected_index,
-            focused_index,
-            self.snapshot.zoom,
-            themes.len(),
-        ));
+        let reveal = self.theme_reveal.as_ref().is_none_or(|last| {
+            selection_changed
+                || last.previous_catalog.is_some()
+                || last.zoom != self.snapshot.zoom
+                || (focused_theme.is_some()
+                    && last.focused_theme.as_ref().map(|theme| &theme.slug)
+                        != focused_theme.as_ref().map(|theme| &theme.slug))
+        });
+        let reveal_vertically =
+            focused_theme.is_some() || (self.theme_reveal.is_some() && selection_changed);
+        self.theme_reveal = Some(ThemePresentation {
+            selected_slug: self.snapshot.theme_slug.clone(),
+            focused_theme,
+            zoom: self.snapshot.zoom,
+            previous_catalog: None,
+        });
         let mut sections = div()
             .id("settings-theme-cards")
             .role(Role::RadioGroup)
@@ -114,8 +112,12 @@ impl SettingsView {
                     |(r, g, b): (u8, u8, u8)| ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
                 let term_bg = rgb_tuple(palette.term_bg);
                 let term_fg = rgb_tuple(palette.term_fg);
+                let badge_ink = [term_bg, term_fg, palette.text_main, palette.bg_base]
+                    .into_iter()
+                    .find(|color| contrast(palette.accent, *color) >= 4.5);
                 let readable = contrast(palette.bg_base, palette.text_main) >= 4.5
-                    && contrast(term_bg, term_fg) >= 4.5;
+                    && contrast(term_bg, term_fg) >= 4.5
+                    && badge_ink.is_some();
                 let preview = div()
                     .w_full()
                     .rounded(pt(metrics::GROUP_RADIUS))
@@ -174,15 +176,32 @@ impl SettingsView {
                                     .gap(pt(6.))
                                     .child(
                                         div()
+                                            .relative()
                                             .px(pt(5.))
                                             .h(pt(26.))
                                             .flex()
                                             .items_center()
                                             .rounded(pt(5.))
-                                            .bg(rgb(term_bg))
-                                            .text_color(rgb(term_fg))
+                                            .bg(rgb(palette.accent))
+                                            .when_some(badge_ink, |el, color| {
+                                                el.text_color(rgb(color))
+                                            })
                                             .text_size(pt(16.))
                                             .font_weight(FontWeight::SEMIBOLD)
+                                            .children(cfg!(feature = "gui-e2e").then(|| {
+                                                self.measured(
+                                                    format!(
+                                                        "settings-theme-badge-{}",
+                                                        palette.slug
+                                                    ),
+                                                    Role::Image,
+                                                    "Palette accent badge".into(),
+                                                    palette.accent.to_string(),
+                                                    false,
+                                                    false,
+                                                    false,
+                                                )
+                                            }))
                                             .when(readable, |el| el.child("~/")),
                                     )
                                     .child(
@@ -359,26 +378,29 @@ impl SettingsView {
                     let resized = viewport.replace(bounds.size) != bounds.size;
                     if target_in_strip && (reveal || resized) {
                         scroll.scroll_to_item(local_target);
-                        // Reuse the detail owner; never focus or reset manual browsing.
-                        let visible = detail_scroll.bounds();
-                        let margin = px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN);
-                        let delta = if bounds.top() < visible.top() + margin {
-                            visible.top() + margin - bounds.top()
-                        } else if bounds.bottom() > visible.bottom() - margin {
-                            visible.bottom() - margin - bounds.bottom()
-                        } else {
-                            px(0.)
-                        };
-                        let old = detail_scroll.offset();
-                        let offset = point(
-                            old.x,
-                            (old.y + delta).clamp(-detail_scroll.max_offset().y, px(0.)),
-                        );
-                        if offset != old {
+                        if reveal_vertically {
+                            // Read the ancestor's current allocation after prepaint,
+                            // not its previous-frame (initially empty) viewport.
                             let detail_scroll = detail_scroll.clone();
                             window.defer(cx, move |window, _| {
-                                detail_scroll.set_offset(offset);
-                                window.refresh();
+                                let visible = detail_scroll.bounds();
+                                let margin = px(super::kit_style::metrics::FOCUS_REVEAL_MARGIN);
+                                let delta = if bounds.top() < visible.top() + margin {
+                                    visible.top() + margin - bounds.top()
+                                } else if bounds.bottom() > visible.bottom() - margin {
+                                    visible.bottom() - margin - bounds.bottom()
+                                } else {
+                                    px(0.)
+                                };
+                                let old = detail_scroll.offset();
+                                let offset = point(
+                                    old.x,
+                                    (old.y + delta).clamp(-detail_scroll.max_offset().y, px(0.)),
+                                );
+                                if offset != old {
+                                    detail_scroll.set_offset(offset);
+                                    window.refresh();
+                                }
                             });
                         }
                         window.on_next_frame(|window, _| window.refresh());
@@ -399,7 +421,6 @@ impl SettingsView {
                 .w_full()
                 .when(persistent, |area| area.pb(px(16.)))
                 .child(cards)
-                .child(resize)
                 .children(cfg!(feature = "gui-e2e").then(|| {
                     self.measured(
                         scroll_id.into(),
@@ -418,22 +439,24 @@ impl SettingsView {
                 );
             sections = sections.child(
                 div()
-                    .flex()
-                    .flex_col()
+                    .relative()
                     .min_w_0()
                     .w_full()
-                    .gap(pt(6.))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "settings-theme-mode-heading-{mode}"
-                            )))
-                            .role(Role::Heading)
-                            .text_size(pt(metrics::SECONDARY))
-                            .text_color(ink::secondary())
-                            .child(label.t()),
-                    )
-                    .child(area),
+                    .child(section(label, None, area))
+                    // Reveal the real section, including its heading, rather
+                    // than clipping that heading above a revealed card strip.
+                    .child(resize)
+                    .children(cfg!(feature = "gui-e2e").then(|| {
+                        self.measured(
+                            format!("settings-theme-mode-section-{mode}"),
+                            Role::Group,
+                            label.t().into(),
+                            String::new(),
+                            false,
+                            false,
+                            false,
+                        )
+                    })),
             );
         }
         sections.into_any_element()

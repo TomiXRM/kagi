@@ -107,6 +107,8 @@ for (const appearance of ["apple-light", "apple-dark"]) {
         await page.mouse.move(2, 2); await page.mouse.up(); await frames(page);
         expect((await observed(page)).requests).toBe(before.requests);
         await info.attach("production-fidelity.png", { body: pressed.png, contentType: "image/png" });
+        await pane(page, "editor");
+        await info.attach("production-editor.png", { body: await page.screenshot(), contentType: "image/png" });
       });
     }
   }
@@ -144,7 +146,7 @@ test("production groups reserve identical Light/Dark border and separator geomet
 });
 
 for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"]] as const) {
-  test(`sidebar overflow preserves original roles at 715x640 200%: ${language}`, async ({ page }, info) => {
+  test(`sidebar overflow preserves original roles at 715px 200%: ${language}`, async ({ page }, info) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 715, height: 640 });
     await boot(page);
@@ -161,7 +163,7 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
     }
     await host(page, "zoom", "2");
     await pane(page, "appearance");
-    const viewport = await probe(page, "settings-sidebar");
+    let viewport = await probe(page, "settings-sidebar");
     expect(viewport.width).toBeLessThan(212 * 2);
     const contains = (outer: Probe, inner: Probe) => {
       expect(inner.x, `${inner.id} left`).toBeGreaterThanOrEqual(outer.x);
@@ -169,6 +171,14 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
       expect(inner.x + inner.width, `${inner.id} right`).toBeLessThanOrEqual(outer.x + outer.width);
       expect(inner.y + inner.height, `${inner.id} bottom`).toBeLessThanOrEqual(outer.y + outer.height);
     };
+    for (const destination of panes) {
+      contains(viewport, await probe(page, `settings-pane-${destination}`));
+    }
+    await info.attach("sidebar-640h-200.png", { body: await page.screenshot(), contentType: "image/png" });
+    // All eight rows fit at 640h. Exercise real overflow with a genuinely
+    // shorter browser viewport, without shrinking production row geometry.
+    await page.setViewportSize({ width: 715, height: 500 }); await frames(page);
+    viewport = await probe(page, "settings-sidebar");
     const before = await observed(page);
     const lastBefore = await probe(page, "settings-pane-general");
     expect(lastBefore.y + lastBefore.height).toBeGreaterThan(viewport.y + viewport.height);
@@ -198,9 +208,12 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
     const browsed = await probe(page, "settings-pane-appearance");
     expect(browsed.y).toBeLessThan(firstBeforeWheel.y);
     contains(viewport, await probe(page, "settings-pane-general"));
+    await info.attach("sidebar-overflow-500h-200.png", { body: await page.screenshot(), contentType: "image/png" });
     await host(page, "reseed");
     expect((await probe(page, "settings-pane-appearance")).y).toBeCloseTo(browsed.y);
     expect((await observed(page)).requests).toBe(beforeWheel);
+    await page.setViewportSize({ width: 715, height: 640 }); await frames(page);
+    viewport = await probe(page, "settings-sidebar");
     for (const destination of panes) {
       await pane(page, destination);
       const item = await probe(page, `settings-pane-${destination}`);
@@ -237,6 +250,17 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     await host(page, "zoom", String(zoom));
     await pane(page, "smart_commit");
     const beforeProvider = (await observed(page)).requests;
+    await click(page, "sc-provider-select");
+    expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(true);
+    await click(page, "sc-provider-select");
+    expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
+    // The pointer path must not replace keyboard activation or reopen on release.
+    await page.keyboard.press("Space"); await frames(page);
+    expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(true);
+    await host(page, "close");
+    await host(page, "reopen");
+    expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
+    expect((await observed(page)).smartProvider).toBe("ollama");
     await click(page, "sc-provider-select");
     const providers = (await observed(page)).controls.filter(control => control.role === "MenuItemRadio");
     expect(providers.map(control => control.id)).toEqual(expect.arrayContaining([
@@ -302,3 +326,53 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     expect((await observed(page)).pendingConsent).toBe(false);
   });
 }
+
+test("catalog replacements preserve live theme focus and repair removed choices", async ({ page }, info) => {
+  await page.setViewportSize({ width: 715, height: 640 });
+  await boot(page);
+  const name = "Zzz surviving focused custom palette — a deliberately long valid theme name";
+  const slug = "fixture-long-caption";
+  const id = `settings-theme-${slug}`;
+  await host(page, "custom-theme-name", name);
+  await click(page, "settings-theme-apple-light");
+  const catalog = (await observed(page)).themeCatalog.filter(theme => !theme.dark);
+  await page.keyboard.press("Home"); await frames(page);
+  for (let index = 0; index < catalog.findIndex(theme => theme.slug === slug); index++) {
+    await page.keyboard.press("ArrowRight"); await frames(page);
+  }
+  const before = await observed(page);
+  expect((await probe(page, id)).focused).toBe(true);
+  const focusedInside = async (controlId: string) => {
+    const card = await probe(page, controlId);
+    const ring = await probe(page, `${controlId}-focus-ring`);
+    const strip = await probe(page, "settings-themes-light-scroll");
+    const detail = await probe(page, "settings-detail-scroll");
+    expect(card.focused).toBe(true);
+    expect(ring.x).toBeGreaterThanOrEqual(strip.x);
+    expect(ring.x + ring.width).toBeLessThanOrEqual(strip.x + strip.width);
+    expect(ring.y).toBeGreaterThanOrEqual(detail.y);
+    expect(ring.y + ring.height).toBeLessThanOrEqual(detail.y + detail.height);
+  };
+  await focusedInside(id);
+  await info.attach("catalog-focus-before.png", { body: await page.screenshot(), contentType: "image/png" });
+  // The core installer creates a new real ThemeKey, just as native reload does,
+  // while the visible catalog order, selected slug and focused slug survive.
+  await host(page, "custom-theme-name", name);
+  const replaced = await observed(page);
+  expect(replaced.themeCatalog.find(theme => theme.slug === slug)!.key)
+    .not.toBe(before.themeCatalog.find(theme => theme.slug === slug)!.key);
+  expect(replaced.themeCatalog.map(theme => theme.slug)).toEqual(before.themeCatalog.map(theme => theme.slug));
+  expect(replaced.theme).toBe(before.theme);
+  expect(replaced.events).toEqual(before.events);
+  await focusedInside(id);
+  await info.attach("catalog-focus-replaced.png", { body: await page.screenshot(), contentType: "image/png" });
+  await host(page, "remove-custom-themes");
+  const removed = await observed(page);
+  expect(removed.themeCatalog.some(theme => theme.slug === slug)).toBe(false);
+  expect(removed.controls.some(control => control.id === id)).toBe(false);
+  expect(removed.theme).toBe(before.theme);
+  expect(removed.events).toEqual(before.events);
+  await focusedInside(`settings-theme-${before.theme}`);
+  expect((await probe(page, `settings-theme-${before.theme}`)).selected).toBe(true);
+  await info.attach("catalog-focus-removed.png", { body: await page.screenshot(), contentType: "image/png" });
+});

@@ -45,6 +45,13 @@ struct ControlReveal {
     focused: bool,
 }
 
+struct ThemePresentation {
+    selected_slug: SharedString,
+    focused_theme: Option<kagi_ui_core::theme::ThemeHandle>,
+    zoom: f32,
+    previous_catalog: Option<Vec<kagi_ui_core::theme::ThemeHandle>>,
+}
+
 pub struct SettingsView {
     snapshot: SettingsSnapshot,
     pane: Pane,
@@ -58,7 +65,7 @@ pub struct SettingsView {
     sidebar_scroll: ScrollHandle,
     theme_scroll: [ScrollHandle; 2],
     // Last presentation request, not another source of selected-theme state.
-    theme_reveal: Option<(SharedString, usize, Option<usize>, f32, usize)>,
+    theme_reveal: Option<ThemePresentation>,
     theme_viewport: [Rc<std::cell::Cell<Size<Pixels>>>; 2],
     popup: Option<popups::SettingsPopup>,
     detail_slot: Option<DetailSlot>,
@@ -117,6 +124,7 @@ impl SettingsView {
     /// Reset presentation on host reopen without replacing preferences or drafts.
     pub fn prepare_open(&mut self, cx: &mut Context<Self>) {
         self.scroll.set_offset(point(px(0.), px(0.)));
+        self.popup = None;
         self.theme_reveal = None;
         cx.notify();
     }
@@ -137,7 +145,12 @@ impl SettingsView {
                 .map(|theme| theme.key())
                 .eq(snapshot.themes.iter().map(|theme| theme.key()))
             {
-                self.theme_reveal = None;
+                if let Some(presentation) = self.theme_reveal.as_mut() {
+                    if presentation.previous_catalog.is_none() {
+                        presentation.previous_catalog =
+                            Some(std::mem::take(&mut self.snapshot.themes));
+                    }
+                }
             }
             self.snapshot = snapshot;
             cx.notify();

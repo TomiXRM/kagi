@@ -129,18 +129,29 @@ impl SettingsView {
             })
             .bg(rgb(ink::card()))
             .flex()
-            .flex_col()
-            .children(cfg!(feature = "gui-e2e").then(|| {
-                self.measured(
+            .flex_col();
+        #[cfg(feature = "gui-e2e")]
+        let container = {
+            let probes = self.probes.clone();
+            container.on_prepaint(move |bounds, _, _| {
+                // ElementExt's absolute canvas measures the padding box.
+                // This group reserves a physical 1px border in both themes.
+                probes.borrow_mut().insert(
                     id.into(),
-                    Role::Group,
-                    id.into(),
-                    String::new(),
-                    false,
-                    false,
-                    false,
-                )
-            }));
+                    ControlProbe {
+                        id: id.into(),
+                        bounds: bounds.dilate(px(1.)),
+                        role: Role::Group,
+                        name: id.into(),
+                        value: String::new(),
+                        paint: None,
+                        focused: false,
+                        selected: false,
+                        disabled: false,
+                    },
+                );
+            })
+        };
         SettingsGroup {
             container,
             rows: 0,
@@ -360,7 +371,12 @@ impl SettingsView {
         let focus = handle.clone();
         let key_focus = handle.clone();
         let reveal_focus = handle.clone();
-        let revealed = self.revealed.entry(id.clone()).or_default().clone();
+        // Theme sections own coordinated horizontal/vertical reveal, including
+        // their headings. Do not also scroll just the card's leaf bounds.
+        let revealed = roving
+            .as_ref()
+            .is_none_or(|(group, _, _)| group != "themes")
+            .then(|| self.revealed.entry(id.clone()).or_default().clone());
         let scroll = if id.starts_with("settings-pane-") {
             self.sidebar_scroll.clone()
         } else {
@@ -447,6 +463,9 @@ impl SettingsView {
             .children(focus_overlay)
             .children(probe)
             .on_prepaint(move |bounds, window, cx| {
+                let Some(revealed) = &revealed else {
+                    return;
+                };
                 let focused = reveal_focus.is_focused(window);
                 if !focused && !reveal_selected {
                     revealed.set(None);
@@ -725,6 +744,29 @@ impl SettingsView {
     }
     pub(crate) fn repair_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pane == Pane::Appearance {
+            let removed_focused_theme = self.theme_reveal.as_ref().is_some_and(|last| {
+                last.previous_catalog.as_ref().is_some_and(|previous| {
+                    self.focus.iter().any(|(id, focus)| {
+                        focus.is_focused(window)
+                            && id.strip_prefix("settings-theme-").is_some_and(|slug| {
+                                previous.iter().any(|theme| theme.slug == slug)
+                                    && !self.snapshot.themes.iter().any(|theme| theme.slug == slug)
+                            })
+                    })
+                })
+            });
+            if removed_focused_theme {
+                let id = self
+                    .snapshot
+                    .themes
+                    .iter()
+                    .find(|theme| theme.slug == self.snapshot.theme_slug.as_ref())
+                    .map_or_else(
+                        || "settings-pane-appearance".to_owned(),
+                        |theme| format!("settings-theme-{}", theme.slug),
+                    );
+                self.handle(&id, cx).focus(window, cx);
+            }
             let zoom = self.snapshot.zoom;
             let threshold = self.snapshot.compact_threshold_rem;
             for (id, opposite, disabled) in [

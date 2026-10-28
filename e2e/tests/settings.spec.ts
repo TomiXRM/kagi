@@ -113,11 +113,11 @@ test("pale accent active focus paint contrasts on unselected themes, ON switches
       expect(control.focused).toBe(true);
       expect(await page.evaluate(() => document.hasFocus())).toBe(true);
       const ring = await probe(page, `${control.id}-focus-ring`);
-      const borderInset = kind === "unselected-theme" ? 2 : 0;
-      expect(ring.x).toBeCloseTo(control.x - borderInset - 5);
-      expect(ring.y).toBeCloseTo(control.y - borderInset - 5);
-      expect(ring.width).toBeCloseTo(control.width + 2 * (borderInset + 5));
-      expect(ring.height).toBeCloseTo(control.height + 2 * (borderInset + 5));
+      // The restored outer card/hit target has no border; the preview owns selection.
+      expect(ring.x).toBeCloseTo(control.x - 5);
+      expect(ring.y).toBeCloseTo(control.y - 5);
+      expect(ring.width).toBeCloseTo(control.width + 10);
+      expect(ring.height).toBeCloseTo(control.height + 10);
       const midX = ring.x + ring.width / 2, midY = ring.y + ring.height / 2;
       const edges = (depth: number) => [
         [ring.x + depth, midY], [ring.x + ring.width - depth, midY],
@@ -281,6 +281,8 @@ async function captionInk(page: Page, caption: Probe) {
 test("short theme captions paint names and long names paint constrained ellipses", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 740 });
   await boot(page);
+  const longName = "A deliberately long valid custom theme — 日本語の完全なテーマ名 for caption overflow";
+  await host(page, "custom-theme-name", longName);
   for (const appearance of ["apple-light", "apple-dark"]) {
     await click(page, `settings-theme-${appearance}`);
     for (const slug of ["apple-light", "apple-dark"]) {
@@ -292,10 +294,11 @@ test("short theme captions paint names and long names paint constrained ellipses
       const ink = await captionInk(page, caption);
       expect(ink.width, `${appearance}: ${slug} must paint a readable short name`).toBeGreaterThan(35);
     }
-    for (const slug of ["color-vision", "monokai"]) {
+    for (const slug of ["fixture-long-caption"]) {
       await reveal(page, `settings-theme-${slug}`);
       const card = await probe(page, `settings-theme-${slug}`);
       const caption = await probe(page, `settings-theme-caption-${slug}`);
+      expect(card.name).toBe(longName);
       const leaf = await probe(page, `settings-theme-caption-text-${slug}`);
       // value comes from the painted StyledText's actual TextLayout, not its input.
       expect(leaf.value).toMatch(/.+…$/);
@@ -364,6 +367,8 @@ for (const [language, appearance, zoom] of [
       expect(value.y).toBeGreaterThanOrEqual(decrease.y);
       expect(value.y + value.height).toBeLessThanOrEqual(decrease.y + decrease.height);
     }
+    expect(control("compact-threshold-inc").x + control("compact-threshold-inc").width)
+      .toBe(control("zoom-inc").x + control("zoom-inc").width);
     const thresholdHelp = control("compact-threshold-help");
     expect(thresholdHelp.y).toBeGreaterThanOrEqual(control("compact-threshold-inc").y + control("compact-threshold-inc").height);
     await info.attach(`${language}-${zoom}-numeric-rows.png`, { body: await page.screenshot(), contentType: "image/png" });
@@ -546,7 +551,7 @@ for (const language of ["en", "ja"]) {
             .filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"))
             .flatMap(control => {
               const slug = control.id.slice("settings-theme-".length);
-              return [control.id, `${control.id}-focus-ring`, `settings-theme-caption-${slug}`, `settings-theme-caption-text-${slug}`];
+              return [control.id, `${control.id}-focus-ring`, `settings-theme-caption-${slug}`, `settings-theme-caption-text-${slug}`, `settings-theme-badge-${slug}`];
             }));
           for (const control of state.controls) {
             expect(control.width, control.id).toBeGreaterThan(0);
@@ -579,9 +584,12 @@ for (const [language, appearance, zoom] of [
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 715, height: 640 });
     await boot(page);
+    expect((await observed(page)).scrollY).toBe(0);
     await host(page, "language", language);
     await host(page, "appearance", appearance);
     await host(page, "zoom", String(zoom));
+    await host(page, "close");
+    await host(page, "reopen");
     const initial = await observed(page);
     const catalog = [false, true].flatMap(dark => initial.themeCatalog.filter(theme => theme.dark === dark));
     const actualCards = initial.controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"));
@@ -594,18 +602,49 @@ for (const [language, appearance, zoom] of [
     for (const card of cards) expectSnappedLength(card.width, 144 * zoom);
     expect(cards).toHaveLength(initial.themeCount);
     expect(cards.length).toBeGreaterThan(2);
-    const inStrip = async (control: Probe, margin = 0) => {
+    const inStrip = async (control: Probe, margin = 0, requireVerticalVisibility = true) => {
       const strip = await themeStrip(page, control.id);
       expect(control.x - margin).toBeGreaterThanOrEqual(strip.x);
       expect(control.x + control.width + margin).toBeLessThanOrEqual(strip.x + strip.width);
       expect(control.y - margin).toBeGreaterThanOrEqual(strip.y);
       expect(control.y + control.height + margin).toBeLessThanOrEqual(strip.y + strip.height);
-      const detail = await probe(page, "settings-detail-scroll");
-      expect(control.y - margin).toBeGreaterThanOrEqual(detail.y);
-      expect(control.y + control.height + margin).toBeLessThanOrEqual(detail.y + detail.height);
+      if (requireVerticalVisibility) {
+        const detail = await probe(page, "settings-detail-scroll");
+        expect(control.y - margin).toBeGreaterThanOrEqual(detail.y);
+        expect(control.y + control.height + margin).toBeLessThanOrEqual(detail.y + detail.height);
+      }
     };
-    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
-    await info.attach("appearance-initial.png", { body: await page.screenshot(), contentType: "image/png" });
+    expect(initial.scrollY).toBe(0);
+    const detail = await probe(page, "settings-detail-scroll");
+    for (const [mode, strip] of [[0, light], [1, dark]] as const) {
+      const section = await probe(page, `settings-theme-mode-section-${mode}`);
+      expect(section.name.length).toBeGreaterThan(0);
+      expect(section.y).toBeGreaterThanOrEqual(detail.y);
+      // The heading and its gap are the actual space above this section's strip.
+      expect(strip.y).toBeGreaterThan(section.y);
+      expect(strip.y).toBeLessThan(detail.y + detail.height);
+    }
+    const selected = await probe(page, `settings-theme-${initial.theme}`);
+    const initialSelectedStrip = await themeStrip(page, selected.id);
+    expect(selected.x - 7).toBeGreaterThanOrEqual(initialSelectedStrip.x);
+    expect(selected.x + selected.width + 7).toBeLessThanOrEqual(initialSelectedStrip.x + initialSelectedStrip.width);
+    // At 167%, vertical scrolling is intentional; initial presentation must not
+    // hide Light Mode merely to bring the whole selected Dark card into view.
+    const badges = await Promise.all([false, true].map(async mode => {
+      const theme = catalog.find(theme => theme.dark === mode)!;
+      return probe(page, `settings-theme-badge-${theme.slug}`);
+    }));
+    const initialPaint = await paintedPixels(page, badges.map(badge =>
+      [badge.x + badge.width / 2, badge.y + 2]));
+    for (const [index, badge] of badges.entries()) {
+      const accent = Number(badge.value);
+      expect(initialPaint.colors[index]).toEqual([accent >> 16, (accent >> 8) & 255, accent & 255]);
+      const foreground = badge.paint!.textColor;
+      const ink = luminance([foreground >> 16, (foreground >> 8) & 255, foreground & 255]);
+      const background = luminance(initialPaint.colors[index]);
+      expect((Math.max(ink, background) + 0.05) / (Math.min(ink, background) + 0.05)).toBeGreaterThanOrEqual(4.5);
+    }
+    await info.attach("appearance-initial.png", { body: initialPaint.png, contentType: "image/png" });
     await click(page, `settings-theme-${initial.theme}`);
     const beforeKeys = (await observed(page)).requests;
     await page.keyboard.press("Home");
@@ -658,6 +697,8 @@ for (const [language, appearance, zoom] of [
       await host(page, "reseed");
       expect((await probe(page, firstId)).x).toBeCloseTo(browsedX);
       await click(page, "settings-pane-appearance");
+      const afterPaneSelection = await observed(page);
+      expect(afterPaneSelection.pane).toBe("appearance");
       expect((await probe(page, firstId)).x).toBeCloseTo(browsedX);
       await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
       const beforeVertical = (await observed(page)).scrollY;
@@ -666,7 +707,7 @@ for (const [language, appearance, zoom] of [
       expect((await probe(page, firstId)).x).toBeCloseTo(browsedX);
       expect((await probe(page, otherId)).x).toBeCloseTo(otherX);
       expect((await observed(page)).theme).toBe(beforeBrowse.theme);
-      expect((await observed(page)).requests).toBe(beforeBrowse.requests);
+      expect((await observed(page)).events).toEqual(afterPaneSelection.events);
     }
     const selectedId = `settings-theme-${initial.theme}`;
     await reveal(page, selectedId);
@@ -675,20 +716,24 @@ for (const [language, appearance, zoom] of [
     await page.mouse.move(selectedStrip.x + selectedStrip.width / 2, selectedStrip.y + selectedStrip.height / 2);
     await page.mouse.wheel(400, 0); await frames(page);
     expect((await probe(page, selectedId)).x).toBeLessThan(selectedX);
+    const beforeCatalog = await observed(page);
     await host(page, "reorder-theme-catalog");
     const reordered = await observed(page);
     expect(reordered.themeCount).toBe(initial.themeCount);
     expect(reordered.themeCatalog).not.toEqual(initial.themeCatalog);
     expect(reordered.theme).toBe(initial.theme);
-    expect(reordered.requests).toBe(beforeBrowse.requests);
+    expect(reordered.events).toEqual(beforeCatalog.events);
+    expect(reordered.scrollY).toBe(beforeCatalog.scrollY);
     await inStrip(await probe(page, selectedId), 7);
     await page.mouse.wheel(0, -100000); await frames(page);
     await pane(page, "graph"); await pane(page, "appearance");
-    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    expect((await observed(page)).scrollY).toBe(0);
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7, false);
     await host(page, "close"); await host(page, "reopen");
-    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    expect((await observed(page)).scrollY).toBe(0);
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7, false);
     await page.setViewportSize({ width: 640, height: 640 }); await frames(page);
-    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7);
+    await inStrip(await probe(page, `settings-theme-${initial.theme}`), 7, false);
     await page.setViewportSize({ width: 715, height: 640 }); await frames(page);
     for (const destination of panes) {
       await pane(page, destination);

@@ -246,18 +246,10 @@ impl SettingsView {
             .flex()
             .flex_col()
             .gap(pt(20.))
-            .child(section(
-                Msg::SettingsColorTheme,
-                None,
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(pt(8.))
-                    .child(themes)
-                    .when(self.snapshot.accent_applicable, |content| {
-                        content.child(theme_controls)
-                    }),
-            ))
+            .child(themes)
+            .when(self.snapshot.accent_applicable, |content| {
+                content.child(theme_controls)
+            })
             .child(section(Msg::SettingsLayout, None, layout))
             .child(section(Msg::SettingsMotion, None, motion))
             .child(section(
@@ -381,6 +373,7 @@ impl SettingsView {
                     .flex()
                     .flex_nowrap()
                     .items_center()
+                    .justify_end()
                     .gap(pt(metrics::STEPPER_GAP))
                     .child(decrease)
                     .child(
@@ -764,7 +757,6 @@ impl SettingsView {
                             .flex()
                             .flex_wrap()
                             .items_center()
-                            .justify_end()
                             .gap(pt(8.))
                             .py(pt(10.))
                             .child(status)

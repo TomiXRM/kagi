@@ -390,6 +390,28 @@ impl SettingsFixture {
                         .map(SharedString::from)
                         .collect();
             }
+            "custom-theme-name" | "remove-custom-themes" => {
+                let custom = if command == "custom-theme-name" {
+                    let mut palette = self
+                        .snapshot
+                        .themes
+                        .iter()
+                        .find(|palette| palette.slug == "apple-light")
+                        .map(|palette| (**palette).clone())
+                        .ok_or("Fixture needs the built-in light palette")?;
+                    palette.slug = "fixture-long-caption".into();
+                    palette.name = value.ok_or("Missing custom theme name")?.to_owned().into();
+                    vec![palette]
+                } else {
+                    Vec::new()
+                };
+                // A real immutable palette generation; no filesystem effect is claimed.
+                theme::install_custom_themes(custom);
+                self.snapshot.themes = theme::themes_by_name();
+                self.snapshot.theme_slug = theme::theme().slug.to_string().into();
+                self.snapshot.accent_applicable = self.snapshot.theme_slug.starts_with("apple-");
+                theme::sync_gpui_component_theme(cx);
+            }
             "reorder-theme-catalog" => {
                 let selected = self
                     .snapshot
@@ -439,6 +461,7 @@ impl SettingsFixture {
             "themeCount": self.snapshot.themes.len(),
             "themeCatalog": self.snapshot.themes.iter().map(|palette| json!({
                 "slug": palette.slug.as_ref(), "dark": palette.dark,
+                "key": format!("{:?}", palette.key()),
             })).collect::<Vec<_>>(),
             "pane": view.pane().id(), "requests": self.requests.len(), "events": self.requests,
             "visible": self.visible, "unsupported": self.unsupported, "pendingSaves": self.pending_saves.len(),

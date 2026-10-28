@@ -102,7 +102,7 @@ impl SettingsView {
                             .id(SharedString::from(item_id.clone()))
                             .relative()
                             .min_w_0()
-                            .w_full()
+                            .flex_1()
                             .role(Role::Label)
                             .aria_label(label.clone())
                             .text_size(pt(metrics::BODY))
@@ -196,8 +196,10 @@ impl SettingsView {
             .clone();
         let capture = anchor.clone();
         let click_anchor = anchor.clone();
+        let pointer_anchor = anchor.clone();
         let entries = Rc::new(entries);
         let click_entries = entries.clone();
+        let pointer_entries = entries.clone();
         let key_entries = entries;
         let width = (label
             .chars()
@@ -278,9 +280,38 @@ impl SettingsView {
         .items_center()
         .child(visual)
         .on_prepaint(move |bounds, _, _| capture.set(bounds))
-        .on_click(cx.listener(move |this, _, window, cx| {
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, window, cx| {
+                if enabled {
+                    // Like Popover, use this render's state: the outside mouse-down
+                    // handler may already have dismissed the menu for this press.
+                    if open {
+                        this.close_popup(window, cx);
+                    } else {
+                        this.open_popup(
+                            id,
+                            pointer_entries.clone(),
+                            pointer_anchor.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                    cx.stop_propagation();
+                }
+            }),
+        )
+        .on_click(cx.listener(move |this, event, window, cx| {
             if enabled {
-                this.open_popup(id, click_entries.clone(), click_anchor.clone(), window, cx);
+                if matches!(event, ClickEvent::Mouse(_)) {
+                    // The common click handler focuses the trigger. A pointer
+                    // press already opened the menu; keep its keyboard owner.
+                    if let Some(popup) = this.popup.as_ref().filter(|popup| popup.id == id) {
+                        popup.menu.focus_handle(cx).focus(window, cx);
+                    }
+                } else {
+                    this.open_popup(id, click_entries.clone(), click_anchor.clone(), window, cx);
+                }
             }
         }))
         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {

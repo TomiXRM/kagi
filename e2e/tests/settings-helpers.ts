@@ -3,7 +3,7 @@ import { expect, type Page } from "@playwright/test";
 type Probe = { id: string; x: number; y: number; width: number; height: number; focused: boolean; selected: boolean; disabled: boolean; name: string; value: string; role: string; paint: { fontSize: number; fontWeight: number; textColor: number } | null };
 type Observed = {
   language: string; theme: string; themeCount: number; pane: string; requests: number; events: string[];
-  themeCatalog: { slug: string; dark: boolean }[];
+  themeCatalog: { slug: string; dark: boolean; key: string }[];
   visible: boolean; unsupported: string[]; pendingSaves: number; pendingReset: boolean; pendingConsent: boolean;
   smartEnabled: boolean; smartProvider: string; smartModel: string | null; graphCompact: boolean; graphLaneCompact: boolean;
   terminalAutoLock: boolean; autoFetch: boolean; reduceMotion: boolean; zoom: number; toolbar: string;

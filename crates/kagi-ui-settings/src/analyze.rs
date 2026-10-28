@@ -251,7 +251,7 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AnalyzeRequest, AnalyzeResult, AnalyzeState};
     fn request(revision: u64, text: &str) -> AnalyzeRequest {
         AnalyzeRequest {
             revision,

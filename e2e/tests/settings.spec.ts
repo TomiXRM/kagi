@@ -610,8 +610,11 @@ for (const [language, appearance, zoom] of [
       expect(control.y + control.height + margin).toBeLessThanOrEqual(strip.y + strip.height);
       if (requireVerticalVisibility) {
         const detail = await probe(page, "settings-detail-scroll");
-        expect(control.y - margin).toBeGreaterThanOrEqual(detail.y);
-        expect(control.y + control.height + margin).toBeLessThanOrEqual(detail.y + detail.height);
+        // Manual vertical browsing preserves offsets for an unfocused selection;
+        // only an actual focused card paints the outer ring clearance.
+        const detailMargin = control.focused ? margin : 0;
+        expect(control.y - detailMargin).toBeGreaterThanOrEqual(detail.y);
+        expect(control.y + control.height + detailMargin).toBeLessThanOrEqual(detail.y + detail.height);
       }
     };
     expect(initial.scrollY).toBe(0);

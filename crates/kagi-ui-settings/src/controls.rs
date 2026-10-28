@@ -133,24 +133,33 @@ impl SettingsView {
         #[cfg(feature = "gui-e2e")]
         let container = {
             let probes = self.probes.clone();
-            container.on_prepaint(move |bounds, _, _| {
-                // ElementExt's absolute canvas measures the padding box.
-                // This group reserves a physical 1px border in both themes.
-                probes.borrow_mut().insert(
-                    id.into(),
-                    ControlProbe {
-                        id: id.into(),
-                        bounds: bounds.dilate(px(1.)),
-                        role: Role::Group,
-                        name: id.into(),
-                        value: String::new(),
-                        paint: None,
-                        focused: false,
-                        selected: false,
-                        disabled: false,
+            container.child(
+                canvas(
+                    move |bounds, _, _| {
+                        // Explicit top/left gives the padding box, unlike the
+                        // static-position canvas in ElementExt::on_prepaint.
+                        probes.borrow_mut().insert(
+                            id.into(),
+                            ControlProbe {
+                                id: id.into(),
+                                bounds: bounds.dilate(px(1.)),
+                                role: Role::Group,
+                                name: id.into(),
+                                value: String::new(),
+                                paint: None,
+                                focused: false,
+                                selected: false,
+                                disabled: false,
+                            },
+                        );
                     },
-                );
-            })
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
         };
         SettingsGroup {
             container,
@@ -240,9 +249,21 @@ impl SettingsView {
                     .gap(pt(2.))
                     .child(title.t())
                     .children((!visible.is_empty()).then(|| {
+                        let text = StyledText::new(visible.clone());
+                        #[cfg(feature = "gui-e2e")]
+                        let text_probe = Some(self.measured_text(
+                            format!("{id}-text"),
+                            visible.to_string(),
+                            &text,
+                        ));
+                        #[cfg(not(feature = "gui-e2e"))]
+                        let text_probe = None::<AnyElement>;
                         div()
                             .id(id)
                             .relative()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
                             .role(Role::Label)
                             .aria_label(visible.clone())
                             .aria_description(description.clone())
@@ -259,7 +280,8 @@ impl SettingsView {
                                     false,
                                 )
                             }))
-                            .child(visible)
+                            .child(text)
+                            .children(text_probe)
                     })),
             )
             // Wrap the whole composite below its label, not its internal controls.
@@ -344,6 +366,40 @@ impl SettingsView {
             let _ = (id, role, name, value, focused, selected, disabled);
             div().absolute().into_any_element()
         }
+    }
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn measured_text(&self, id: String, name: String, text: &StyledText) -> AnyElement {
+        let layout = text.layout().clone();
+        let probes = self.probes.clone();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let style = window.text_style();
+                probes.borrow_mut().insert(
+                    id.clone(),
+                    ControlProbe {
+                        id,
+                        bounds: layout.bounds(),
+                        focused: false,
+                        selected: false,
+                        disabled: false,
+                        role: Role::Label,
+                        name,
+                        value: layout.text(),
+                        paint: Some(ControlPaint {
+                            font_size: style.font_size.to_pixels(window.rem_size()),
+                            font_weight: style.font_weight,
+                            text_color: style.color,
+                        }),
+                    },
+                );
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size(px(0.))
+        .into_any_element()
     }
     // One leaf builder owns accessibility, roving focus and the typed intent.
     #[allow(clippy::too_many_arguments)]

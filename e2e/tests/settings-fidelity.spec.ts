@@ -252,7 +252,16 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     const beforeProvider = (await observed(page)).requests;
     await click(page, "sc-provider-select");
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(true);
-    await click(page, "sc-provider-select");
+    const trigger = await probe(page, "sc-provider-select");
+    const menu = await probe(page, "settings-popup-menu");
+    // A below-trigger popup can overlap the trigger's centre at JA/167%.
+    // Click its actual exposed top band, not the menu's padding.
+    const point = { x: trigger.x + trigger.width / 2, y: (trigger.y + Math.min(trigger.y + trigger.height, menu.y)) / 2 };
+    expect(point.y).toBeGreaterThan(trigger.y);
+    expect(point.y).toBeLessThan(trigger.y + trigger.height);
+    expect(point.y).toBeLessThan(menu.y);
+    await info.attach("popup-reclick-hit.json", { body: JSON.stringify({ trigger, menu, point }), contentType: "application/json" });
+    await page.mouse.click(point.x, point.y); await frames(page);
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
     // The pointer path must not replace keyboard activation or reopen on release.
     await page.keyboard.press("Space"); await frames(page);
@@ -376,3 +385,100 @@ test("catalog replacements preserve live theme focus and repair removed choices"
   expect((await probe(page, `settings-theme-${before.theme}`)).selected).toBe(true);
   await info.attach("catalog-focus-removed.png", { body: await page.screenshot(), contentType: "image/png" });
 });
+
+for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "apple-dark", 1.67]] as const) {
+  test(`production text leaves and Analyze action rail: ${language} ${zoom}`, async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 715, height: 640 });
+    await boot(page);
+    await host(page, "appearance", appearance);
+    await host(page, "language", language);
+    await host(page, "zoom", String(zoom));
+    await pane(page, "editor");
+    const help = await probe(page, "settings-markdown-help");
+    const text = await probe(page, "settings-markdown-help-text");
+    const row = await probe(page, "settings-markdown-row");
+    const preview = await probe(page, "settings-markdown-preview");
+    const source = await probe(page, "settings-markdown-source");
+    expect(preview.y).toBe(source.y);
+    expect(preview.height).toBe(source.height);
+    expect(Math.abs(preview.width - source.width)).toBeLessThanOrEqual(1);
+    expect(preview.x + preview.width).toBeLessThan(source.x);
+    if (zoom === 1) {
+      expect((await probe(page, "settings-markdown-default-view-visual")).height).toBe(24);
+    }
+    // These are the actual StyledText layouts consumed by paint, not parent
+    // boxes or an accessibility/string-copy surrogate for wrapping.
+    expect(text.value).toBe(help.value);
+    expect(text.width).toBeLessThanOrEqual(help.width);
+    expect(text.height).toBeGreaterThan(text.paint!.fontSize * 1.5);
+    expect(text.y + text.height).toBeLessThanOrEqual(row.y + row.height);
+    expect(help.x + help.width <= preview.x || help.y + help.height <= preview.y).toBe(true);
+    for (const control of [preview, source]) {
+      const label = await probe(page, `${control.id}-label`);
+      const leaf = await probe(page, `${control.id}-text`);
+      expect(leaf.value).toBe(label.name);
+      expect(leaf.width).toBeLessThanOrEqual(label.width);
+      expect(leaf.x).toBeGreaterThanOrEqual(control.x);
+      expect(leaf.x + leaf.width).toBeLessThanOrEqual(control.x + control.width);
+      expect(leaf.y).toBeGreaterThanOrEqual(control.y);
+      expect(leaf.y + leaf.height).toBeLessThanOrEqual(control.y + control.height);
+    }
+    const points = [[row.x + 1, row.y + 1]];
+    for (let y = Math.floor(text.y + text.height / 2) + 1; y < text.y + text.height - 1; y += 2) {
+      for (let x = Math.ceil(text.x); x < text.x + text.width; x += 2) points.push([x, y]);
+    }
+    const paint = await paintedPixels(page, points);
+    const background = paint.colors[0];
+    expect(paint.colors.slice(1).filter(color => color.reduce((sum, value, channel) =>
+      sum + Math.abs(value - background[channel]), 0) > 45).length,
+    "actual glyph ink in the lower wrapped description lines").toBeGreaterThan(5);
+    await info.attach("editor-constrained-text.png", { body: paint.png, contentType: "image/png" });
+    await info.attach("editor-text-layout.json", { body: JSON.stringify({ row, help, text, preview, source }), contentType: "application/json" });
+
+    await pane(page, "analyze");
+    const footer = async (state: string, disabled: boolean) => {
+      await reveal(page, "settings-analyze-save");
+      const viewport = await probe(page, "settings-detail-scroll");
+      const group = await probe(page, "settings-analyze-group");
+      const status = await probe(page, "settings-analyze-status");
+      const reset = await probe(page, "settings-analyze-reset");
+      const save = await probe(page, "settings-analyze-save");
+      expect(save.disabled).toBe(disabled);
+      expect(status.name.length).toBeGreaterThan(0);
+      for (const control of [status, reset, save]) {
+        expect(control.x).toBeGreaterThanOrEqual(viewport.x);
+        expect(control.x + control.width).toBeLessThanOrEqual(viewport.x + viewport.width);
+        expect(control.y).toBeGreaterThanOrEqual(viewport.y);
+        expect(control.y + control.height).toBeLessThanOrEqual(viewport.y + viewport.height);
+      }
+      expect(Math.abs(status.x - group.x - 1 - 12 * zoom)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(save.x + save.width - group.x - group.width + 1 + 12 * zoom)).toBeLessThanOrEqual(0.5);
+      if (reset.y !== save.y) expect(reset.x + reset.width).toBe(save.x + save.width);
+      await info.attach(`analyze-footer-${state}.png`, { body: await page.screenshot(), contentType: "image/png" });
+      await info.attach(`analyze-footer-${state}.json`, { body: JSON.stringify({ viewport, group, status, reset, save }), contentType: "application/json" });
+    };
+    const edit = async (value: string) => {
+      await click(page, "settings-analyze-input");
+      await page.keyboard.press("Control+A");
+      await page.keyboard.type(value);
+      await expect.poll(async () => (await observed(page)).draft).toBe(value);
+    };
+    await footer("clean", true);
+    await host(page, "save-mode", "deferred");
+    await edit("first/\n");
+    await footer("dirty", false);
+    await click(page, "settings-analyze-save");
+    expect((await observed(page)).pendingSaves).toBe(1);
+    await footer("pending", false);
+    await host(page, "ack", "success");
+    await footer("saved", true);
+    await edit("second/\n");
+    await host(page, "save-mode", "failed");
+    await click(page, "settings-analyze-save");
+    await reveal(page, "settings-analyze-error");
+    await footer("failed", false);
+    expect((await observed(page)).baseline).toBe("first/\n");
+    expect((await observed(page)).draft).toBe("second/\n");
+  });
+}

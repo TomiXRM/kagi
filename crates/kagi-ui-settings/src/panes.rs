@@ -727,7 +727,6 @@ impl SettingsView {
             .id("settings-analyze-status")
             .relative()
             .role(Role::Status)
-            .mr_auto()
             .text_size(pt(metrics::SECONDARY))
             .text_color(ink::secondary())
             .child(status.t())
@@ -760,8 +759,18 @@ impl SettingsView {
                             .gap(pt(8.))
                             .py(pt(10.))
                             .child(status)
-                            .child(reset)
-                            .child(save),
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .max_w_full()
+                                    .ml_auto()
+                                    .flex()
+                                    .flex_wrap()
+                                    .justify_end()
+                                    .gap(pt(8.))
+                                    .child(reset)
+                                    .child(save),
+                            ),
                     ),
             )
             .when_some(self.analyze.error.clone(), |content, error| {

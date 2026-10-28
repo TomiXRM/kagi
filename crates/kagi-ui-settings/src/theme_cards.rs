@@ -247,43 +247,11 @@ impl SettingsView {
                     kagi_domain::text_safety::sanitize_control_bytes(palette.display_name()).into();
                 let caption_text = StyledText::new(name.clone());
                 #[cfg(feature = "gui-e2e")]
-                let caption_text_probe = {
-                    let layout = caption_text.layout().clone();
-                    let probes = self.probes.clone();
-                    let id = format!("settings-theme-caption-text-{}", palette.slug);
-                    let name = name.to_string();
-                    Some(
-                        canvas(
-                            |_, _, _| (),
-                            move |_, _, window, _| {
-                                let style = window.text_style();
-                                probes.borrow_mut().insert(
-                                    id.clone(),
-                                    ControlProbe {
-                                        id: id.clone(),
-                                        bounds: layout.bounds(),
-                                        focused: false,
-                                        selected: false,
-                                        disabled: false,
-                                        role: Role::Label,
-                                        name: name.clone(),
-                                        value: layout.text(),
-                                        paint: Some(ControlPaint {
-                                            font_size: style.font_size.to_pixels(window.rem_size()),
-                                            font_weight: style.font_weight,
-                                            text_color: style.color,
-                                        }),
-                                    },
-                                );
-                            },
-                        )
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size(px(0.))
-                        .into_any_element(),
-                    )
-                };
+                let caption_text_probe = Some(self.measured_text(
+                    format!("settings-theme-caption-text-{}", palette.slug),
+                    name.to_string(),
+                    &caption_text,
+                ));
                 #[cfg(not(feature = "gui-e2e"))]
                 let caption_text_probe = None::<AnyElement>;
                 #[cfg(feature = "gui-e2e")]

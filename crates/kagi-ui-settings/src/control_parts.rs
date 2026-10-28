@@ -260,7 +260,7 @@ impl SettingsView {
             .w(width)
             .max_w_full()
             .flex()
-            .flex_wrap()
+            .flex_nowrap()
             .gap(gap)
             .px(pt(2.))
             .role(Role::RadioGroup)
@@ -314,9 +314,18 @@ impl SettingsView {
                         !enabled,
                     ))
                 });
+            let text = StyledText::new(label.clone());
+            #[cfg(feature = "gui-e2e")]
+            let text_probe =
+                Some(self.measured_text(format!("{id}-text"), label.to_string(), &text));
+            #[cfg(not(feature = "gui-e2e"))]
+            let text_probe = None::<AnyElement>;
             let label_element = div()
                 .relative()
                 .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
                 .font_weight(if selected {
                     FontWeight::MEDIUM
                 } else {
@@ -339,7 +348,8 @@ impl SettingsView {
                         !enabled,
                     ))
                 })
-                .child(label.clone());
+                .child(text)
+                .children(text_probe);
             let item = self
                 .control(
                     id,

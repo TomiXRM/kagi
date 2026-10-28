@@ -216,6 +216,7 @@ ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3
 # through weak capture, and f5f68275 includes Find keyboard containment.
 # 24833cd2 adds named radio popup roots, disabled/checked accessibility and
 # owner-scoped active descendants, plus eligible first/wrap/confirm navigation.
+# Custom popup label wrappers also shrink within the menu's real available width.
 # Official main includes some but not all equivalents; longbridge/gpui-kit#3421
 # merged presentation retention only.
 # Remove both entries together in #1479-S6: official component/assets at one revision,
@@ -223,5 +224,5 @@ ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3
 # and the official cached Textarea row accessor (U1) with consumer gates.
 # Assets has no independent fix; it shares the component fork source/revision.
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "24833cd2f3b6e907720129e49d655b397be49c6c" }
-gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "24833cd2f3b6e907720129e49d655b397be49c6c" }
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "9f4aa0b36812bee986261bdf60cb5aa43f8bd04f" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "9f4aa0b36812bee986261bdf60cb5aa43f8bd04f" }

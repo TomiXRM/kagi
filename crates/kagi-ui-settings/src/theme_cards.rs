@@ -411,6 +411,8 @@ impl SettingsView {
                     .relative()
                     .min_w_0()
                     .w_full()
+                    .flex()
+                    .flex_col()
                     .child(section(label, None, area))
                     // Reveal the real section, including its heading, rather
                     // than clipping that heading above a revealed card strip.

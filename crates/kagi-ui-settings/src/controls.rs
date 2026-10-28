@@ -51,6 +51,8 @@ impl ParentElement for SettingsGroup {
                     .relative()
                     .min_w_0()
                     .w_full()
+                    .flex()
+                    .flex_col()
                     .child(element)
                     .child(separator)
                     .into_any_element()
@@ -99,11 +101,17 @@ pub(crate) fn section(
                             title.t()
                         )))
                         .role(Role::Heading)
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
                         .font_weight(FontWeight::BOLD)
                         .child(title.t()),
                 )
                 .children(subtitle.map(|subtitle| {
                     div()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
                         .text_size(pt(metrics::SECONDARY + 0.5))
                         .text_color(ink::secondary())
                         .child(subtitle)
@@ -291,6 +299,8 @@ impl SettingsView {
                     .min_w_0()
                     .max_w_full()
                     .ml_auto()
+                    .flex()
+                    .flex_col()
                     .child(control),
             );
         if summary.is_some() {
@@ -694,6 +704,8 @@ impl SettingsView {
                         .relative()
                         .flex_1()
                         .min_w_0()
+                        .flex()
+                        .flex_col()
                         .truncate()
                         .font_weight(if selected {
                             FontWeight::SEMIBOLD

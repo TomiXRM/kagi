@@ -747,6 +747,14 @@ for (const [language, appearance, zoom] of [
         expect(control.y).toBeGreaterThanOrEqual(0);
         expect(control.y + control.height).toBeLessThanOrEqual(640);
       }
+      const controls = (await observed(page)).controls;
+      const groups = controls.filter(control => control.role === "Group" && control.id.endsWith("-group"));
+      for (const row of controls.filter(control => control.role === "Group" && control.id.endsWith("-row"))) {
+        expect(groups.some(group => row.x >= group.x + 1 && row.y >= group.y + 1
+          && row.x + row.width <= group.x + group.width - 1
+          && row.y + row.height <= group.y + group.height - 1),
+        JSON.stringify({ destination, row, groups })).toBe(true);
+      }
       await info.attach(`${destination}-compact.png`, { body: await page.screenshot(), contentType: "image/png" });
     }
     await pane(page, "appearance");

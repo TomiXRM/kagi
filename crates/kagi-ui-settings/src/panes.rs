@@ -258,6 +258,9 @@ impl SettingsView {
                     div()
                         .id("settings-custom-themes-help")
                         .relative()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
                         .role(Role::Label)
                         .aria_label(Msg::SettingsCustomThemesDesc.t())
                         .child(Msg::SettingsCustomThemesDesc.t())
@@ -598,6 +601,9 @@ impl SettingsView {
                 div()
                     .id("settings-provider-availability")
                     .relative()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
                     .role(Role::Status)
                     .text_size(pt(metrics::SECONDARY))
                     .text_color(ink::secondary())
@@ -619,6 +625,9 @@ impl SettingsView {
             result = result.child(
                 div()
                     .id("settings-smart-detecting")
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
                     .role(Role::Status)
                     .child(Msg::SmartDetecting.t()),
             );
@@ -638,13 +647,16 @@ impl SettingsView {
                     .gap(pt(6.))
                     .child(
                         div()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(i18n::smart_cli_warning_title(provider.display_name())),
                     )
                     .children(
                         i18n::smart_cli_warning_lines(provider.display_name(), bin)
                             .into_iter()
-                            .map(|line| div().child(line)),
+                            .map(|line| div().min_w_0().flex().flex_col().child(line)),
                     ),
             );
         }
@@ -681,6 +693,9 @@ impl SettingsView {
         let help = div()
             .id("settings-analyze-help")
             .relative()
+            .min_w_0()
+            .flex()
+            .flex_col()
             .role(Role::Label)
             .aria_label(Msg::SettingsAnalyzeIgnoreSummary.t())
             .aria_description(Msg::SettingsAnalyzeIgnoreDesc.t())
@@ -723,13 +738,27 @@ impl SettingsView {
                     false,
                 )
             }));
+        let status_text = StyledText::new(status.t());
+        #[cfg(feature = "gui-e2e")]
+        let status_text_probe = Some(self.measured_text(
+            "settings-analyze-status-text".into(),
+            status.t().into(),
+            &status_text,
+        ));
+        #[cfg(not(feature = "gui-e2e"))]
+        let status_text_probe = None::<AnyElement>;
         let status = div()
             .id("settings-analyze-status")
             .relative()
+            .min_w_0()
+            .max_w_full()
+            .flex()
+            .flex_col()
             .role(Role::Status)
             .text_size(pt(metrics::SECONDARY))
             .text_color(ink::secondary())
-            .child(status.t())
+            .child(status_text)
+            .children(status_text_probe)
             .children(cfg!(feature = "gui-e2e").then(|| {
                 self.measured(
                     "settings-analyze-status".into(),
@@ -778,6 +807,9 @@ impl SettingsView {
                     div()
                         .id("settings-analyze-error")
                         .relative()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
                         .role(Role::Status)
                         .text_color(rgb(theme().color_blocker))
                         .children(cfg!(feature = "gui-e2e").then(|| {
@@ -798,6 +830,8 @@ impl SettingsView {
             .id("settings-analyze-section")
             .relative()
             .min_w_0()
+            .flex()
+            .flex_col()
             .child(section(
                 Msg::SettingsAnalyzeIgnore,
                 Some(help.into_any_element()),

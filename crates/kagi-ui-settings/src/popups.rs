@@ -2,8 +2,8 @@
 use super::kit_style::{ink, metrics, pt};
 use super::*;
 use gpui_component::{
-    menu::{PopupMenu, PopupMenuItem},
     ElementExt as _, Icon, IconName, Sizable, Size,
+    menu::{PopupMenu, PopupMenuItem},
 };
 use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::cell::Cell;
@@ -98,11 +98,24 @@ impl SettingsView {
                 let intent = intent.clone();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, cx| {
+                        let text = StyledText::new(label.clone());
+                        #[cfg(feature = "gui-e2e")]
+                        let text_probe = text_owner.upgrade().map(|owner| {
+                            owner.read(cx).measured_text(
+                                format!("{item_id}-text"),
+                                label.to_string(),
+                                &text,
+                            )
+                        });
+                        #[cfg(not(feature = "gui-e2e"))]
+                        let text_probe = None::<AnyElement>;
                         div()
                             .id(SharedString::from(item_id.clone()))
                             .relative()
                             .min_w_0()
                             .flex_1()
+                            .flex()
+                            .flex_col()
                             .role(Role::Label)
                             .aria_label(label.clone())
                             .text_size(pt(metrics::BODY))
@@ -125,7 +138,8 @@ impl SettingsView {
                                     })
                                     .flatten(),
                             )
-                            .child(label.clone())
+                            .child(text)
+                            .children(text_probe)
                             .hover_tooltip(
                                 SharedString::from(format!("{item_id}-name")),
                                 label.clone(),
@@ -208,6 +222,11 @@ impl SettingsView {
             * 6.6
             + 38.)
             .clamp(100., 240.);
+        let text = StyledText::new(label.clone());
+        #[cfg(feature = "gui-e2e")]
+        let text_probe = Some(self.measured_text(format!("{id}-text"), label.to_string(), &text));
+        #[cfg(not(feature = "gui-e2e"))]
+        let text_probe = None::<AnyElement>;
         let visual = div()
             .id(SharedString::from(format!("{id}-visual")))
             .relative()
@@ -242,9 +261,12 @@ impl SettingsView {
                 div()
                     .flex_1()
                     .min_w_0()
+                    .flex()
+                    .flex_col()
                     .pl(pt(8.))
                     .truncate()
-                    .child(label.clone()),
+                    .child(text)
+                    .children(text_probe),
             )
             .child(
                 div()

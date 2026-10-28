@@ -312,6 +312,25 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       await page.keyboard.press("Enter"); await frames(page);
       expect((await observed(page)).smartModel).toBe(models.at(-1));
       expect((await observed(page)).requests).toBe(before.requests + 1);
+      const group = await probe(page, "settings-smart-group");
+      const modelRow = await probe(page, "settings-model-row");
+      const trigger = await probe(page, "sc-model-select");
+      const triggerText = await probe(page, "sc-model-select-text");
+      // A wrapped row must contribute its actual height to its group, not
+      // merely keep its control somewhere inside the overall viewport.
+      for (const control of [modelRow, trigger]) {
+        expect(control.x).toBeGreaterThanOrEqual(group.x + 1);
+        expect(control.x + control.width).toBeLessThanOrEqual(group.x + group.width - 1);
+        expect(control.y).toBeGreaterThanOrEqual(group.y + 1);
+        expect(control.y + control.height).toBeLessThanOrEqual(group.y + group.height - 1);
+      }
+      expect(trigger.y + trigger.height).toBeLessThanOrEqual(modelRow.y + modelRow.height);
+      expect(triggerText.name).toBe(models.at(-1));
+      expect(triggerText.value).toMatch(/(?:…|\.\.\.)$/);
+      expect(Math.abs(triggerText.x - trigger.x - 8 * zoom)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(triggerText.x + triggerText.width - trigger.x - trigger.width + 18 * zoom)).toBeLessThanOrEqual(0.5);
+      await info.attach(`long-model-row-${count}.png`, { body: await page.screenshot(), contentType: "image/png" });
+      await info.attach(`long-model-row-${count}.json`, { body: JSON.stringify({ group, modelRow, trigger, triggerText }), contentType: "application/json" });
       await click(page, "sc-model-select");
       const rows = (await observed(page)).controls.filter(control => control.role === "MenuItemRadio");
       expect(rows).toHaveLength(count);
@@ -321,7 +340,32 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
         expect(item.name).toBe(model);
         expect(item.disabled).toBe(false);
         if (index === 0 || index === models.length - 1) {
-          await info.attach(`models-${count}-${index}.png`, { body: await page.screenshot(), contentType: "image/png" });
+          const leaf = await probe(page, `${item.id}-text`);
+          expect(leaf.name).toBe(model);
+          expect(leaf.value).toMatch(/(?:…|\.\.\.)$/);
+          expect(leaf.x).toBe(item.x);
+          expect(leaf.width).toBe(item.width);
+          expect(leaf.height).toBeLessThanOrEqual(Math.ceil(20 * zoom));
+          const points = [[leaf.x + leaf.width - 1, leaf.y + 1]];
+          for (let y = Math.ceil(leaf.y); y < leaf.y + leaf.height; y++) {
+            for (let x = Math.ceil(leaf.x + leaf.width - 16 * zoom); x < leaf.x + leaf.width; x++) points.push([x, y]);
+          }
+          const paint = await paintedPixels(page, points);
+          expect(paint.colors.slice(1).some(color => color.reduce((sum, value, channel) =>
+            sum + Math.abs(value - paint.colors[0][channel]), 0) > 45),
+          "ellipsis has actual ink at the usable trailing edge").toBe(true);
+          await info.attach(`models-${count}-${index}.png`, { body: paint.png, contentType: "image/png" });
+          await info.attach(`models-${count}-${index}.json`, { body: JSON.stringify({ item, leaf }), contentType: "application/json" });
+          if (count === 20 && index === count - 1) {
+            await page.mouse.move(2, 2); await frames(page);
+            const point = { x: item.x + item.width / 2, y: item.y + item.height / 2 };
+            await page.mouse.move(point.x, point.y);
+            // Actual GPUI hover delay; the resulting full-name tooltip image
+            // is visually reviewed, not inferred from the item's AX label.
+            await page.waitForTimeout(1000); await frames(page);
+            await info.attach("model-full-name-tooltip.png", { body: await page.screenshot(), contentType: "image/png" });
+            await info.attach("model-tooltip-target.json", { body: JSON.stringify({ item, point, expectedFullName: model }), contentType: "application/json" });
+          }
         }
       }
       const selected = (await observed(page)).smartModel;
@@ -452,11 +496,23 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
         expect(control.y).toBeGreaterThanOrEqual(viewport.y);
         expect(control.y + control.height).toBeLessThanOrEqual(viewport.y + viewport.height);
       }
+      const statusText = await probe(page, "settings-analyze-status-text");
+      const innerLeft = group.x + 1 + 12 * zoom;
+      const innerRight = group.x + group.width - 1 - 12 * zoom;
+      expect(status.x).toBeGreaterThanOrEqual(innerLeft - 0.5);
+      expect(status.x + status.width).toBeLessThanOrEqual(innerRight + 0.5);
+      expect(statusText.value).toBe(status.name);
+      expect(statusText.x).toBeGreaterThanOrEqual(status.x);
+      expect(statusText.x + statusText.width).toBeLessThanOrEqual(status.x + status.width);
+      expect(statusText.y + statusText.height).toBeLessThanOrEqual(status.y + status.height);
+      if (language === "ja" && state === "saved") {
+        expect(statusText.height).toBeGreaterThan(statusText.paint!.fontSize * 1.5);
+      }
       expect(Math.abs(status.x - group.x - 1 - 12 * zoom)).toBeLessThanOrEqual(0.5);
       expect(Math.abs(save.x + save.width - group.x - group.width + 1 + 12 * zoom)).toBeLessThanOrEqual(0.5);
       if (reset.y !== save.y) expect(reset.x + reset.width).toBe(save.x + save.width);
       await info.attach(`analyze-footer-${state}.png`, { body: await page.screenshot(), contentType: "image/png" });
-      await info.attach(`analyze-footer-${state}.json`, { body: JSON.stringify({ viewport, group, status, reset, save }), contentType: "application/json" });
+      await info.attach(`analyze-footer-${state}.json`, { body: JSON.stringify({ viewport, group, status, statusText, reset, save }), contentType: "application/json" });
     };
     const edit = async (value: string) => {
       await click(page, "settings-analyze-input");

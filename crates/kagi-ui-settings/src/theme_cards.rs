@@ -144,6 +144,10 @@ impl SettingsView {
                             .when(!readable, |el| {
                                 el.child(
                                     div()
+                                        .id(SharedString::from(format!(
+                                            "settings-theme-contrast-label-{}",
+                                            palette.slug
+                                        )))
                                         .text_size(pt(metrics::SECONDARY))
                                         .role(Role::Label)
                                         .aria_label(Msg::SettingsThemeContrastWarning.t())
@@ -421,6 +425,9 @@ impl SettingsView {
                     .gap(pt(6.))
                     .child(
                         div()
+                            .id(SharedString::from(format!(
+                                "settings-theme-mode-heading-{mode}"
+                            )))
                             .role(Role::Heading)
                             .text_size(pt(metrics::SECONDARY))
                             .text_color(ink::secondary())

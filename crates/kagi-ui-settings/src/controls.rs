@@ -75,6 +75,10 @@ pub(crate) fn section(
     content: impl IntoElement,
 ) -> AnyElement {
     div()
+        .id(SharedString::from(format!(
+            "settings-section-{}",
+            title.t()
+        )))
         .role(Role::Group)
         .aria_label(title.t())
         .min_w_0()
@@ -593,11 +597,8 @@ impl SettingsView {
                         .justify_center()
                         .bg(linear_gradient(
                             180.,
-                            linear_color_stop(
-                                rgb(super::kit_style::mix(hue, 0xffffff, 0.22)).into(),
-                                0.,
-                            ),
-                            linear_color_stop(rgb(hue).into(), 1.),
+                            linear_color_stop(rgb(super::kit_style::mix(hue, 0xffffff, 0.22)), 0.),
+                            linear_color_stop(rgb(hue), 1.),
                         ))
                         .text_color(rgb(theme::on_accent_foreground(hue)))
                         .when(cfg!(feature = "gui-e2e"), |tile| {

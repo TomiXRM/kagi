@@ -30,8 +30,8 @@ fn assert_screen_fit(cx: &mut VisualTestAppContext, settings: AnyWindowHandle, s
         let frame = window.window_bounds().get_bounds();
         let visible = window.display(cx).expect("Settings display").visible_bounds();
         assert!(
-            window.viewport_size().height <= gpui::px(640.),
-            "compact Settings content height stays capped after {step}: {:?}",
+            window.viewport_size().height <= visible.size.height,
+            "content-driven Settings stays bounded by its actual display after {step}: {:?}",
             window.viewport_size()
         );
         assert!(
@@ -556,10 +556,14 @@ pub fn scenario_settings_window_composition(cx: &mut VisualTestAppContext) {
         "ui_zoom",
         "settings_pane",
         "settings_window_frame",
+        "smart_commit_provider",
     ]);
     let _host = SettingsHostGuard::native(cx);
     i18n::set_lang(i18n::Lang::En);
     theme::set_zoom(1.);
+    // Keep the canonical provider/model row composition deterministic while
+    // retaining the real adapter/catalog and restoring the preference on exit.
+    kagi::ui::settings::write_setting("smart_commit_provider", Some("ollama"));
     let output = std::path::Path::new("target/ui-fidelity/settings");
     std::fs::create_dir_all(output).unwrap();
     for appearance in ["apple-light", "apple-dark"] {
@@ -595,6 +599,10 @@ pub fn scenario_settings_window_composition(cx: &mut VisualTestAppContext) {
                                 "name": probe.name,
                                 "value": probe.value,
                                 "selected": probe.selected,
+                                "paint": probe.paint.map(|paint| serde_json::json!({
+                                    "font_size": f32::from(paint.font_size),
+                                    "font_weight": format!("{:?}", paint.font_weight),
+                                })),
                             })
                         })
                         .collect();
@@ -603,13 +611,42 @@ pub fn scenario_settings_window_composition(cx: &mut VisualTestAppContext) {
                         .expect("whole native Settings render");
                     let stem = format!("native-{}-{appearance}-en-100", pane.id());
                     image.save(output.join(format!("{stem}.png"))).unwrap();
+                    let lights = traffic_light_bounds(window);
+                    let scale = window.scale_factor();
+                    crate::settings_composition::assert_composition(
+                        window,
+                        cx,
+                        view.read(cx),
+                        &lights,
+                        |point| {
+                            image
+                                .get_pixel(
+                                    (f32::from(point.x) * scale) as u32,
+                                    (f32::from(point.y) * scale) as u32,
+                                )
+                                .0
+                        },
+                    );
                     let viewport = window.viewport_size();
+                    let frame = window.window_bounds().get_bounds();
+                    let visible = window.display(cx).unwrap().visible_bounds();
                     let receipt = serde_json::json!({
                         "source": "production native SettingsWindow; window.render_to_image()",
+                        "captured_unix_ms": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                        "composition_assertions": "passed",
+                        "native_frame": [
+                            f32::from(frame.left()), f32::from(frame.top()),
+                            f32::from(frame.size.width), f32::from(frame.size.height),
+                        ],
+                        "visible_screen": [
+                            f32::from(visible.left()), f32::from(visible.top()),
+                            f32::from(visible.size.width), f32::from(visible.size.height),
+                        ],
                         "backing_scale": window.scale_factor(),
                         "viewport": [f32::from(viewport.width), f32::from(viewport.height)],
                         "png": [image.width(), image.height()],
-                        "traffic_lights": traffic_light_bounds(window),
+                        "traffic_lights": lights,
                         "probes": probes,
                     });
                     std::fs::write(
@@ -714,8 +751,8 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
         cx.update_window(reopened, |_, window, _| {
             assert_eq!(
                 window.viewport_size().width,
-                gpui::px(715.),
-                "fixed logical width at either zoom"
+                gpui::px(900.),
+                "canonical logical width at either zoom"
             );
         })
         .unwrap();

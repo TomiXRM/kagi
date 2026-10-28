@@ -188,6 +188,9 @@ mod system_accessibility;
 mod settings_quiet;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_composition.rs"]
+mod settings_composition;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_window.rs"]
 mod settings_window;
 

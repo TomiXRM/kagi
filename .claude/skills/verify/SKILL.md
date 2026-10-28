@@ -46,7 +46,7 @@ The compact chooser has two independent Light/Dark horizontal strips, one
 global radio selection and Light-then-Dark keyboard order, not a value slider.
 Classify from the fixture's actual `themeCatalog.dark`, never names or colors.
 Before native compilation, run the focused production fidelity and chooser cases:
-`npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1 --grep 'production (kit|groups|popup)|sidebar overflow|horizontal theme chooser|Smart Commit|pale accent|selected hover|captions|numeric controls'`.
+`npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1 --grep 'production (kit|groups|popup|text leaves)|sidebar overflow|horizontal theme chooser|Smart Commit|pale accent|selected hover|captions|numeric controls'`.
 The new chooser matrix uses715×640 at EN/JA and100%/167%. Compare measured
 RadioButton count with the host catalog, visit every card using real arrow keys,
 and sample both pixels of all four first/last focus-ring edges from one PNG.
@@ -85,6 +85,33 @@ visuals, equal label-derived segment widths, selected text emphasis, card fills,
 one-pixel non-layout hairlines and real rest/hover/pressed/focus paint. One screenshot
 per unchanged state supplies all pixel samples; do not substitute accessible text
 for visible caption or component-quality evidence.
+The final v9 construction contract and production role map live in
+`docs/ui/modern-ui.md`; use them alongside the actual final i10 images, not
+the old production Settings as the quality baseline.
+
+For layout repairs, first scope to `--grep 'production text leaves'`:
+EN100/JA167 at715×640 checks the painted `StyledText` leaf, equal cells in one
+segment rail, complete description ink and text → hit → row → group containment.
+The same two cases capture Analyze's clean/dirty/pending/saved/failed footer,
+including the long Japanese saved status **inside the group's inner width**.
+A viewport-only bound can pass while status ink crosses the card edge.
+Do not force one-line height onto genuinely wrapped labels or merely move the
+overflow into another wrapper. Then run affected segment/focus neighbors; do not
+repeat native/workspace gates for each unreviewed visual iteration.
+
+`production popup` cases require closed/open model triggers to remain inside
+their actual row/group, and actual text-layout ellipses plus trailing ink to
+use the menu's available label width in EN/JA. Hover the **current long model
+item** and inspect the full-name tooltip PNG; an earlier unavailable-value
+tooltip or the full AX-name field is not that proof. Actual exposed trigger
+bounds determine the second-click target when the popup overlaps its centre.
+Keep real disabled-first/wrap/confirm and host-reopen-discard assertions.
+
+GPUI `px`/`Pixels` are logical window coordinates. The focus stroke/gap remain
+2/3 logical pixels independent of UI zoom; multiply by the actual native
+window backing scale for PNG comparisons. DPR1 browser samples do not establish
+Retina physical-pixel dimensions.
+
 New DPR1 fixed-role length assertions accept only floor/ceil of the intended
 scaled length because the two absolute edges snap independently;100% and200%
 remain exact. This does not loosen the existing per-edge segment, focus-ring,

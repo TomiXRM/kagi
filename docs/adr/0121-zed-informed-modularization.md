@@ -258,9 +258,26 @@ independent. There are no per-mode defaults, copied gallery or new backend API.
 The original 212-point sidebar/32-point rows are not compressed to fit zoom.
 Its outer width has a 55% ceiling and can flex below that ceiling to leave the
 detail's role-derived minimum: a whole numeric unit plus group insets, or a
-144-point theme card plus its full physical focus clearance, whichever is wider.
+144-point theme card plus its full unscaled logical-pixel focus clearance,
+whichever is wider.
 One existing-style vertical scroll handle owns overflow and keyboard reveal.
 Full sidebar names remain accessible and available on hover when truncated.
 This preserves the 715-point host/640-point ceiling; it is not a new minimum
 window policy or a promise about arbitrarily tiny displays.
+
+The [production construction contract](../ui/modern-ui.md#settings-final-kit-construction-contract)
+maps final v9 roles and their rest/hover/pressed/focus/selected/disabled states
+to those owners. Preserve the distilled one-shot composition rules, not a
+second gallery or an image-only reconstruction. Full-width group/text wrappers
+forward natural wrapped sizes; shrink-to-fit trailing controls retain their own
+layout. Text → control → row → group containment and actual ellipsis/tooltip
+paint are consumer gates. A normal segment is one equal-width rail; Japanese
+text may grow its height rather than stacking whole options or clipping.
+Analyze's leading status wraps within the group's inner width, while its
+wrapping action cluster shares the trailing edge.
+
+GPUI `Pixels` are logical window pixels. Focus stroke/gap/clearance do not scale
+with UI zoom, but native backing scale still multiplies them in captured PNGs;
+this unit clarification changes no geometry.
+
 

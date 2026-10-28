@@ -12,6 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   - Keep keyboard focus separate from selection and ON state with a translucent, background-adjusted ring that maintains at least 3:1 composited contrast, including pale system accents.
   - Browse themes in separate Light Mode and Dark Mode horizontal strips, classified by the actual palette metadata, with one global selection and keyboard order. Reveal selected/focused cards without undoing either strip's manual browsing; retain complete rings, long-name ellipses and independent vertical form scrolling. Start and bound native Settings content height at 640 points while preserving saved position/display information and smaller-content fit.
   - Preserve PR #1814's final component craft: Theme/Layout/Motion/Custom themes grouping, card hairlines, title/body/secondary hierarchy, label-sized segments, capsule and stepper geometry, neutral OFF switches with white knobs, fixed-hue tile gradients and 144-point data-driven theme previews. Provider/model choices use real keyboard-operable menus; focus and disabled state remain separate from selection.
+  - Keep long popup values and wrapped Japanese segment/status text inside their actual controls and groups, with visible ellipses, full-name hover help and right-aligned wrapped action clusters.
 
 ### Internal
 

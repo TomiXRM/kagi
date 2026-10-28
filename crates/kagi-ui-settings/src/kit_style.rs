@@ -23,7 +23,7 @@ pub(crate) mod metrics {
     pub const THEME_CARD_WIDTH: f32 = 144.;
     pub const DETAIL_PADDING_LEFT: f32 = 6.;
     pub const DETAIL_PADDING_RIGHT: f32 = 18.;
-    /// Physical pixels: the two-pixel ring, three-pixel gap and breathing room.
+    /// Unscaled logical pixels: two-pixel ring, three-pixel gap and breathing room.
     pub const FOCUS_REVEAL_MARGIN: f32 = 7.;
     pub const BODY: f32 = 13.;
     pub const SECONDARY: f32 = 11.5;

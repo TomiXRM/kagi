@@ -248,7 +248,7 @@ impl SettingsView {
             })
             .fold(px(0.), Pixels::max);
         let segment_width = (widest + pt(22.)).max(pt(metrics::CONTROL_HIT_HEIGHT));
-        // Corrected focus decoration needs six physical pixels between siblings.
+        // Focus decoration needs six unscaled logical pixels between siblings.
         let gap = pt(2.).max(px(6.));
         let width = segment_width * entries.len() as f32
             + pt(4.)

@@ -39,10 +39,10 @@ property, canonical value from code, actual value measured, ○/×:
 
 | Group | Rows (at least) |
 |---|---|
-| Window | logical width × height; whether host chrome (title band, toolbar) is drawn by Kagi; where the traffic lights sit relative to the sidebar |
+| Window | logical width × height **and the size policy**: fixed, or grows/shrinks with content — measure it on at least the shortest and the tallest pane (does switching panes resize the window?); what scrolls when content is taller; whether host chrome (title band, toolbar) is drawn by Kagi; where the traffic lights sit relative to the sidebar |
 | Sidebar | x/y/width/height of the panel; top inset; row height and row pitch; selection fill role; item order |
 | Detail | title band height and the title's text; scroll content insets; gap between sections |
-| Per pane | sequence of sections; for each section, which rows sit in which group card; which kit part draws each trailing control |
+| Per pane | sequence of sections; for each section, which rows sit in which group card; which kit part draws each trailing control; the **exact visible text** of every title, label and button (EN and JA) compared with the canonical's strings — a shortened or reworded label is a ×, even if it fits |
 | Repeated parts | card/tile size and how many are visible at the canonical width |
 
 Then:
@@ -119,7 +119,7 @@ Composition values taken from that code (pt = design points at 100%):
 
 | Property | Canonical |
 |---|---|
-| Window | ≥ 900 pt wide (theme chooser page 900 × 760); content-driven height. No Kagi-drawn title band: the window is the sidebar + detail. |
+| Window | 900 × 760, **fixed**: switching panes never resizes the window, and content taller than the detail scrolls inside it. Bounded by the visible screen. No Kagi-drawn title band: the window is the sidebar + detail. |
 | Traffic lights | inside the sidebar's top inset |
 | Sidebar panel | `sidebar()`: margin 8, top padding 40, horizontal padding 8, gap 2, width 212, radius 12, 1 px hairline border, `ink::sidebar()` fill; full window height minus margins |
 | Sidebar row | `sidebar_item()`: min height 32, padding 8 × 4, 20 pt tile, label gap 9; selected fill `ink::selected()` (= `segment_selected_bg`, neutral), semibold label |
@@ -129,4 +129,5 @@ Composition values taken from that code (pt = design points at 100%):
 | Section | heading then body, gap 8; heading inset = group padding (12) + 1 px in Light |
 | Theme chooser | per appearance (Light/Dark) one `section`, whose cards sit **inside** one `group()` card; rows that belong to that chooser follow inside the same group |
 | Pop-up | `popup_value()`: value text + 18 pt filled chevron box; the trigger itself is not filled at rest |
+| Visible text | the canonical's `Msg` strings, e.g. Custom themes: "Open theme folder…", "Reload Themes", "Theme file guide…"; never shorten an existing string to make a layout fit |
 | Owner exceptions | no Search field (#1816: no fake controls); pane set/order per #1816 |

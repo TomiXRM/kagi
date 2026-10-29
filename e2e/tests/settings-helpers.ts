@@ -126,3 +126,16 @@ const luminance = (rgb: number[]) => rgb.reduce((sum, value, channel) => {
   const s = value / 255;
   return sum + (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][channel];
 }, 0);
+
+// Consumer expectation: paired families first in each appearance, then stable
+// catalog order. Keep this independent from production's sort implementation.
+export function themeDisplayOrder(catalog: Observed["themeCatalog"]) {
+  return [false, true].flatMap(dark => {
+    const mode = catalog.filter(theme => theme.dark === dark);
+    const paired = dark
+      ? ["apple-dark", "catppuccin", "nagi-dark", "one-dark"]
+      : ["apple-light", "catppuccin-latte", "nagi-light", "one-light"];
+    return [...paired.flatMap(slug => mode.filter(theme => theme.slug === slug)),
+      ...mode.filter(theme => !paired.includes(theme.slug))];
+  });
+}

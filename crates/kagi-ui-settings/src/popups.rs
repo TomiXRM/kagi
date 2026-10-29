@@ -5,7 +5,6 @@ use gpui_component::{
     menu::{PopupMenu, PopupMenuItem},
     ElementExt as _, Icon, IconName, Sizable, Size,
 };
-use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::cell::Cell;
 
 type Entry = (String, SharedString, bool, bool, SettingsIntent);
@@ -120,7 +119,6 @@ impl SettingsView {
                             .aria_label(label.clone())
                             .text_size(pt(metrics::BODY))
                             .line_height(pt(20.))
-                            .truncate()
                             .children(
                                 cfg!(feature = "gui-e2e")
                                     .then(|| {
@@ -140,10 +138,6 @@ impl SettingsView {
                             )
                             .child(text)
                             .children(text_probe)
-                            .hover_tooltip(
-                                SharedString::from(format!("{item_id}-name")),
-                                label.clone(),
-                            )
                     })
                     .aria_label(accessible_label)
                     .radio_checked(selected)
@@ -215,13 +209,30 @@ impl SettingsView {
         let click_entries = entries.clone();
         let pointer_entries = entries.clone();
         let key_entries = entries;
-        let width = (label
-            .chars()
-            .map(|ch| if ch.is_ascii() { 1. } else { 1.8 })
-            .sum::<f32>()
-            * 6.6
-            + 38.)
-            .clamp(100., 240.);
+        // Use the actual font's advance, not character counts. Narrow owners
+        // cap this preferred width and let the value wrap within the same control.
+        let text_width = window
+            .text_system()
+            .shape_line(
+                label.clone(),
+                pt(metrics::BODY),
+                &[TextRun {
+                    len: label.len(),
+                    font: kagi_ui_core::theme::ui_font(),
+                    color: ink::text(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            )
+            .width();
+        // Layout snaps each padding, gap and chevron independently. Budget
+        // each at device-pixel precision, as well as the measured text, so
+        // their sum cannot steal the last pixel from a short single-line value.
+        let scale = window.scale_factor();
+        let fit = |length: Pixels| (length * scale).ceil() / scale;
+        let width = fit(text_width) + fit(pt(8.)) + fit(pt(3.)) + fit(pt(8.)) + fit(pt(18.));
         let text = StyledText::new(label.clone());
         #[cfg(feature = "gui-e2e")]
         let text_probe = Some(self.measured_text(format!("{id}-text"), label.to_string(), &text));
@@ -230,7 +241,7 @@ impl SettingsView {
         let visual = div()
             .id(SharedString::from(format!("{id}-visual")))
             .relative()
-            .h(pt(metrics::CONTROL_HEIGHT))
+            .min_h(pt(metrics::CONTROL_HEIGHT))
             .w_full()
             .min_w_0()
             .pl(pt(8.))
@@ -262,7 +273,6 @@ impl SettingsView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .truncate()
                     .child(text)
                     .children(text_probe),
             )
@@ -307,9 +317,10 @@ impl SettingsView {
         .aria_label(title.t())
         .aria_value(label.clone())
         .aria_expanded(open)
-        .w(pt(width))
+        .w(width)
         .max_w_full()
-        .h(pt(metrics::CONTROL_HIT_HEIGHT))
+        .min_h(pt(metrics::CONTROL_HIT_HEIGHT))
+        .py(pt(2.))
         .flex()
         .items_center()
         .child(visual)
@@ -354,7 +365,6 @@ impl SettingsView {
                 cx.stop_propagation();
             }
         }))
-        .hover_tooltip(SharedString::from(format!("{id}-value")), label)
         .into_any_element()
     }
 

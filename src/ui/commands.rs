@@ -913,7 +913,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         id: "theme.monokai",
-        label: "Monokai (Warm Hybrid)",
+        label: "Monokai",
         keystroke: None,
         dangerous: false,
     },

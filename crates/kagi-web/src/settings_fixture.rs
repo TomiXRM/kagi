@@ -382,6 +382,15 @@ impl SettingsFixture {
                 self.snapshot.zoom = theme::init_loaded_zoom(zoom);
                 theme::sync_gpui_component_theme(cx);
             }
+            "available-providers" => {
+                let slugs: Vec<String> =
+                    serde_json::from_str(value.ok_or("Missing provider array")?)
+                        .map_err(|error| error.to_string())?;
+                for entry in &mut self.snapshot.providers {
+                    entry.available = slugs.iter().any(|slug| slug == entry.provider.slug());
+                    entry.reason = None;
+                }
+            }
             "models" => {
                 self.snapshot.models =
                     serde_json::from_str::<Vec<String>>(value.ok_or("Missing model array")?)

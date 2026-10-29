@@ -6,7 +6,7 @@ use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_DARK};
 
 pub const MONOKAI: Theme = Theme {
     slug: Cow::Borrowed("monokai"),
-    name: Cow::Borrowed("Monokai (Warm Hybrid)"),
+    name: Cow::Borrowed("Monokai"),
     dark: true,
 
     bg_base: 0x28242a,

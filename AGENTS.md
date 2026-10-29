@@ -315,20 +315,20 @@ copy — the skill changes when seams change.
 
 ## Workflow: PRs and multi-agent work
 
-The rules for pushing, resolving conflicts, answering Codex review and merging,
-and for driving several agents through herdr, live in
-[`docs/agents/workflow.md`](docs/agents/workflow.md). The ones that are broken most
-often:
+push、競合の解消、Codex レビューへの返信、マージ、および herdr で複数エージェントを
+動かすときのルールは [`docs/agents/workflow.md`](docs/agents/workflow.md) にある。
+特によく破られるもの:
 
-- Never rewrite a pushed branch; after a push, check that the remote head
-  (`git ls-remote --exit-code --heads origin refs/heads/<branch>`) equals `HEAD`.
-- Resolve **code** conflicts by reading each hunk — never by keeping both sides.
-- Gate before push (build, tests, touched Tier A, `check-all`), chained so a
-  failure stops the push.
-- Read and answer every Codex comment before merge; fix P0/P1 and P2s that can
-  cause a wrong write.
-- herdr: use mail for assignments and replies; require `[ack]` and `[done]`.
-  No terminal-prompt fallback; see `docs/agents/workflow.md`.
+- push 済みのブランチは書き換えない。push 後、リモートの head
+  （`git ls-remote --exit-code --heads origin refs/heads/<branch>`）が `HEAD` と一致する
+  ことを確認する。
+- **コード**の競合は hunk ごとに読んで解消する。両方を残す解消はしない。
+- push 前の確認（ビルド、テスト、触れた Tier A、`check-all`）は、失敗したら push が
+  止まるようにつなげて実行する。
+- マージ前に Codex のコメントをすべて読んで返信する。P0/P1 と、誤った書き込みに
+  つながる P2 は直す。
+- herdr: 依頼と返信はメールで行い、`[ack]` と `[done]` を必須にする。端末への直接
+  入力で代用しない。詳細は `docs/agents/workflow.md`。
 
 ## Code Review Rules
 

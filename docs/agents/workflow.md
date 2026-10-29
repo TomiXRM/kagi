@@ -1,88 +1,83 @@
-# Agent workflow: PRs and multi-agent work
+# エージェントの作業手順: PR と複数エージェントでの作業
 
-Linked from `AGENTS.md`. These rules come from what went wrong while several
-agents worked on Kagi in parallel (2026-10-01); where an incident shaped a rule,
-the rule names it.
+`AGENTS.md` から参照される。ここのルールは、複数のエージェントが並行して Kagi を
+開発したときの失敗（2026-10-01 以降）から作られている。特定の事故が元になった
+ルールには、その事故を書いてある。
 
-## Working on a PR: push, review, merge
+## PR での作業: push、レビュー、マージ
 
-- **Never rewrite a pushed branch.** No force push, no rebase of a pushed branch:
-  take the PR's current base (`origin/main`, or the parent branch of a stacked PR)
-  in with a merge. After every push, confirm the remote head equals the local one:
-  `test "$(git ls-remote --exit-code --heads origin refs/heads/<branch> | cut -f1)" = "$(git rev-parse HEAD)"`.
-  A non-fast-forward push is rejected, and "pushed" without that check has been
-  wrong; a plain `ls-remote origin <branch>` exits 0 with no output for a typo and
-  can match a tag of the same name.
-- **Conflicts**: `CHANGELOG.md`, ADRs and `docs/decisions.md` keep both sides.
-  **Code conflicts are resolved by reading each hunk**, never by a mechanical
-  "keep both": two PRs adding fields to one struct concatenate into a broken brace
-  structure (#900). If `rerere` learned a bad resolution, redo the merge with
-  `git -c rerere.enabled=false merge`. Git can also merge cleanly and still drop an
-  attribute line (`#[cfg(target_os = "macos")]` before a `mod` in
-  `tests/gui_e2e_runner.rs`, #901) — check the runner after a merge.
-- **Gate before push**: build, `cargo test --workspace`, the touched Tier A
-  scenarios and `uv run --project ci check-all` pass first. Chain them so a failure
-  stops the push (`set -e`, or capture the output and test it) — never with `;`.
-- **HIG review** (owner ruling, #1764): a PR that changes what the user sees
-  carries an independent Apple HIG review of its real-window screenshots
-  (`.claude/skills/hig-review/SKILL.md`), posted on the PR in Japanese with the
-  HIG sentences quoted; a new or moved control also had its design review on the
-  issue before code. An open HIG P1/P2 blocks the merge, with or without Codex.
-- **Codex review**: read every Codex line comment before a PR is merged, and reply
-  to each one (in Japanese, per "Code Review Rules" in `AGENTS.md`). Fix every P0 and P1, and any P2
-  that can lead to a wrong write, data loss or a misleading action. A theoretical case (a race
-  with another process replacing the repository, a millisecond window) is closed
-  with a reply that gives the reason, and the limit is written into the ADR. Aim
-  for one review round per PR; Codex keeps finding the next corner otherwise.
-- **User-authorized substitute review**: when GitHub Codex cannot run, an
-  explicitly authorized, fresh independent Codex/Sol (GPT Sol 6.1 SubAgent) reviewer may review the
-  exact head through herdr. Publish its model, agent identity, reviewed SHA,
-  read set, findings and Japanese responses on the PR. State that the GitHub
-  bot did not run; static review is not runtime verification. The reviewed-head,
-  green-CI and unanswered-comment merge gates still apply.
-- **Merge** only the head commit Codex (or the user-authorized substitute reviewer:
-  a Sol 6.1 / Opus SubAgent or herdr reviewer pane) reviewed, with CI green and no
-  unanswered review comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
-  PR reads `MERGED`.
-- **Stacked PRs** set their base to the parent branch and say "change the base to
-  main after #N merges" at the top of the body.
-- `Closes #N` only when the PR meets every acceptance criterion of #N; otherwise
-  `Refs #N` and list what remains. Split a leftover into its own issue.
+- **push 済みのブランチは書き換えない。** force push も、push 済みブランチの rebase も
+  しない。PR の現在のベース（`origin/main`、または積み重ねた PR なら親ブランチ）は
+  merge で取り込む。push のたびに、リモートの head がローカルと一致することを確認する:
+  `test "$(git ls-remote --exit-code --heads origin refs/heads/<branch> | cut -f1)" = "$(git rev-parse HEAD)"`。
+  fast-forward でない push は拒否される。この確認なしの「push した」は誤っていたことが
+  ある。単なる `ls-remote origin <branch>` は、名前を打ち間違えても出力なしで終了コード 0
+  を返し、同名のタグにも一致しうる。
+- **競合**: `CHANGELOG.md`、ADR、`docs/decisions.md` は両方を残す。**コードの競合は
+  hunk ごとに読んで解消する。** 機械的に「両方残す」と、同じ struct にフィールドを
+  足した 2 つの PR が連結され、波括弧の構造が壊れる（#900）。`rerere` が誤った解消を
+  覚えた場合は `git -c rerere.enabled=false merge` でやり直す。Git がきれいにマージ
+  しても属性行が落ちることがある（`tests/gui_e2e_runner.rs` で `mod` の前の
+  `#[cfg(target_os = "macos")]` が消えた、#901）。マージ後は runner を確認する。
+- **push 前の確認**: ビルド、`cargo test --workspace`、触れた Tier A シナリオ、
+  `uv run --project ci check-all` を先に通す。失敗したら push が止まるようにつなげる
+  （`set -e`、または出力を取って判定する）。`;` でつながない。
+- **HIG レビュー**（オーナー決定、#1764）: ユーザーに見えるものを変える PR は、実ウィンドウの
+  スクリーンショットに対する独立した Apple HIG レビュー
+  （`.claude/skills/hig-review/SKILL.md`）を受け、HIG の文を引用して日本語で PR に投稿する。
+  新しい、または移動したコントロールは、コードの前に Issue で設計レビューも受けている
+  こと。HIG の P1/P2 が残っている間は、Codex の有無にかかわらずマージしない。
+- **Codex レビュー**: マージ前に Codex の行コメントをすべて読み、それぞれに返信する
+  （日本語で。`AGENTS.md` の「Code Review Rules」に従う）。P0 と P1 はすべて直し、
+  誤った書き込み・データ損失・誤解を招く操作につながりうる P2 も直す。理論上の
+  ケース（別プロセスがリポジトリを置き換える競合、ミリ秒単位の隙）は理由を書いた
+  返信で閉じ、その限界を ADR に書く。PR ごとにレビューは 1 往復を目指す。そうしないと
+  Codex は次の隅を見つけ続ける。
+- **ユーザーが認めた代替レビュー**: GitHub の Codex が動かないとき、明示的に認められた
+  新しい独立した Codex/Sol（GPT Sol 6.1 SubAgent）のレビュアーが、herdr 経由で確定した
+  head をレビューしてよい。そのモデル、エージェント、レビューした SHA、読んだ範囲、
+  指摘と日本語の返信を PR に公開する。GitHub の bot が動かなかったことを明記する。
+  静的なレビューは実行時の検証ではない。レビュー済み head、CI 成功、未返信コメント
+  なしというマージ条件はそのまま適用される。
+- **マージ**は、Codex（またはユーザーが認めた代替レビュアー: Sol 6.1 / Opus の SubAgent
+  か herdr のレビュアーペイン）がレビューした head コミットだけを、CI 成功かつ未返信の
+  レビューコメントがない状態で行う: `gh pr merge N --merge --match-head-commit <sha>`。
+  その後、PR が `MERGED` になったことを確認する。
+- **積み重ねた PR** はベースを親ブランチにし、本文の先頭に「#N のマージ後にベースを
+  main に変更する」と書く。
+- `Closes #N` は、PR が #N の受け入れ条件をすべて満たすときだけ使う。そうでなければ
+  `Refs #N` とし、残りを列挙する。残りは別の Issue に分ける。
 
-## Multi-agent work over herdr
+## herdr での複数エージェント作業
 
-When a PM session drives implementation agents in herdr panes:
+PM セッションが herdr のペインで実装エージェントを動かすとき:
 
-- **Mail is the only task transport.** PM assignments, amendments, decisions and
-  agent replies use herdr mail, not `agent prompt`, `pane send-text` or simulated
-  terminal Enter. Read the installed mail command help and verify support in the
-  selected server before dispatch. If unavailable, the PM reports the missing
-  capability to the user outside herdr and pauses dispatch; an agent that cannot
-  send mail stops the affected action and waits, without a terminal-prompt fallback.
-  Do not silently fall back or restart/upgrade a shared server.
-- **Every assignment names its contract.** Include a stable task name, sender and
-  reply destination, session/workspace, owned worktree/branch, Issue/PR and exact
-  head when applicable, scope, acceptance criteria and prohibited actions.
-  Resolve addresses from live IDs; do not infer them from pane order.
-- **Replies must also use mail.** A recipient sends `[ack]` before starting, then
-  replies in the same task/thread with `[done]`, `[status]`, `[ask]` or `[info]`.
-  Include the task name, and the exact head when applicable (base or PR head), in both receipt and final report.
-  `[done]` names the actual changes or reviewed files, findings/responses,
-  observed checks and evidence links; an implementation report includes remote
-  head verification and UI Tier B links where required. Explicitly distinguish
-  unrun checks and static review from runtime proof. `[ask]` names the blocker
-  or decision and pauses the affected action until the PM replies by mail.
-- **Delivery is not execution.** Retain the mail ID/thread and require the
-  recipient's `[ack]`; queued/sent does not prove work started. Inspect the
-  thread after ambiguous delivery before retrying, avoiding duplicate work.
-- **One agent, one worktree, one branch.** Never edit another agent's worktree or
-  push to a branch another agent owns without saying so first. A PM that merges
-  `main` into an agent's PR branch tells that agent before it pushes again.
-- **Verify the premise before assigning.** Before writing "reuse the existing X",
-  search for X — issue bodies go stale. An agent that finds the premise wrong says
-  so instead of building around it.
-- **Messages are scoped to the workspace.** An assignment (mail) about another
-  repository or a non-matching issue number is a misroute: report it by mail, do
-  not act on it.
-- Watch usage limits in `herdr agent list` (`limit`); an agent near its limit gets
-  small, finishable tasks.
+- **作業の受け渡しはメールだけで行う。** PM の依頼、修正、決定、エージェントの返信は
+  herdr のメールで行い、`agent prompt`、`pane send-text`、擬似的な端末の Enter は使わない。
+  依頼の前に、インストールされているメールコマンドのヘルプを読み、選んだサーバーで
+  使えることを確認する。使えなければ、PM は herdr の外でユーザーに機能の欠如を報告し、
+  依頼を止める。メールを送れないエージェントは該当する操作を止めて待ち、端末入力で
+  代用しない。黙って代替手段に切り替えたり、共有サーバーを再起動・更新したりしない。
+- **すべての依頼に契約を書く。** 固定のタスク名、送信者と返信先、セッション/ワーク
+  スペース、担当の worktree/ブランチ、Issue/PR と該当する場合は正確な head、範囲、
+  受け入れ条件、禁止事項を含める。宛先はペインの順番から推測せず、実際の ID から引く。
+- **返信もメールで行う。** 受け取った側は開始前に `[ack]` を送り、同じタスク/スレッドで
+  `[done]`、`[status]`、`[ask]`、`[info]` を返す。受領と最終報告の両方に、タスク名と、
+  該当する場合は正確な head（ベースまたは PR の head）を含める。`[done]` には実際の
+  変更またはレビューしたファイル、指摘と返信、確認したチェック、証拠のリンクを書く。
+  実装報告にはリモート head の確認と、必要な場合は UI の Tier B のリンクを含める。
+  実行していないチェックや静的レビューを、実行時の証拠と明確に区別する。`[ask]` は
+  障害または必要な決定を書き、PM がメールで返信するまで該当する操作を止める。
+- **届いたことは実行されたことではない。** メールの ID/スレッドを保持し、受け取った側の
+  `[ack]` を求める。キューに入った・送信されたことは、作業が始まった証拠ではない。
+  配達があいまいなときは、再送の前にスレッドを確認し、作業の重複を避ける。
+- **1 エージェント、1 worktree、1 ブランチ。** 先に断らずに、他のエージェントの
+  worktree を編集したり、他のエージェントのブランチに push したりしない。エージェントの
+  PR ブランチに `main` をマージした PM は、そのエージェントが次に push する前に伝える。
+- **依頼の前提を確かめる。** 「既存の X を再利用する」と書く前に、X を検索する。Issue の
+  本文は古くなる。前提が誤っていると気づいたエージェントは、それを回避して作るのでは
+  なく、そう伝える。
+- **メッセージはワークスペースに限定される。** 別のリポジトリや、一致しない Issue 番号に
+  ついての依頼（メール）は誤配である。メールで報告し、実行しない。
+- `herdr agent list` の使用量（`limit`）を見る。上限が近いエージェントには、小さく
+  終わらせられるタスクを渡す。

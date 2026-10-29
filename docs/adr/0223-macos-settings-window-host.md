@@ -262,6 +262,10 @@ or a fixed 240-point cap. Values and menu options that exceed their available
 width wrap; visual and hit areas grow from the existing 24/28-point minima.
 Theme captions and sidebar labels likewise wrap rather than ellipsize.
 Keep the canonical window, preview size, group ownership and keyboard routes.
+Growing row labels retain an automatic, content-derived flex basis. A zero
+basis can measure help at a glyph-wide constraint and reserve an excessive row
+height even after final text shaping uses the correct width. Catalog changes
+must leave short values in ordinary content-sized rows.
 
 Remove duplicate name/description hover tooltips from rows, sidebar entries,
 theme cards, Analyze help and popup values/options. Existing visible help and

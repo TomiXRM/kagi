@@ -34,12 +34,10 @@ retaining the view while unmounted; native window/consent lifecycle still needs
 Tier A. Run the entire `npx playwright test --workers=1` suite to include the
 existing inspector resize story. WASM input uses the non-macOS keymap (Ctrl+A);
 type real key events rather than `insertText`, which bypasses that platform path.
-Theme-caption coverage measures the actual caption allocation and screenshot
-ink span for short names in both Apple themes. Accessible-name or fixture-string
-echoes are insufficient: a caption can have 122px of usable space but paint only
-a 9px ellipsis after an incorrect text-layout cache reuse.
-Long names require complete painted `StyledText` text/bounds inside the
-caption/card and final-line ink; input/AX labels are not painted-layout proof.
+Theme-caption checks read actual `StyledText` bounds/text and screenshot ink in
+both Apple themes; input/AX echoes cannot prove a name is not a 9px ellipsis.
+Long names require full painted text in the caption/card and final-line ink.
+Retain same-state PNG+JSON pairs explicitly; passing dot reporters can discard attachments.
 The canonical chooser has two Light/Dark sections, each enclosing its horizontal
 strip in a group card, one global radio selection and Light-then-Dark keyboard
 order, not a value slider. Cards use the owner-selected132×84 preview geometry.
@@ -124,6 +122,7 @@ repeat native/workspace gates for each unreviewed visual iteration.
 `production popup` cases require closed/open triggers inside their actual row/group,
 complete painted `StyledText` layouts and final-line ink in EN/JA. Claude Code and
 gemma4:latest fit on one line; long values/menu items wrap without clipping.
+Short-value rows must stay content-sized after catalog changes, not merely contain their text.
 Ordinary names/descriptions have no duplicate tooltips (#1821/#1822). Exposed
 trigger bounds determine the second-click target when the popup overlaps its centre.
 Keep real disabled-first/wrap/confirm and host-reopen-discard assertions.

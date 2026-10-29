@@ -347,6 +347,13 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       await fullText("sc-model-select", label, "sc-model-select");
       expectSnappedLength((await probe(page, "sc-model-select-visual")).height, 24 * zoom);
       expectSnappedLength((await probe(page, "sc-model-select")).height, 28 * zoom);
+      const modelRow = await probe(page, "settings-model-row");
+      const modelControl = await probe(page, "sc-model-select");
+      const help = await probe(page, "settings-model-help");
+      const contentBottom = Math.max(help.y + help.height, modelControl.y + modelControl.height);
+      expect(modelRow.y + modelRow.height - contentBottom,
+        "short rows must hug content even when their control wraps below the label")
+        .toBeLessThanOrEqual(help.height);
       await click(page, "sc-model-select");
       await fullText(`sc-model-${label}`, label, `sc-model-${label}`);
       await page.keyboard.press("Escape"); await frames(page);

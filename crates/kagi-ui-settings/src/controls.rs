@@ -319,7 +319,9 @@ impl SettingsView {
             }))
             .child(
                 div()
-                    .flex_1()
+                    // Measure help at its natural width before flex wrapping;
+                    // a zero basis can reserve one glyph per line as row height.
+                    .flex_grow(1.)
                     .min_w(pt(140.))
                     .flex()
                     .flex_col()

@@ -1,17 +1,11 @@
 //! #1404 / #1415 / #1416: Settings draft safety and persistent form help.
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, settings, theme, KagiApp};
 
 use kagi::ui::i18n::Msg;
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
-    for id in [
-        "settings-analyze-reset-alert",
-        "settings-analyze-dirty",
-        "settings-analyze-saved",
-    ] {
-        e2e::clear_control_bounds(window.window_id(), id);
-    }
+    e2e::clear_control_bounds(window.window_id(), "settings-analyze-reset-alert");
     crate::settings_controls::draw(cx, window);
 }
 
@@ -112,9 +106,12 @@ fn draft(
 ) {
     let input = cx.read(|cx| app.read(cx).analyze_ignore_input.clone().unwrap());
     cx.update_window(window, |_, window, cx| {
-        input.update(cx, |input, cx| input.set_value(text, window, cx))
+        window.focus(&input.read(cx).focus_handle(cx), cx);
     })
     .unwrap();
+    draw(cx, window);
+    crate::keyboard_nav::keys(cx, window, "cmd-a");
+    cx.simulate_input(window, text);
     draw(cx, window);
 }
 
@@ -186,6 +183,7 @@ fn restarted_value(cx: &mut VisualTestAppContext) {
 }
 fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     draft(cx, app, window, "unsaved-pattern\n");
+    let retained = cx.read(|cx| app.read(cx).settings_entity().unwrap());
     click(cx, window, "settings-analyze-reset");
     assert_eq!(
         settings::read_analyze_ignore_text(),
@@ -242,6 +240,19 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
     assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
     let window = reopen(cx, app, window);
     assert_eq!(
+        cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()),
+        retained.entity_id(),
+        "closing the native window retains the production Settings view"
+    );
+    assert_eq!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).analyze_reset_focus_for_e2e(window, cx)
+        })
+        .unwrap(),
+        None,
+        "reopening cannot resurrect an invoking-window reset prompt"
+    );
+    assert_eq!(
         cx.read(|cx| app
             .read(cx)
             .analyze_ignore_input
@@ -254,6 +265,15 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
         "reopen preserves cancelled draft"
     );
     assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    click(cx, window, "settings-analyze-reset");
+    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some());
+    let window = reopen(cx, app, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none(),
+        "closing the invoking window cancels its outstanding reset prompt"
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     click(cx, window, "settings-analyze-reset");
     for _ in 0..6 {
         cx.simulate_keystrokes(window, "tab");
@@ -308,9 +328,17 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
     restarted_value(cx);
 }
 fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreClean.t(),
+        "clean draft has explicit localized state"
+    );
     assert!(
-        e2e::control_bounds(window.window_id(), "settings-analyze-saved").is_some(),
-        "saved draft has explicit localized state"
+        crate::settings_controls::probe(cx, window, "settings-analyze-save")
+            .unwrap()
+            .disabled
     );
     click(cx, window, "settings-analyze-save");
     assert!(
@@ -328,11 +356,21 @@ fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     draft(cx, app, window, "saved-pattern\n");
     assert!(!cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-saved").is_some());
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreClean.t()
+    );
     draft(cx, app, window, "unsaved-pattern\n");
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-dirty").is_some());
-    click(cx, window, "settings-pane-0");
-    click(cx, window, "settings-pane-3");
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreUnsaved.t()
+    );
+    click(cx, window, "settings-pane-appearance");
+    click(cx, window, "settings-pane-analyze");
     assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     assert_eq!(
         cx.read(|cx| app
@@ -347,65 +385,221 @@ fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     );
     click(cx, window, "settings-analyze-save");
     assert_eq!(settings::read_analyze_ignore_text(), "unsaved-pattern\n");
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-saved").is_some());
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreSaved.t()
+    );
+    assert!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-save")
+            .unwrap()
+            .disabled
+    );
+    stale_analyze_result(cx, app, window);
+}
+
+fn stale_analyze_result(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    draft(cx, app, window, "captured-save\n");
+    let request = cx.read(|cx| view.read(cx).analyze_request(cx));
+    // Drive the production acknowledgement only after a genuine successful
+    // fixture write, while a newer editor revision is already present.
+    settings::write_analyze_ignore(request.text.as_ref()).unwrap();
+    draft(cx, app, window, "newer-draft\n");
+    let newer = cx.read(|cx| view.read(cx).analyze_request(cx));
+    assert!(
+        newer.revision > request.revision,
+        "real editor input creates a newer revision before delayed acknowledgement"
+    );
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.seed_analyze_result(
+                kagi_ui_settings::AnalyzeResult::Saved(request.clone()),
+                window,
+                cx,
+            );
+        });
+    })
+    .unwrap();
+    draw(cx, window);
+    assert_eq!(
+        cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()),
+        "newer-draft\n"
+    );
+    assert_eq!(
+        cx.read(|cx| view.read(cx).analyze_baseline().to_string()),
+        "captured-save\n"
+    );
+    assert!(cx.read(|cx| view.read(cx).analyze_dirty(cx)));
+    assert_eq!(settings::read_analyze_ignore_text(), "captured-save\n");
+    click(cx, window, "settings-analyze-save");
+    assert_eq!(settings::read_analyze_ignore_text(), "newer-draft\n");
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.seed_analyze_result(kagi_ui_settings::AnalyzeResult::Saved(request), window, cx);
+        });
+    })
+    .unwrap();
+    assert_eq!(
+        cx.read(|cx| view.read(cx).analyze_baseline().to_string()),
+        "newer-draft\n",
+        "an older acknowledgement cannot roll back the newer accepted baseline"
+    );
+    assert!(!cx.read(|cx| view.read(cx).analyze_dirty(cx)));
 }
 fn help_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
-    for id in [
-        "settings-avatar-help-text",
-        "settings-fetch-help-text",
-        "settings-copy-help-text",
-        "settings-motion-help-text",
-        "settings-terminal-lock-help-text",
-        "settings-custom-themes-help-text",
-    ] {
-        let bounds =
-            e2e::control_bounds(window.window_id(), id).expect("visible help without hover");
-        assert!(bounds.size.height > gpui::px(0.), "{id} has laid-out text");
-        assert!(
-            bounds.left() >= gpui::px(0.) && bounds.right() <= gpui::px(715.),
-            "{id} wraps inside the host"
-        );
-    }
-    for (slot, id, detail) in [
-        (2, "auto-fetch-toggle", Msg::SettingsAutoFetchDesc),
+    for (pane, id, text) in [
         (
-            4,
-            "terminal-auto-lock-toggle",
-            Msg::SettingsTerminalAutoLockDesc,
+            "graph",
+            "settings-avatar-help",
+            Msg::SettingsLaneCompactSummary,
+        ),
+        ("graph", "settings-copy-help", Msg::SettingsGraphCopySummary),
+        (
+            "network",
+            "settings-fetch-help",
+            Msg::SettingsAutoFetchSummary,
+        ),
+        (
+            "appearance",
+            "settings-motion-help",
+            Msg::SettingsReduceMotionSummary,
+        ),
+        (
+            "terminal",
+            "settings-terminal-lock-help",
+            Msg::SettingsTerminalAutoLockSummary,
+        ),
+        (
+            "appearance",
+            "settings-custom-themes-help",
+            Msg::SettingsCustomThemesDesc,
+        ),
+        (
+            "smart_commit",
+            "settings-smart-enable-help",
+            Msg::SettingsSmartEnableSummary,
+        ),
+        (
+            "analyze",
+            "settings-analyze-help",
+            Msg::SettingsAnalyzeIgnoreDesc,
         ),
     ] {
-        cx.update_window(window, |_, window, cx| {
-            app.update(cx, |app, cx| {
-                app.focus_settings_switch_for_e2e(slot, window, cx)
-            });
-        })
-        .unwrap();
-        draw(cx, window);
+        click(cx, window, &format!("settings-pane-{pane}"));
+        let help = crate::settings_controls::probe(cx, window, id)
+            .expect("canonical help rendered without hover");
+        let viewport =
+            crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
         assert_eq!(
-            kagi::ui::settings_view::recorded_switch_help(id).as_deref(),
-            Some(detail.t())
+            help.value,
+            text.t(),
+            "the rendered help contains the exact canonical localized text"
+        );
+        assert!(help.bounds.size.height > gpui::px(0.));
+        assert!(
+            help.bounds.left() >= viewport.left() && help.bounds.right() <= viewport.right(),
+            "{id} wraps inside the production detail column"
         );
     }
-    click(cx, window, "settings-pane-2");
-    for id in [
-        "settings-smart-enable-help-text",
-        "settings-provider-help-text",
-    ] {
-        assert!(e2e::control_bounds(window.window_id(), id).is_some());
+    provider_unavailable_help(cx, app, window);
+}
+
+fn provider_unavailable_help(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    click(cx, window, "settings-pane-smart_commit");
+    // Detection has settled in matrix_host. Seed known host availability so
+    // neither the explanations nor disabled choices depend on the machine PATH.
+    app.update(cx, |app, cx| {
+        app.smart_commit.provider = kagi::ui::smart_commit::SmartProvider::Ollama;
+        app.smart_commit.ollama_available = true;
+        app.smart_commit.detecting = false;
+        app.smart_commit.claude_available = false;
+        app.smart_commit.codex_available = false;
+        app.seed_settings(cx);
+    });
+    draw(cx, window);
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    let help = crate::settings_controls::probe(cx, window, "settings-provider-help").unwrap();
+    assert_eq!(help.name, Msg::SettingsSmartProvider.t());
+    assert_eq!(help.value, Msg::SettingsSmartProviderSummary.t());
+    let availability =
+        crate::settings_controls::probe(cx, window, "settings-provider-availability").unwrap();
+    for provider in ["Claude Code", "Codex"] {
+        let reason = i18n::provider_not_found_hint(provider);
+        assert!(
+            availability.value.matches(reason.as_str()).count() == 1
+                && !help.value.contains(reason.as_str()),
+            "{provider} has one visible unavailability explanation, not a duplicate in provider help"
+        );
     }
-    click(cx, window, "settings-pane-3");
-    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-help-text").is_some());
+    let viewport = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
+    let scroll = cx.read(|cx| view.read(cx).scroll_handle());
+    scroll.set_offset(gpui::point(
+        gpui::px(0.),
+        scroll.offset().y - help.bounds.top() + viewport.top(),
+    ));
+    draw(cx, window);
+    crate::recovery_layout::contained(
+        viewport,
+        crate::settings_controls::probe(cx, window, "settings-provider-help")
+            .unwrap()
+            .bounds,
+        "canonical provider help is visible without hover",
+    );
+    click(cx, window, "sc-provider-select");
+    for id in ["sc-provider-claude-code", "sc-provider-codex"] {
+        let unavailable = crate::settings_controls::probe(cx, window, id).unwrap();
+        assert!(unavailable.disabled && !unavailable.selected);
+        assert_eq!(unavailable.role, gpui::Role::MenuItemRadio);
+        // PopupMenu owns focus and skips disabled items. Navigate/confirm the
+        // only available provider, then reopen to exercise disabled pointer hits.
+        crate::keyboard_nav::keys(cx, window, "escape enter down down enter");
+        assert_eq!(
+            cx.read(|cx| app.read(cx).smart_commit.provider),
+            kagi::ui::smart_commit::SmartProvider::Ollama,
+            "keyboard navigation skips unavailable providers"
+        );
+        // Confirming the available implicit default may persist it. The disabled
+        // pointer hit below must preserve that actual post-confirm baseline.
+        let saved_provider = settings::read_setting("smart_commit_provider");
+        click(cx, window, "sc-provider-select");
+        click(cx, window, id);
+        let unchanged = crate::settings_controls::probe(cx, window, id).unwrap();
+        assert!(
+            unchanged.disabled && !unchanged.selected,
+            "neither keyboard nor pointer activation selects an unavailable provider"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).smart_commit.provider),
+            kagi::ui::smart_commit::SmartProvider::Ollama
+        );
+        assert_eq!(
+            settings::read_setting("smart_commit_provider"),
+            saved_provider
+        );
+    }
+    crate::keyboard_nav::keys(cx, window, "escape");
 }
 pub fn scenario_settings_analyze_reset_confirm(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", reset_leg);
+    matrix(cx, "analyze", reset_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_reset_confirm");
 }
 pub fn scenario_settings_analyze_save_state(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", save_leg);
+    matrix(cx, "analyze", save_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_save_state");
 }
 pub fn scenario_settings_help_text(cx: &mut VisualTestAppContext) {
-    matrix(cx, "0", help_leg);
+    let _provider = crate::gui_isolation::SavedKeys::keep(&["smart_commit_provider"]);
+    matrix(cx, "appearance", help_leg);
     eprintln!("[gui-e2e] PASS settings_help_text");
 }
 
@@ -415,9 +609,10 @@ fn portable_reset_leg(
     window: AnyWindowHandle,
 ) {
     draft(cx, app, window, "portable-draft\n");
-    let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
+    let frame = crate::settings_controls::bounds(cx, window, "settings-frame").unwrap();
     for _ in 0..12 {
-        let bounds = e2e::control_bounds(window.window_id(), "settings-analyze-reset").unwrap();
+        let bounds =
+            crate::settings_controls::bounds(cx, window, "settings-analyze-reset").unwrap();
         if frame.contains(&bounds.center()) {
             cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
             break;
@@ -532,11 +727,11 @@ fn preserve_plan_leg(
 }
 
 pub fn scenario_settings_analyze_portable_reset(cx: &mut VisualTestAppContext) {
-    matrix_host(cx, "3", false, portable_reset_leg);
+    matrix_host(cx, "analyze", false, portable_reset_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_portable_reset");
 }
 
 pub fn scenario_settings_analyze_reset_preserves_plan(cx: &mut VisualTestAppContext) {
-    matrix(cx, "3", preserve_plan_leg);
+    matrix(cx, "analyze", preserve_plan_leg);
     eprintln!("[gui-e2e] PASS settings_analyze_reset_preserves_plan");
 }

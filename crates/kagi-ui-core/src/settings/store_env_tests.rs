@@ -337,7 +337,7 @@ fn settings_window_bounds_burst_coalesces_frame() {
     let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
     assert_eq!(
         saved["settings_window_frame"],
-        "99,198,599,000000000000000000000000000000ab"
+        "99,198,760,000000000000000000000000000000ab"
     );
 }
 
@@ -350,7 +350,7 @@ fn settings_window_bounds_burst_child() {
         write_settings_window_frame(SettingsWindowFrame {
             x: i as f32,
             y: (i * 2) as f32,
-            height: (500 + i) as f32,
+            height: 760.,
             display_uuid: Some(0xab),
         });
     }

@@ -14,6 +14,220 @@ Choose the smallest evidence lane that proves the change. Tier A is deterministi
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
 
+The production Settings boundary is also exercised in the browser: build with
+`CARGO_BUILD_JOBS=4 bash scripts/build-web.sh`, then run
+`cd e2e && npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1`.
+The `?story=settings` verification host mounts `kagi-ui-settings::SettingsView`,
+the same entity used by native Settings; it does not copy its input handlers.
+Its deterministic adapter records typed requests and seeds effective values
+without native persistence. A request count proves dispatch, not native durability.
+Shared recorder calls construct their arguments/elements lazily under `gui-e2e`;
+default builds omit these probe-only strings and children, not empty Div stand-ins.
+Use pinned `nightly-2026-10-18` (`wasm_thread` requires nightly) and
+`wasm-bindgen-cli 0.2.123` on PATH; install the pinned Playwright Chromium runtime
+before testing. The host embeds the exact pinned component icon bytes using the
+component asset crate's published build metadata, not network/CDN replacements.
+The matrix covers all eight panes at EN/JA × Apple Light/Dark × normal/narrow/
+167% zoom, real pointer/keyboard input, focus vs selection/ON, and retained
+Analyze drafts with delayed/error host results. The fixture's close/reopen means
+retaining the view while unmounted; native window/consent lifecycle still needs
+Tier A. Run the entire `npx playwright test --workers=1` suite to include the
+existing inspector resize story. WASM input uses the non-macOS keymap (Ctrl+A);
+type real key events rather than `insertText`, which bypasses that platform path.
+Theme-caption coverage measures the actual caption allocation and screenshot
+ink span for short names in both Apple themes. Accessible-name or fixture-string
+echoes are insufficient: a caption can have 122px of usable space but paint only
+a 9px ellipsis after an incorrect text-layout cache reuse.
+Long names also require the painted `StyledText` layout's actual ellipsis text
+and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
+Do not replace this with the original full label: a correct 138px truncation
+measurement can still be hard-clipped if the final text leaf is allocated 165px.
+The canonical chooser has two Light/Dark sections, each enclosing its horizontal
+strip in a group card, one global radio selection and Light-then-Dark keyboard
+order, not a value slider. Cards use the owner-selected132×84 preview geometry.
+Classify from the fixture's actual `themeCatalog.dark`, never names or colors.
+Choose the smallest faithful production host for the changed behavior. For portable
+Settings layout/input, the existing browser host is a measured cheap option; run:
+`npx playwright test settings.spec.ts settings-fidelity.spec.ts --workers=1 --grep 'production (kit|groups|popup|text leaves)|sidebar overflow|horizontal theme chooser|Smart Commit|pale accent|selected hover|captions|numeric controls'`.
+The narrow shared-view chooser matrix uses715×640 at EN/JA and100%/167%; it
+does not establish native window composition. Compare measured RadioButton count
+with the host catalog, visit every card using real arrow keys, and sample both
+pixels of all four first/last focus-ring edges from one PNG.
+Home/End and Space retain their focus/selection semantics. Real horizontal
+wheel browsing must survive unchanged seeds and focus loss to the already-selected
+Appearance destination. Browsing either strip must not move the other; vertical
+wheel over either strip must still move the form without changing its X offset.
+Check selected reveal after pane return, host reopen, same-count catalog change
+and actual viewport resize (including640×640/167%). The200% sidebar case keeps
+the715×640 browser host and canonical row/tile/control metrics: the traffic-light
+inset now causes real overflow at200%, so wheel and keyboard must reach all eight
+destinations, reveal the complete focus ring, and leave the whole numeric unit
+inside its row/detail. Caption tests reveal each real card, not offscreen coordinates.
+Native `settings_window_screen_fit` bounds the entire frame to the visible screen,
+without a compact-height ceiling; saved-frame/display/position and final-control
+reachability assertions remain.
+
+Before any state/hover/focus matrix, run the structure-only native
+`KAGI_GUI_E2E_ONLY=settings_window_composition` scenario through the Tier A command
+below, following the UI fidelity skill's G0→G1 gate. It captures the whole
+production Settings host at EN/JA100% in both Apple themes with `render_to_image()`,
+not the chrome-free browser host, and writes PNGs plus actual renderer bounds to
+`target/ui-fidelity/settings/`. The native window is fixed900×760pt, reduced only
+to fit the display's visible frame; switching panes never resizes it, and taller
+content scrolls inside the detail. It draws no extra host title band.
+OS-drawn traffic lights are absent from Metal images; the scenario separately
+records their actual AppKit rectangles in content
+coordinates. Compare those with the measured sidebar panel/top inset; do not
+claim that hidden-window captures establish OS activation or traffic-light paint.
+Create/open same-logical-scale canonical/native sheets and record every G1 row
+before advancing to parts and state tests. The same scenario later asserts the
+composition relations against real native owner bounds, including every group:
+content width = card −24pt padding − actual borders (Light1px per side, Dark0);
+card height = sum of actual row heights + in-flow1px separators + actual borders.
+Transparent test recorders forward each child's LayoutId without adding a flex
+wrapper; do not derive the measured card's border box from its style constants.
+
+`settings_quiet` also moves the pointer onto each selected sidebar row and
+samples native Metal pixels, including same-height pane transitions. It checks
+the canonical neutral selection fills (Apple Light211/211/211, Apple Dark58/58/60),
+not an implementation-helper echo. Actual element bounds require the normal
+one-line segment's24-point visible track and20-point pill at100%, inside a hit
+target of at least28 scaled points.
+At both zooms, independently assert the track's 2-point and pill's 4-point
+top/bottom insets against the actual hit bounds (≤0.5px per edge). GPUI's pinned
+`taffy.rs:342-403` snaps absolute near/far edges separately: at 167% the observed
+hit47/track41/pill33 satisfies those edges, although41 differs from24×1.67 by0.92.
+Do not repin41 or widen a height tolerance to hide this distinction. Wrapped
+labels may grow. The restored final-kit small switch is 28×16 with a 12-point
+white knob; its transparent hit target is at least 28 points, not the old 18-point
+track. Compare actual OFF/ON pixels, not a theme token that can make OFF blue.
+`settings-fidelity.spec.ts` additionally checks original 24-point capsule/stepper
+visuals, equal label-derived segment widths, selected text emphasis, card fills,
+one-pixel in-flow hairlines, appearance-specific borders and real rest/hover/pressed/focus paint. One screenshot
+per unchanged state supplies all pixel samples; do not substitute accessible text
+for visible caption or component-quality evidence.
+The final v9 construction contract and production role map live in
+`docs/ui/modern-ui.md`; use them alongside the actual final i10 images, not
+the old production Settings as the quality baseline.
+
+For layout repairs, first scope to `--grep 'production text leaves'`:
+EN100/JA167 at715×640 checks the painted `StyledText` leaf, equal cells in one
+segment rail, complete description ink and text → hit → row → group containment.
+The same two cases capture Analyze's clean/dirty/pending/saved/failed footer,
+including the long Japanese saved status **inside the group's inner width**.
+A viewport-only bound can pass while status ink crosses the card edge.
+Do not force one-line height onto genuinely wrapped labels or merely move the
+overflow into another wrapper. Then run affected segment/focus neighbors; do not
+repeat native/workspace gates for each unreviewed visual iteration.
+
+`production popup` cases require closed/open model triggers to remain inside
+their actual row/group, and actual text-layout ellipses plus trailing ink to
+use the menu's available label width in EN/JA. Hover the **current long model
+item** and inspect the full-name tooltip PNG; an earlier unavailable-value
+tooltip or the full AX-name field is not that proof. Actual exposed trigger
+bounds determine the second-click target when the popup overlaps its centre.
+Keep real disabled-first/wrap/confirm and host-reopen-discard assertions.
+The existing native `settings_provider_keys` leg also opens its actual popup,
+sends Cmd-W, reopens the retained production view in a new native window and
+requires no stale menu. Reopening and dismissing a fresh menu must restore
+trigger focus without changing the persisted provider/model. Its eight native
+cells reuse the existing coherent availability fixture; this is native-owner
+lifetime coverage, not proof of real OS activation.
+
+
+GPUI `px`/`Pixels` are logical window coordinates. The focus stroke/gap remain
+2/3 logical pixels independent of UI zoom; multiply by the actual native
+window backing scale for PNG comparisons. DPR1 browser samples do not establish
+Retina physical-pixel dimensions.
+
+New DPR1 fixed-role length assertions accept only floor/ceil of the intended
+scaled length because the two absolute edges snap independently;100% and200%
+remain exact. This does not loosen the existing per-edge segment, focus-ring,
+contrast or containment assertions. Wait for actual switch motion to settle
+before sampling its final knob, rather than disabling motion to make a test pass.
+
+Provider/model choices use the real popup: opening and arrow navigation emit no
+preference, Escape returns focus, and only an enabled confirmed item changes the
+host. Cover0/1/20 models, disabled-first/wrap, inert disabled openers and stale
+open catalogs. An unavailable saved model remains readable in its disabled
+opener; it is not an operable all-disabled menu. The latter's keyboard contract
+belongs to the separately exercised fork menu suite.
+The native `settings_provider_keys` consumer activates the existing AccessKit
+adapter and inspects actual `MenuItemRadio` roots/full labels/toggled state and
+owner-scoped active descendants, not recorder children. The pinned debug JSON
+does not serialize disabled flags; disabled behavior is checked by real input,
+and raw-node disabled-state evidence belongs to the separately identified fork
+renderer test. Do not relabel that diagnostic as OS accessibility delivery.
+Each newly reopened native host owns a fresh lazy accessibility adapter. Use
+the existing real `accessibilityChildren` activation path for that host and
+draw again before inspecting its tree; activation of the old window is not
+inherited. Missing-tree diagnostics retain the exact WindowId/active state.
+Do not substitute recorder metadata or force an internal accessibility flag.
+Tier B must leave the pointer over the selected row: moving it away before
+capture would hide a hover rule that erases selection.
+Choose focused checks by independent coverage and actual iteration cost, not by a
+mandatory browser platform. The current browser paint/geometry cases are the cheap
+Settings layout/input path; native-only window/OS changes use scoped native checks.
+No future component is required to target WASM. Keep the final integration gates.
+Capture one actual PNG per unchanged state, sample all its pixels and attach that
+same image. Hover or state changes require a fresh capture; do not raise test
+deadlines to accommodate a separate GPU screenshot for every sampled pixel.
+Composite numeric controls also need the lower Appearance viewport, not only the
+initial pane image. From `e2e/`, run
+`npx playwright test settings.spec.ts --workers=1 --grep 'composite numeric controls|horizontal theme chooser'`.
+The focused cases use actual715×640 production rendering at EN Apple Light100%
+and JA Apple Dark167%. They require the minus/value/plus unit to stay horizontal,
+the entire unit and conversion helper to fit their owning row, and successive
+rows not to overlap. At narrow widths the whole unit may move below its label.
+Capture both the numeric rows and the bottom after real wheel input; JA167%
+does not fit Zoom and all Custom themes content into one frame. Retain actual
+row/helper geometry, unchanged preference values, and fixed sidebar bounds.
+Pair the browser proof with fresh native `settings_quiet,settings_groups,
+settings_window_screen_fit` and real lower-pane images. Do not repeat unchanged
+window-lifetime scenarios solely for a row-allocation change; retain their exact
+prior source/artifact evidence instead.
+The pale-accent regression injects an effective Yellow snapshot, uses real
+keyboard focus on an unselected theme, ON switch, disabled capsule and segment.
+It measures the actual outer decoration and samples both pixels of every edge
+against all three gap pixels, accounting for the theme card's existing border.
+Reverse segment and sidebar navigation put focus immediately before a selected
+sibling, so a later sibling cannot silently cover half the stroke. Disabled
+labels are dimmed without dimming the ring; its external-gap backplate gives
+one compositing surface. Ordinary local decoration stays below host overlays;
+at least 6px sibling spacing preserves its stroke without escaping ancestor clips.
+The browser host also mounts an opaque GPUI overlay through `set_detail_slot`:
+it must cover all four ring edges while keyboard focus stays on the real control,
+then reveal identical ring pixels when removed. This is not a DOM overlay.
+Browser evidence here is **active paint only**. Headless-shell reports both tabs
+focused/visible; full Chrome156 new-headless with forced focus emulation disabled
+does switch `document.hasFocus()`, but both tabs remain `visibilityState=visible`.
+The pinned `gpui_web/window.rs:375-405` derives active state only from visibility.
+Do not substitute synthetic blur/visibility events or seed `active=false` and
+claim real browser activation. Native acceptance must retain active → inactive
+→ reactivated ring removal/restoration, with focus identity, selection/ON state
+and bounds unchanged. Tier A activation-input overrides and real OS/Tier B
+transitions are distinct evidence; the latter requires the owner's foreground
+permission when activation is necessary. Neither lane claims an OS Increase
+Contrast bridge: the shared ring always adjusts its composited contrast.
+Real activation also requires a GUI/Aqua launch context, not merely permission
+to take the foreground. Check `launchctl managername` for both the owned app's
+launcher and its activation-state observer. A Background-bootstrap process can
+display windows yet never become active; removing `KAGI_NO_ACTIVATE`, a successful
+AX raise request, or `AXFocusedWindow` alone does not prove application activation.
+Record actual application/key state, source and executable/codesign identities,
+screen preflight, PID returned by the owned launch, and both CGWindow IDs.
+If a normal launch cannot provide that GUI context, stop and request an authorized
+GUI-context launch; do not use sudo, global session changes, or a product active
+override to manufacture acceptance.
+Keep Settings visibly unoccluded while the owned repository window becomes key,
+positioning only those owned windows. A covered window may not repaint, making
+its captured active image stale. Non-key Settings need not report AX focus.
+On return, the same control/ring must reappear without new Settings-control
+input, with selection/ON value and Settings bounds unchanged. Distinguish this
+consumer proof from an unavailable internal FocusHandle or global AX element.
+Run the finite activation driver and its helpers entirely in that GUI context;
+do not launch in Aqua but move the observations back into Background.
+
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.
 The runner pins stable TLC v1.7.4 and checks its SHA-256 before every Java launch;
@@ -577,15 +791,14 @@ System Settings with an isolated running Kagi, compare pane/spinner and PR tile
 before/after without restarting, and restore both OS preferences afterward.
 
 For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
-`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
-role/name/value/expanded/disabled properties on Appearance controls in the native
-Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
-to the kit's actual focused Select root; confirmation and Escape preserve its
-identity and focus owner. Zoom retains kit activation and discrete caps, hands
-focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
-These probes are not native VoiceOver or Full Keyboard Access evidence.
-Tier B inspects the live ComboBox and option names and both zoom button/value
-nodes at 100%, 70% and 167%, including disabled announcements.
+`settings_theme_select_ax` retains its historical scenario ID but now exercises
+the production theme-card RadioGroup: one selected card, full names, manual
+arrow focus without selection, and Space/Enter activation. There is no Select
+popup or ComboBox compatibility path. `settings_zoom_stepper_ax` inspects the
+shared stepper names, value and disabled caps across EN/JA and Apple Light/Dark,
+including focus repair at each bound. Shared renderer probes do not establish
+native VoiceOver announcements or Full Keyboard Access; Tier B still checks
+those on the real native window.
 
 For #1772 include `commit_panel_density,commit_panel` in the native filter.
 Retain tree/flat, EN/JA, Apple Light/Dark and zoom coverage. Measure actual
@@ -1238,8 +1451,10 @@ For #1298 / #1299 use
 with KEEP_GOING; run `settings_` for the neighboring baseline. These two
 scenarios explicitly select the production 715px macOS Settings host in
 EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
-renderer's named selected Tab recorder and real Enter/Space down/up after
-focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+shared renderer's real ComboBox triggers and opened GPUI MenuItem
+name/checked/disabled probes. Enter/Space opens, Up/Down traverses enabled
+choices, Enter commits and Escape returns focus without changing values.
+Exercise 0/1/20 models, unavailable CLI refusal, stale-menu closure, persisted
 values and no generation modal. Analyze clicks actual visible/scroll-reachable
 Save/Reset controls against a directory at the target path and a mode-000
 settings directory: errors retain the draft/dirty marker and original bytes;
@@ -1416,29 +1631,32 @@ These renderer/simulated-input assertions do not prove Full Keyboard Access,
 VoiceOver or IME behavior; Tier B compares those in the real EN/JA window.
 
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
-`settings_quiet` measures inherited heading colour/size/weight and Metal pixels
-for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes
-and injected blue/purple accents; adjacent pixels enforce literal 1px width.
-`settings_radio_dot` renders the actual pinned Radio component and checks a
-symmetric contrast-preserving primary-foreground centre, surrounding accent
-and empty unchecked input fill in both themes at both zooms, with explicit
-Theme accent and blue/purple System accent (Dark Theme requires a dark dot).
-Public `e2e::measure_control` permits native component probes to reuse the app's
-bounds recorder; default builds retain its pass-through. Shared non-E2E
-`measure_inside` placeholders are absolute and zero-sized: the unit
-`measure_inside_placeholder_is_out_of_flow` prevents flex/gap layout changes.
-These renderer assertions are not real keyboard, VoiceOver or Tier B evidence.
+`settings_quiet` protects neutral hierarchy, contrast and actual native pixels
+in the approved sidebar design at 100%/167%, EN/JA, both Apple themes and
+injected blue/purple accents. The old Appearance hairline/dropdown geometry is
+not a compatibility contract. `settings_radio_dot` remains an adjacent pinned
+Radio-component contrast regression; Settings exclusive choices themselves now
+use shared segmented controls and palette cards.
+Root `e2e::measure_control` remains available for other native components;
+Settings controls use `kagi-ui-settings`' feature-gated probes. Neither recorder
+substitutes for real keyboard, VoiceOver or Tier B evidence.
+The detail-viewport probe is attached outside the scrolling content and must
+equal the actual GPUI ScrollHandle bounds before and after scrolling. Never
+normalize translated probe coordinates to make containment pass. Native Analyze
+revision tests focus the real Input, use Cmd-A and `simulate_input`, and assert
+that the newer request revision increases: `InputState::set_value` intentionally
+suppresses Change and cannot establish that editing precondition. Operational
+provider fixtures seed both their model catalog and matching availability /
+finished-detection state; unavailable-provider guards remain active. Opening
+Settings with no pane preference must not create one merely to display Appearance.
 
 For #1200 use `KAGI_GUI_E2E_ONLY=settings` for the complete Settings matrix.
-`settings_groups` checks semantic card bounds, native base-fill pixels and page
-wheel ownership at 1392×883, EN/JA, 100%/167%; ordinary controls fit when
-reached and the unchanged oversized Analyze editor has separately reachable
-edges. It measures Analyze's vertical padding/gaps and ordinary descriptions
-of at most two lines at 100%. Real mouse-move events plus the Tooltip delay
-exercise avatar/custom-theme/Analyze help builders in both languages.
-`settings_view::take_settings_help_for_e2e` consumes only text actually passed
-to an invoked Tooltip builder; each hover clears old observations first.
-This is renderer/tooltip-construction evidence, not native VoiceOver delivery.
+`settings_groups` walks all eight production panes and checks shared semantic
+group/control bounds, full visible explanations, page wheel ownership and a
+stationary sidebar at EN/JA × 100%/167%. Ordinary controls and both Analyze editor
+edges must remain reachable. Help is form content, not a tooltip-only fallback;
+theme-name tooltips supplement one-line truncation. Native and browser probes
+are emitted by the same production elements, not root-only legacy renderers.
 
 For #1271/#1272 use `KAGI_GUI_E2E_ONLY=palette_` with KEEP_GOING. The
 `palette_highlight` scenario compares native row-fill pixels with the one AX
@@ -1985,25 +2203,18 @@ The current suite covers:
   Tier B: Peek a fetched live PR from its actual menu, inspect visible Compare,
   open a changed file and use Back. Capture only the launched PID's window;
   a large fixture or sample is not proof of FPS/input latency.
-- Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
-  `tests/recovery/settings_switches.rs`, #970): every switch is a
-  `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,
-  checks each switch is named by its row (`e2e::recorded_switch`), walks Tab
-  from the root over the six in drawing order
-  (`settings_switch_focused_for_e2e`), presses Space then Enter on each of
-  the five Appearance switches and checks the setting is saved each time and
-  the checked state given to assistive technology follows (Smart Commit's
-  is only reached: turning it on probes for local LLMs), and clicks one with
-  the pointer (one flip). `SavedKeys` puts the five settings back. The ring
-  is not observable in Tier A: Tier B Tabs through Settings and looks.
-- Settings zoom bound (`KAGI_GUI_E2E_ONLY=settings_zoom_bound`,
-  `tests/recovery/settings_switches.rs`, #1019 review): open the real Settings
-  view with a legacy 150% value, then step from 156% to 167% and back to
-  160%. The `gui-e2e`-only `e2e::settings_zoom_label` reads the
-  rendered percentage after each frame; persisted `ui_zoom` must match.
-  `GlobalSettings::capture()` restores the original settings. This Tier A
-  probe cannot establish the label's physical appearance; Tier B remains
-  unchanged.
+- Settings switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
+  `tests/recovery/settings_switches.rs`): shared `SettingsView` emits typed
+  requests through the actual pointer/keyboard handlers. Check each switch's
+  row name, Switch role, value and separate focus via shared probes; focus alone
+  must not toggle. Ordinary switch activation must preserve its existing native
+  setting/effect, while Smart Commit first enable waits for window-bound consent.
+  Visit each setting's owning pane rather than expecting six controls in one
+  legacy Appearance page. Tier B still inspects visible rings and announcements.
+- Settings zoom (`KAGI_GUI_E2E_ONLY=settings_zoom_bound`): preserve legacy
+  restoration, existing discrete zoom steps and bounded button focus repair.
+  The shared `zoom-value` probe exposes the rendered percentage; persisted
+  `ui_zoom` must match. Restore the original preferences after the scenario.
 - Tab panels (`KAGI_GUI_E2E_ONLY=tab_panels`, `tests/recovery/tab_panels.rs`,
   #979): the content a tab list switches goes through
   `tab_panel_a11y::tab_panel`, which records the role and label it set
@@ -2583,7 +2794,7 @@ The current suite covers:
   (`active-modal/app-notice`), a Pull confirmation (`plan-cancel`) and the
   Editor unsaved-changes guard raised by closing the dirty tab behind Home
   (`active-modal/editor-dirty-guard`; Esc keeps the tab) are on screen, as is
-  Settings (`settings-theme-select`). Closing the covered tab does not enter
+  the shared Settings sidebar view. Closing the covered tab does not enter
   its neighbour behind Home. `recent_repos` is restored by `SavedKeys`. For Tier B
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.

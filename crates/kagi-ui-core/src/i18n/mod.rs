@@ -23,6 +23,7 @@
 //! `En` and `Ja` arms below.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::settings::{read_setting, write_setting};
 
 pub fn settings_zoom_action(increase: bool, value: &str) -> String {
@@ -165,14 +166,14 @@ pub fn lang() -> Lang {
 }
 
 /// Set the active language and persist it to `settings.json` (key `"lang"`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_lang(l: Lang) {
     ACTIVE.store(l.index(), Ordering::Relaxed);
     write_setting("lang", Some(l.slug()));
 }
 
-/// Set the active language **without** persisting (test helper — keeps the
-/// unit tests off the real `settings.json`).
-#[cfg(test)]
+/// Initialize host-loaded language without reading or persisting settings.
+/// Shared renderers only read `lang()`; native test helpers use this same state.
 pub fn set_lang_no_persist(l: Lang) {
     ACTIVE.store(l.index(), Ordering::Relaxed);
 }
@@ -188,6 +189,7 @@ pub fn set_lang_no_persist(l: Lang) {
 /// 2. persisted `settings.json` `"lang"`,
 /// 3. `LANG` / `LC_ALL` starting with `"ja"` → [`Lang::Ja`],
 /// 4. otherwise [`Lang::En`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn resolve_lang() -> Lang {
     if let Ok(v) = std::env::var("KAGI_LANG") {
         if let Some(l) = Lang::from_slug(&v) {
@@ -211,6 +213,7 @@ pub fn resolve_lang() -> Lang {
 
 /// Initialise the active language at startup (called once from `main`).
 /// Logs `[kagi] lang: <slug>`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_lang() {
     let l = resolve_lang();
     ACTIVE.store(l.index(), Ordering::Relaxed);
@@ -1110,6 +1113,22 @@ pub enum Msg {
     SettingsWindowFailed,
     /// Settings sidebar: Appearance page title.
     SettingsAppearance,
+    SettingsPaneGraph,
+    SettingsPaneEditor,
+    SettingsPaneTerminal,
+    SettingsPaneNetwork,
+    SettingsPaneSmartCommit,
+    SettingsPaneAnalyze,
+    SettingsColorTheme,
+    SettingsInterface,
+    SettingsPresentation,
+    SettingsCopySection,
+    SettingsMarkdownSection,
+    SettingsWorktreesSection,
+    SettingsFetchSection,
+    SettingsGeneration,
+    SettingsExclusions,
+    SettingsThemeContrastWarning,
     /// Semantic grouped-form headings (#1200).
     SettingsGraph,
     SettingsNetwork,
@@ -1129,6 +1148,11 @@ pub enum Msg {
     SettingsLanguage,
     /// Appearance → Theme row title.
     SettingsTheme,
+    SettingsLightMode,
+    SettingsDarkMode,
+    SettingsLayout,
+    SettingsMotion,
+    SettingsThemeFolder,
     /// Appearance → Theme row description.
     SettingsThemeDesc,
     /// Apple theme chrome accent preference and detected macOS colour.
@@ -3972,6 +3996,40 @@ impl Msg {
             (Ja, SettingsWindowFailed) => "設定ウィンドウを開けませんでした",
             (En, SettingsAppearance) => "Appearance",
             (Ja, SettingsAppearance) => "外観",
+            // The canonical gallery fixes English titles; production titles
+            // remain localized under the owner-designated Settings contract.
+            (En, SettingsPaneGraph) => "Graph",
+            (Ja, SettingsPaneGraph) => "グラフ",
+            (En, SettingsPaneEditor) => "Editor",
+            (Ja, SettingsPaneEditor) => "エディター",
+            (En, SettingsPaneTerminal) => "Terminal",
+            (Ja, SettingsPaneTerminal) => "ターミナル",
+            (En, SettingsPaneNetwork) => "Network & Sync",
+            (Ja, SettingsPaneNetwork) => "ネットワークと同期",
+            (En, SettingsPaneSmartCommit) => "Smart Commit",
+            (Ja, SettingsPaneSmartCommit) => "スマートコミット",
+            (En, SettingsPaneAnalyze) => "Analyze",
+            (Ja, SettingsPaneAnalyze) => "分析",
+            (En, SettingsColorTheme) => "Color theme",
+            (Ja, SettingsColorTheme) => "カラーテーマ",
+            (En, SettingsInterface) => "Interface",
+            (Ja, SettingsInterface) => "インターフェース",
+            // English gallery placeholders have production Japanese wording.
+            (En, SettingsPresentation) => "Commit graph",
+            (Ja, SettingsPresentation) => "commit グラフ",
+            (En, SettingsCopySection) => "Clipboard",
+            (Ja, SettingsCopySection) => "クリップボード",
+            (En, SettingsMarkdownSection) | (Ja, SettingsMarkdownSection) => "Markdown",
+            (En, SettingsWorktreesSection) => "Worktree safety",
+            (Ja, SettingsWorktreesSection) => "worktree の安全性",
+            (En, SettingsFetchSection) => "Background sync",
+            (Ja, SettingsFetchSection) => "バックグラウンド同期",
+            (En, SettingsGeneration) => "Message generation",
+            (Ja, SettingsGeneration) => "メッセージ生成",
+            (En, SettingsExclusions) => "Exclusions",
+            (Ja, SettingsExclusions) => "除外",
+            (En, SettingsThemeContrastWarning) => "Low contrast — exact palette shown without preview text.",
+            (Ja, SettingsThemeContrastWarning) => "コントラストが低いため、文字プレビューなしで実際の配色を表示しています。",
             (En, SettingsGraph) | (Ja, SettingsGraph) => "Graph",
             (En, SettingsNetwork) => "Network",
             (Ja, SettingsNetwork) => "ネットワーク",
@@ -4000,6 +4058,17 @@ impl Msg {
             (Ja, SettingsLanguage) => "言語",
             (En, SettingsTheme) => "Theme",
             (Ja, SettingsTheme) => "テーマ",
+            (En, SettingsLightMode) => "Light Mode",
+            (Ja, SettingsLightMode) => "ライトモード",
+            (En, SettingsDarkMode) => "Dark Mode",
+            (Ja, SettingsDarkMode) => "ダークモード",
+            // Canonical English wording does not replace production translations.
+            (En, SettingsLayout) => "Layout",
+            (Ja, SettingsLayout) => "レイアウト",
+            (En, SettingsMotion) => "Motion",
+            (Ja, SettingsMotion) => "モーション",
+            (En, SettingsThemeFolder) => "Theme folder",
+            (Ja, SettingsThemeFolder) => "テーマフォルダー",
             (En, SettingsThemeDesc) => "Colour theme used across the whole app.",
             (Ja, SettingsThemeDesc) => "アプリ全体で使用するカラーテーマ。",
             (En, SettingsAccent) => "Accent",
@@ -4165,7 +4234,8 @@ impl Msg {
             }
 
             // ── Analyze ignore section (ADR-0119) ────────────────────
-            (En, SettingsAnalyzeIgnore) | (Ja, SettingsAnalyzeIgnore) => "Analyze ignore",
+            (En, SettingsAnalyzeIgnore) => "Analyze ignore",
+            (Ja, SettingsAnalyzeIgnore) => "分析の除外設定",
             (En, SettingsAnalyzeIgnoreDesc) => {
                 "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Reload the repository to apply."
             }
@@ -4179,15 +4249,15 @@ impl Msg {
             (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
             (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
             (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
-            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "分析の除外設定を保存しました",
             (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
-            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "分析の除外設定を保存できませんでした",
             (En, SettingsAnalyzeIgnoreClean) => "Saved",
             (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
             (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
-            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
+            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して分析の除外設定をリセットしますか？",
             (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. Your Analyze ignore patterns will be replaced with the defaults.",
-            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。Analyze ignore のパターンを既定値に置き換えます。",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。分析の除外パターンを既定値に置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.

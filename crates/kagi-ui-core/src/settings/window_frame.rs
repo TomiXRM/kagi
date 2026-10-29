@@ -1,17 +1,22 @@
 //! Settings-window geometry stays in the existing preference store.
+#[cfg(not(target_arch = "wasm32"))]
 use super::{read_setting, write_setting};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SettingsWindowFrame {
     pub x: f32,
     pub y: f32,
+    /// Captured viewport height retained in the existing on-disk frame format.
+    /// The native host ignores it: geometry is fixed at 900 × 760, screen-bounded.
     pub height: f32,
     /// Stable display UUID as hexadecimal; legacy frames have no display.
     pub display_uuid: Option<u128>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const FRAME_KEY: &str = "settings_window_frame";
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn parse_frame(value: &str) -> Option<SettingsWindowFrame> {
     let mut parts = value.split(',');
     let frame = SettingsWindowFrame {
@@ -31,7 +36,9 @@ fn parse_frame(value: &str) -> Option<SettingsWindowFrame> {
     .then_some(frame)
 }
 
-/// Read the frame, migrating the former position/height keys only once.
+/// Read saved placement, migrating the former position/height keys only once.
+/// The legacy height component round-trips but never determines window size.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn settings_window_frame() -> Option<SettingsWindowFrame> {
     if let Some(value) = read_setting(FRAME_KEY) {
         return parse_frame(&value);
@@ -43,7 +50,7 @@ pub fn settings_window_frame() -> Option<SettingsWindowFrame> {
             .as_deref()
             .and_then(|value| value.parse::<f32>().ok())
             .filter(|height| height.is_finite())
-            .unwrap_or(720.);
+            .unwrap_or(760.);
         parse_frame(&format!("{position},{height}"))
     });
     if let Some(frame) = frame {
@@ -59,6 +66,7 @@ pub fn settings_window_frame() -> Option<SettingsWindowFrame> {
 }
 
 /// One changing key lets the sole settings store coalesce a bounds burst.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_settings_window_frame(frame: SettingsWindowFrame) {
     let value = match frame.display_uuid {
         Some(uuid) => format!("{},{},{},{uuid:032x}", frame.x, frame.y, frame.height),
@@ -72,7 +80,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_window_frame_requires_three_finite_components() {
+    fn settings_window_frame_preserves_legacy_finite_height_component() {
         for value in ["", "1,2", "1,2,500,4", "NaN,2,500", "1,inf,500", "1,2,NaN"] {
             assert!(parse_frame(value).is_none(), "{value}");
         }

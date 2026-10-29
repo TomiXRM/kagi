@@ -54,6 +54,7 @@ class DependencyFixtures(unittest.TestCase):
             "gates-lint": {"result": "success"},
             "test-macos": {"result": "success"},
             "build-windows": {"result": "success"},
+            "check-wasm": {"result": "success"},
             "install-linux": {"result": install},
         }
 
@@ -75,6 +76,13 @@ class DependencyFixtures(unittest.TestCase):
             with self.subTest(result=result):
                 needs = self.needs()
                 needs["invariants"] = {} if result is None else {"result": result}
+                self.assertEqual(release_ci.needs_decision(needs).state, "failure")
+
+    def test_portable_settings_check_is_release_blocking(self) -> None:
+        for result in ("failure", "skipped", "cancelled", None):
+            with self.subTest(result=result):
+                needs = self.needs()
+                needs["check-wasm"] = {} if result is None else {"result": result}
                 self.assertEqual(release_ci.needs_decision(needs).state, "failure")
 
     def test_conditional_install_only_skips_when_not_selected(self) -> None:

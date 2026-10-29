@@ -2,7 +2,7 @@
 # ADR-0047 authorizes adding the xtask build/bundle helper as a workspace member.
 # ADR-0072 (v1.0 re-architecture): crates/* host the layered workspace; the pure
 # `kagi-domain` crate is the first extracted layer (strangler migration).
-members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-mcp", "crates/kagi-ui-core", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
+members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-mcp", "crates/kagi-ui-core", "crates/kagi-ui-settings", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
 # Keep host/build and target feature sets separate. GUI test support is enabled
 # only by the explicit `gui-e2e` feature below (ADR-0166).
 resolver = "2"
@@ -20,7 +20,7 @@ rust-version = "1.92"
 
 [features]
 # Compile the native visual runner only when explicitly requested (ADR-0166).
-gui-e2e = ["gpui/test-support", "gpui_platform/test-support", "gpui-component/test-support", "kagi-git/gui-e2e", "kagi-ui-core/gui-e2e", "kagi-ui-editor/gui-e2e", "kagi-ui-ecosystem/gui-e2e", "kagi-ui-file-history/gui-e2e"]
+gui-e2e = ["gpui/test-support", "gpui_platform/test-support", "gpui-component/test-support", "kagi-git/gui-e2e", "kagi-ui-core/gui-e2e", "kagi-ui-editor/gui-e2e", "kagi-ui-ecosystem/gui-e2e", "kagi-ui-file-history/gui-e2e", "kagi-ui-settings/gui-e2e"]
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it
@@ -32,6 +32,7 @@ kagi-domain = { path = "crates/kagi-domain" }
 kagi-git = { path = "crates/kagi-git" }
 # Shared UI foundation (ADR-0121 C1): klog macro, settings, i18n, theme.
 kagi-ui-core = { path = "crates/kagi-ui-core" }
+kagi-ui-settings = { path = "crates/kagi-ui-settings" }
 # Feature pane crates (ADR-0121 C2+): Git-free; the bin owns the data feed.
 kagi-ui-ecosystem = { path = "crates/kagi-ui-ecosystem" }
 kagi-ui-editor = { path = "crates/kagi-ui-editor" }
@@ -176,41 +177,46 @@ assets = [
 # Explicit bundled JP fallback covers native shaping and detached tooltip/drag roots (ADR-0130).
 # Retired cosmetic highlight/heading-gap patches must not be reintroduced.
 #
-# Transitional list fix: retain estimates across layout/reset/splice, preserve
-# measured nodes on equal estimates, and resolve downward wheel/scroll_by End
-# intent. Upstream already has estimated-height APIs, but not these fixes;
-# no TomiXRM Zed PR existed at the #1479 review. Remove in #1479-S6 after #1479-S5 moves
-# geometry to official uniform lists / Kagi-owned variable lists and preserves
-# the real geometry oracles. The other 21 siblings below have no independent
-# fixes: keep one GPUI source identity only until the official family cutover.
+# Transitional GPUI fixes: retain list estimates across layout/reset/splice,
+# preserve measured nodes on equal estimates, and resolve downward wheel/
+# scroll_by End intent. #1816 additionally fixes shaped-label wrapping with
+# Unicode line-break/grapheme boundaries and punctuation-safe emergency fallback,
+# plus exact wrap/truncation cache constraints and final-bounds shape reconciliation.
+# The editor LineWrapper is unchanged; this is not all-Unicode conformance.
+# Remove in #1479-S6 only after the official family preserves the real list,
+# shaped-text wrapping and measured-truncation oracles. Siblings have no independent
+# fixes: keep one GPUI source identity until that official family cutover.
 [patch."https://github.com/zed-industries/zed"]
-collections = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35", version = "=0.2.2" }
-gpui_linux = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_macos = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_platform = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_shared_string = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35", version = "=0.1.0" }
-gpui_util = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_web = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_wgpu = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-gpui_windows = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-http_client = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-media = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-perf = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-scheduler = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-sum_tree = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-util_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
-ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+collections = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37", version = "=0.2.2" }
+gpui_linux = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_macos = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_macros = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_platform = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_shared_string = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37", version = "=0.1.0" }
+gpui_util = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_web = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_wgpu = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+gpui_windows = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+http_client = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+media = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+perf = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+refineable = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+scheduler = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+sum_tree = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+util_macros = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+zlog = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+ztracing = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
+ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "edfc6891ab91b3ef783b25114b355fd576063a37" }
 #
 # Transitional Kit patch: managed/offscreen conversation selection, presentation
 # retention, cached composer rows, Input/Select/Find accessibility, IME, Radio
 # painting and atomic replacement Undo; b50a0796 fixes next-frame retention leaks
 # through weak capture, and f5f68275 includes Find keyboard containment.
+# 24833cd2 adds named radio popup roots, disabled/checked accessibility and
+# owner-scoped active descendants, plus eligible first/wrap/confirm navigation.
+# Custom popup label wrappers also shrink within the menu's real available width.
 # Official main includes some but not all equivalents; longbridge/gpui-kit#3421
 # merged presentation retention only.
 # Remove both entries together in #1479-S6: official component/assets at one revision,
@@ -218,5 +224,5 @@ ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309
 # and the official cached Textarea row accessor (U1) with consumer gates.
 # Assets has no independent fix; it shares the component fork source/revision.
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }
-gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "9f4aa0b36812bee986261bdf60cb5aa43f8bd04f" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "9f4aa0b36812bee986261bdf60cb5aa43f8bd04f" }

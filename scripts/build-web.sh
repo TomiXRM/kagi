@@ -1,11 +1,9 @@
 #!/bin/bash
 # Build the kagi-web WASM harness into crates/kagi-web/dist/.
 #
-# Requires: nightly toolchain with wasm32-unknown-unknown (wasm_thread uses
-# #![feature]), wasm-bindgen-cli.
-#   rustup toolchain install nightly
-#   rustup target add wasm32-unknown-unknown --toolchain nightly
-#   cargo install wasm-bindgen-cli
+# Requires the pinned nightly (wasm_thread uses #![feature]) and wasm-bindgen:
+#   rustup toolchain install nightly-2026-10-18 --profile minimal --target wasm32-unknown-unknown
+#   cargo install wasm-bindgen-cli --version 0.2.123 --locked
 #
 # Usage: scripts/build-web.sh [--release]
 set -euo pipefail
@@ -15,7 +13,7 @@ MODE=debug
 FLAG=""
 if [[ "${1:-}" == "--release" ]]; then MODE=release; FLAG=--release; fi
 
-cargo +nightly build -p kagi-web --target wasm32-unknown-unknown $FLAG
+cargo +nightly-2026-10-18 build --locked -p kagi-web --target wasm32-unknown-unknown $FLAG
 
 DIST=crates/kagi-web/dist
 rm -rf "$DIST" && mkdir -p "$DIST"

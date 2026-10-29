@@ -19,10 +19,17 @@ pub fn activate(cx: &mut VisualTestAppContext) {
 }
 
 pub fn tree(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Value {
-    let json = cx
-        .update_window(win, |_, w, _| w.debug_a11y_tree_json())
-        .unwrap()
-        .expect("native accessibility adapter must produce a real tree");
+    let (active, json) = cx
+        .update_window(win, |_, w, _| {
+            (w.is_a11y_active(), w.debug_a11y_tree_json())
+        })
+        .unwrap();
+    let json = json.unwrap_or_else(|| {
+        panic!(
+            "native accessibility adapter must produce a real tree: window={:?}, active={active}",
+            win.window_id()
+        )
+    });
     serde_json::from_str(&json).unwrap()
 }
 

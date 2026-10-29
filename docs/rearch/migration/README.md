@@ -5,7 +5,7 @@ Strangler migration from the v0.2.0 single-crate app to the v1.0 workspace
 green. This file is the running log: check off steps, record deviations, and
 note why any destructive change was made.
 
-## Current interpretation (2026-09-07)
+## Current interpretation (2026-10-27)
 
 The numbered steps below retain dated history, including their historical
 LOC/test counts. ADR-0121's entity/feature-pane route is implemented; it does
@@ -16,6 +16,14 @@ Current workspace/DAG/counts and explicit deferred ownership work are recorded
 in `docs/agent-loop/2026-09-astra-recovery/{AUDIT,METRICS}.md`.
 The recovery extends ADR-0149's mutation-owned logging for stash drop,
 history undo/redo and cleanup; guarded UI completion is presentation-only.
+
+Settings #1816 follows ADR-0121's measured presentation boundary, not a resumed
+workspace fan-out: `kagi-ui-settings` renders host-supplied values and emits typed
+requests; native storage/discovery remains outside its portable API surface.
+The initial language-control slice was compiled through both native Settings and
+`kagi-web` and exercised through its actual browser keyboard handler before
+expanding the sidebar panes. This is scoped production-view verification, not a
+shipping browser application, a replacement settings store, or completion of S5.
 The measured app-layer slices below now live in `src/app` and existing `Sessions`;
 they do not establish the original `kagi-app` crate, universal worker dispatch, or
 zero-copy tab ownership target.

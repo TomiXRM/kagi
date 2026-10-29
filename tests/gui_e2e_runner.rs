@@ -188,6 +188,9 @@ mod system_accessibility;
 mod settings_quiet;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_composition.rs"]
+mod settings_composition;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_window.rs"]
 mod settings_window;
 
@@ -2120,6 +2123,10 @@ mod macos {
             (
                 "window_restore_titlebar",
                 Box::new(crate::window_restore::scenario_window_restore_titlebar),
+            ),
+            (
+                "settings_window_composition",
+                Box::new(crate::settings_window::scenario_settings_window_composition),
             ),
             (
                 "settings_window_screen_fit",

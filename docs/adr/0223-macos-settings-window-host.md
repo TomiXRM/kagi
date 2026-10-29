@@ -5,29 +5,34 @@ Status: Accepted — 2026-10-12. Issue #1198. Supersedes ADR-0080's macOS overla
 ## Decision
 
 On macOS every Settings entry point opens or raises one process-wide window,
-not a repository overlay. The host wraps the existing settings entity callbacks,
-theme Select/Input entities and #1200 grouped-form section renderers in the
-same gpui-component Root used by repository windows. It owns presentation only:
-selected pane, focus, scroll and the OS window handle. There is no second
-Settings store and no repository read model, tab, modal slot or Git access in
-this host. Other platforms keep the portable overlay implementation.
+not a repository overlay. Since #1816 it mounts the shared production Settings
+entity and retained InputState in the same gpui-component Root used by repository
+windows. The native host owns the OS window and frame; the shared entity owns
+pane selection, control focus and detail scrolling. The native adapter retains
+store/effect ownership, with no second Settings store or repository read model
+in this host. Other platforms keep the portable overlay around the same entity.
 
-The 715-logical-point window is non-resizable and non-modal, with standard
-close/minimize lights and disabled zoom. The transparent unified compact frame
-sets app_owns_titlebar_drag and owns dragging only on its blank/title surface,
-not pane controls. General, Language, Smart Commit and Analyze use the existing
-localized groups. Pane selection, position and the last content height are saved
-through settings::; invalid/missing selections use General, and disconnected-
-display positions recenter. Restoring height avoids an unnecessary initial
-resize on every reopen. The selected pane determines content height through real
-layout, with a 500-logical-point floor when the display permits it and the
-current display's visible frame as the ceiling. Oversized pages remain reachable
-through one persistent system-scrollbar owner. Width does not scale with UI zoom.
-Both position and height are saved on bounds changes as one flat-string
-settings_window_frame value ("x,y,content-height[,display-uuid]"), not alternating
-preference keys. Display UUID is optional for existing frames and recorded as
-32 hexadecimal digits for new captures. The sole store coalesces a continuous
-bounds burst, and the normal
+The 900×760-logical-point window is fixed, non-resizable and non-modal, with standard
+close/minimize lights and disabled zoom. Its transparent unified frame places
+the traffic lights inside the canonical sidebar's top inset. Kagi draws no
+additional title band: the shared detail title names the pane exactly once.
+The host owns dragging in the blank top inset, not pane controls.
+The #1816 panes are Appearance, Graph, Editor, Terminal,
+Network & Sync, Smart Commit, Analyze and General (language). Pane selection and
+position/display are saved through settings::; invalid or missing selections
+display Appearance, but a missing preference is not written merely by opening
+Settings. Existing legacy selections migrate once. Disconnected-display positions
+recenter. Both shortest and tallest panes use the same fixed 900×760 viewport,
+reduced only when necessary to fit the display's visible frame including native
+frame/content insets. Switching panes, changing content or changing UI zoom never
+resizes the window. Oversized pages remain reachable through the detail scrollbar.
+Neither width nor height scales with UI zoom.
+Bounds changes save one flat-string settings_window_frame value
+("x,y,content-height[,display-uuid]"), not alternating preference keys. The height
+component remains readable and is captured for on-disk compatibility, but is
+ignored when choosing geometry. Display UUID is optional for existing frames and
+recorded as 32 hexadecimal digits for new captures. The sole store coalesces a
+continuous bounds burst, and the normal
 application-quit flush also preserves an open Settings frame. The settings module
 reads the former settings_window_position/settings_window_height pair once,
 converts it to the frame key and removes the obsolete pair; unrelated settings
@@ -79,13 +84,12 @@ screencapture -l<settings-window-id>, not the first PID-matching window.
 
 ## Amendment — 2026-10-12: settings control feedback (#1298 / #1299)
 
-The Smart Commit pane shares the existing manual TabList choice focus owner
-with the portable overlay; pointer activation returns to the active Settings
-host's focus, and departing/removed cells yield focus to that host. Analyze
-Save/Reset outcomes use the originating app's existing bounded ToastStack,
-placed with the repository window's shared out-of-flow toast container so
-feedback cannot change page layout or content-height measurement. The saved
-editor baseline and full inline failure remain on KagiApp, not on this window.
+The Smart Commit pane shares the production choice-group focus owner with the
+portable overlay; selection, roving focus and unavailable choices remain distinct.
+Analyze Save/Reset outcomes use the originating app's bounded ToastStack in the
+window's out-of-flow detail-content slot, never over the sidebar. Feedback cannot
+change page layout or native window geometry. The shared entity owns the
+accepted editor baseline and inline failure; the native adapter owns file writes.
 
 Since both hosts render the same ToastStack, each card retains its rendered
 close handle per window rather than overwriting one global handle. Both hosts
@@ -139,30 +143,32 @@ detail presentation without changing live preference apply or storage.
 Settings is an open-density auxiliary window, using macOS Settings as its
 placement reference, not a larger repository window or a second form control
 convention. Every initial/restored frame fits the selected display's visible
-area. Content-driven height changes preserve the top edge where possible and
-clamp the entire native frame, including its bottom and right edges. The native
+area. Initial fitting and changed connected-display geometry preserve the top
+edge where possible and clamp the entire native frame, including its bottom and
+right edges. The native
 frame constraint accounts for any frame/content inset and uses AppKit's own
 screen coordinates, rather than mixing display-local GPUI coordinates across
 monitors. The existing scroller owns content that exceeds the visible height.
 Repository window defaults and restoration policy are untouched.
-Fitting runs only for initial layout, changed intrinsic content height, pane or
-zoom changes, and changed connected-display geometry. Ordinary native moves only
-persist geometry; redraws do not re-clamp an unchanged layout. A user may therefore
-leave a window partially offscreen, under the Dock, or across a display boundary.
+Fitting runs only on initial layout and changed connected-display geometry;
+pane, content and zoom changes do not affect the frame. Ordinary native moves only
+persist geometry; redraws do not re-clamp unchanged display geometry. A user may
+therefore leave a window partially offscreen, under the Dock, or across a display boundary.
 The cached layout key includes all displays' full/visible frames, not the current
 window's display, so dragging between displays is not a topology change.
 Saved display identity uses the GPUI display UUID, not an ambiguous local x/y
 coordinate or the currently focused screen. A disconnected UUID recenters on
 the primary display; the old three-component frame remains readable and acquires
 its display identity at the next native bounds capture.
-Unmodified Page Up/Down bubble to the native host's existing scroll owner when
-an editing control has not consumed them. This keeps focused controls intact
-while allowing keyboard inspection of page content below the fitted frame.
+Unmodified Page Up/Down reach the shared detail viewport when an editing control
+has not consumed them. This keeps focused controls intact while allowing keyboard
+inspection of page content below the fitted frame.
 
 The native `settings_window_screen_fit` regression checks window bounds against
 the display's visible bounds after first open, all pane transitions, 100%→167%
-zoom and reopen in EN/JA and Apple Light/Dark. Wheel scrolling and real Tab plus
-Page Down must reach the final General switch inside that page viewport; the
+zoom and reopen in EN/JA and Apple Light/Dark, with one fixed viewport throughout.
+Wheel scrolling and real Tab plus Page Down must reach the final Appearance action
+inside that page viewport; the
 native accessibility tree retains its localized name. Saved right/bottom-overflow
 frames must restore on their own connected display and fit fully, not merely
 expose a titlebar. These deterministic hidden-window bounds do not prove physical
@@ -170,5 +176,80 @@ pointer delivery or the physical bottom edge; Tier B captures the real Settings
 window on the main display at 167%.
 The same regression also moves the live native frame partly beyond the right and
 bottom visible edges, drains its bounds notifications and redraws repeatedly,
-and requires the chosen position to survive until a pane/content/zoom change.
+and requires the chosen position to survive pane/content/zoom changes as well.
+Only a reopen or changed display geometry fits that manual placement again.
+
+## Amendment — 2026-10-27: compact Appearance theme chooser (#1816)
+
+The owner requests a horizontal theme chooser instead of showing every theme
+in a multi-row grid. Its initial shorter-window request is superseded by the fixed
+900×760 canonical ruling below. Extend the existing
+`SettingsView::theme_cards` and native `SettingsWindow`; do not introduce a
+second renderer, preference owner, carousel manager or stored scroll position.
+The shared/native/browser boundary in ADR-0121 is unchanged.
+
+The role remains an open-density Settings choice. The subsequent owner
+canonical ruling below selects the final PR #1814 `lab_i10_h` geometry:
+132×84-point previews, centered captions and fixed-hue tiles. Preview content
+uses real theme palettes rather than gallery fixture colors. Both labeled
+strips remain mounted, Light Mode above Dark Mode, classified by `Theme.dark`.
+Reuse the existing Editor tab-strip
+scrollbar and nearest-item reveal pattern. This is one continuously scrollable
+radio group, not dual preferences, a numeric slider, auto-playing carousel or pager.
+Apple's Scroll views guidance says: “It's alright to place a horizontal scroll
+view inside a vertical scroll view (or vice versa), however.”
+
+State contract: rest/hover/pressed use the existing card and activation handler;
+selection remains the single effective theme, while focus is independent.
+Global Light-then-Dark arrows and Home/End reveal the focused card including its
+complete ring; Space/Return applies that choice. Each strip owns its horizontal
+offset. Selected-theme reveal runs on opening, returning to Appearance, changed
+selection/catalog/zoom and viewport resize, not ordinary redraws, focus loss or
+manual browsing. First and last cards keep local ring clearance. Horizontal
+gestures and the scrollbar browse the targeted strip without moving the other;
+vertical wheel input still scrolls the containing form. Full names, constrained
+caption ellipses, palette swatches and low-contrast explanations remain.
+Theme loading/error and unavailable filesystem actions remain native-adapter
+states, not new carousel states; the normal catalog contains built-ins.
+There is no new destructive, approval, IME or persistence behavior.
+
+Initial/restored frames use the fixed 900×760, screen-bounded policy; saved height
+and content size do not select geometry. Position, display identity, unknown
+settings and normal bounds/quit flushing remain intact.
+The window remains non-resizable. Browser narrow-width and zoom cases exercise
+shared-view containment; they are not the native window-size or chrome oracle.
+At large zoom, all eight destinations remain reachable by wheel and keyboard
+with the focused/selected row revealed. The sidebar may flex below its 55%
+ceiling to preserve whole detail controls on smaller display areas.
+
+## Amendment — 2026-10-29: owner-designated canonical composition (#1818)
+
+The owner-designated source is `origin/experiment/kagi-settings-skill` at
+`1c6486202`: `src/ui/settings_kit/{mod,controls}.rs`,
+`experiments/settings-skill/runs/i10/lab_i10_s8.rs.txt` and
+`lab_i10_h.rs.txt`. It supersedes the compact host dimensions and extra native
+title band, not native ownership, persistence, focus or consent behavior.
+The owner explicitly selected canonical 132×84 previews over the later
+144/88 port, direct `segment_selected_bg()` selection over hard-coded white,
+and a fixed 900×760-point, screen-bounded viewport over the compact ceiling and
+the previous saved/content-driven height policy. Switching panes never resizes
+the window; overflow scrolls inside the detail. The eight #1816 panes/order,
+no Search field and one-setting panes remain owner-approved exceptions.
+
+The sidebar panel begins at (8,8), is 212 points wide and extends to the
+bottom inset. Its 40-point top padding accommodates the OS-drawn traffic lights.
+Rows are 32 points with a 2-point gap and neutral selection. Each appearance's
+theme strip sits inside its own group card, and Accent has a section heading.
+Visible labels and action captions preserve the canonical `Msg` text in EN and
+JA, including “Open theme folder…”, “Reload Themes” and “Theme file guide…”.
+The canonical gallery's English placeholders fix only English wording. Japanese
+uses production `Msg` translations, including グラフ, ネットワークと同期,
+スマートコミット, 分析, レイアウト and モーション; the proper noun Markdown and
+Git terms Hash/Branch remain unchanged (ADR-0048).
+The native `settings_window_composition` scenario captures everything Kagi draws
+with `window.render_to_image()` and records actual AppKit traffic-light bounds;
+Metal images do not contain the OS-drawn lights. Composition evidence lives in
+`target/ui-fidelity/settings/`, including the measured table and same-scale
+canonical/native sheets. Bounds relations are asserted on the native owner,
+not on copied implementation constants.
 

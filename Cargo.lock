@@ -1074,7 +1074,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1456,7 +1456,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2351,7 +2351,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2421,6 +2421,8 @@ dependencies = [
  "taffy",
  "thiserror 2.0.18",
  "ttf-parser",
+ "unicode-linebreak",
+ "unicode-segmentation",
  "url",
  "usvg 0.46.0",
  "util_macros",
@@ -2435,7 +2437,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=7a116a2019160e6d8091075f88f349a9fe9a2a7e#7a116a2019160e6d8091075f88f349a9fe9a2a7e"
+source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=9f4aa0b36812bee986261bdf60cb5aa43f8bd04f#9f4aa0b36812bee986261bdf60cb5aa43f8bd04f"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2518,7 +2520,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=7a116a2019160e6d8091075f88f349a9fe9a2a7e#7a116a2019160e6d8091075f88f349a9fe9a2a7e"
+source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=9f4aa0b36812bee986261bdf60cb5aa43f8bd04f#9f4aa0b36812bee986261bdf60cb5aa43f8bd04f"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2532,7 +2534,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=7a116a2019160e6d8091075f88f349a9fe9a2a7e#7a116a2019160e6d8091075f88f349a9fe9a2a7e"
+source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=9f4aa0b36812bee986261bdf60cb5aa43f8bd04f#9f4aa0b36812bee986261bdf60cb5aa43f8bd04f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2557,7 +2559,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2608,7 +2610,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2655,7 +2657,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2666,7 +2668,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -2679,7 +2681,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "schemars",
  "serde",
@@ -2689,7 +2691,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "anyhow",
  "log",
@@ -2699,7 +2701,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2723,7 +2725,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2752,7 +2754,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3089,7 +3091,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3584,6 +3586,7 @@ dependencies = [
  "kagi-ui-ecosystem",
  "kagi-ui-editor",
  "kagi-ui-file-history",
+ "kagi-ui-settings",
  "markdown",
  "notify",
  "objc2 0.6.4",
@@ -3684,16 +3687,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "kagi-ui-settings"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "kagi-domain",
+ "kagi-ui-core",
+]
+
+[[package]]
 name = "kagi-web"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
  "gpui",
+ "gpui-component",
+ "gpui-component-assets",
  "gpui_platform",
  "gpui_web",
  "kagi-domain",
+ "kagi-ui-core",
+ "kagi-ui-settings",
  "log",
+ "serde_json",
  "wasm-bindgen",
 ]
 
@@ -4085,7 +4103,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -4960,7 +4978,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "collections",
  "serde",
@@ -5737,7 +5755,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "derive_refineable",
 ]
@@ -6136,7 +6154,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "async-task",
  "backtrace",
@@ -6743,7 +6761,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "heapless",
  "log",
@@ -7979,7 +7997,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "perf",
  "quote",
@@ -9844,7 +9862,7 @@ checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9861,7 +9879,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -9872,7 +9890,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/TomiXRM/zed?rev=caf5007618c309a8ea66002d44a9c9ab629a2d35#caf5007618c309a8ea66002d44a9c9ab629a2d35"
+source = "git+https://github.com/TomiXRM/zed?rev=edfc6891ab91b3ef783b25114b355fd576063a37#edfc6891ab91b3ef783b25114b355fd576063a37"
 
 [[package]]
 name = "zune-core"

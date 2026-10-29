@@ -166,7 +166,7 @@ mod overlay_focus;
 mod picker_failure;
 mod settings_analyze;
 mod settings_controls;
-mod settings_theme_folder;
+mod settings_themes;
 pub mod settings_view;
 #[cfg(target_os = "macos")]
 mod settings_window;
@@ -185,7 +185,6 @@ mod tab_view;
 pub mod tabs;
 pub mod tag_menu;
 pub mod terminal;
-mod theme_select;
 mod timeline_row;
 pub mod trust_prompt;
 pub mod window_restore;
@@ -1196,17 +1195,7 @@ pub struct KagiApp {
     // ── W2-GRAPH: Compact graph mode ────────────────────────────
     /// When `true` row height is 18px (compact); `false` (default) = 24px.
     pub graph_compact: bool,
-    /// Settings overlay: the appearance-section theme picker's gpui-component
-    /// `Select` state. Built in the window context (needs a `Window`) and `None`
-    /// until then / in headless paths; a `SelectEvent::Confirm` subscription
-    /// applies the chosen theme via `set_theme`.
-    pub theme_select: Option<Entity<settings_view::ThemeSelectState>>,
-    /// Focus handles of Settings' switches, one per toggle in drawing order
-    /// (#970), handed to the overlay's renderer.
-    pub(crate) settings_switches: keyboard_nav::FocusSlots,
     pub(crate) settings_controls: settings_controls::SettingsControls,
-    /// Settings' single scroll owner survives control updates and redraws.
-    pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
     /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
     /// panel (gpui-component's Root) instead of reaching the terminal or the
@@ -1568,10 +1557,7 @@ impl KagiApp {
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
-            theme_select: None,
-            settings_switches: Default::default(),
             settings_controls: Default::default(),
-            settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,

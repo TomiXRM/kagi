@@ -279,9 +279,10 @@ impl KagiApp {
         let el = el.on_action(cx.listener(|this, action: &cmds::SetTheme, _window, cx| {
             this.set_theme(&action.slug, cx);
         }));
-        let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
+        let el = el.on_action(cx.listener(|app, action: &cmds::SetToolbarDisplay, _, cx| {
             settings::set_toolbar_display(action.mode);
             cmds::publish_menus(cx);
+            app.seed_settings(cx);
             cx.notify();
         }));
         // W22-I18N: language switch actions (always enabled).

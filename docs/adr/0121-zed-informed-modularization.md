@@ -153,3 +153,131 @@ Phase A〜C を完走した。最終形:
 
 CI ゲート(blocking): kagi-ui-* から git2/kagi-git 禁止、kagi-ui-* 間の
 横 import 禁止(`invariant-ui-core-layering`)。
+
+## Settings production/browser boundary (#1816, 2026-10-27)
+
+The approved Settings rebuild first extracts a real production control through
+the established constructor/`seed_*` and `EventEmitter` seam, and mounts that
+same entity in the native host and existing `kagi-web` verification host. Only
+then does the same owner expand to the approved eight-pane sidebar design.
+This bounded extraction does not complete S5 or authorize a universal UI/Git
+facade. Separate boundary and visible-rebuild commits when practical.
+
+`kagi-ui-settings` owns rendering and input only; root host glue resolves
+preferences, theme catalogs, provider availability and approvals, performs the
+existing native effects, and seeds effective snapshots. It depends only on
+domain, UI core, GPUI and gpui-component. The browser fixture records the same
+typed intents and supplies deterministic outcomes; it is not a shipping browser
+app or another Settings renderer. Native syntax grammar features are selected
+only for native targets.
+
+Ordinary setters acknowledge live application, not durable persistence:
+the existing store remains the sole writer, with unknown-key preservation,
+flat strings, corrupt-file rescue, repeated-key coalescing and quit flush.
+Do not invent saved-success notifications, optimistic rollback or a new store
+result API. Analyze uses its actual write result: the retained draft and saved
+baseline survive pane changes and close/reopen; a delayed result advances only
+the saved revision, without replacing subsequent edits. Ordinary reseeding
+must not overwrite dirty text. Reset and consent are bound to the invoking
+window and canceled when it closes; first enable stays OFF until consent.
+
+Core's atomic theme/language/zoom reads remain shared. Browser initialization
+uses nonpersisting loaded-state inputs; native persistence/discovery APIs are
+not exposed on wasm. The existing layering gate must also prohibit these host
+calls in the shared view on native builds, where Cargo feature unification
+alone cannot enforce isolation. Native adapters preserve menu, terminal and
+all-window live application and reseed external changes.
+
+The #1816 design records the owner-approved sidebar-vs-toolbar and fixed
+category-hue deviations. Preserve ADR-0223 window chrome/lifecycle. Native and
+browser exercise the same controls; browser evidence cannot replace native
+OS, process, persistence or Git safety verification.
+
+The native implementation retains ADR-0223's 715-point fixed width. The owner's
+subsequent compact Settings request explicitly changes initial/content-driven
+height to a 640-point ceiling, retaining the 500-point floor where possible and
+visible-screen clamping, and changes the theme grid to a horizontal chooser.
+Existing frame position/display restoration and storage remain authoritative;
+previous auto-saved tall heights are bounded rather than deleting their keys.
+The original proposed 900×720 figure is a roomy reference, not current native
+geometry. Browser captures do not prove native sizing: native evidence reports
+actual dimensions and high-zoom scroll reachability separately. Widening the
+window is not a substitute for correct viewport or notification containment.
+The shared root takes the flex remainder below fixed host chrome and permits
+height shrinkage. Its actual scroll viewport, all sidebar destinations and
+notification slot must stay inside the host frame; a full-height body below
+the header is not an acceptable substitute for that constraint.
+
+The approved Japanese pane name is `スマートコミット`: this is the localized
+feature name, not a translation of the Git `commit` operation. The terminology
+gate retains the operation rule and recognizes this named-feature exception.
+
+The browser host embeds the same pinned component icon bytes via the asset
+crate's published Cargo build metadata. It must not silently omit symbols or
+depend on CDN timing: fixture-only transport/assets differ, production
+rendering, control semantics and palette data do not.
+
+### Preserve the final experiment's component contract
+
+The owner's quality baseline is PR #1814's final i10 kit and v9 skill
+(`1c6486202fdd28d5c2f600da18baaade645ef5d6`), not the old production Settings.
+The port wires production state and input into those roles; matching the pane
+inventory or a generic HIG checklist does not authorize reconstructing their
+visual vocabulary. `kit_style` owns the original metrics and theme-derived ink;
+`controls` owns grouping/navigation/interaction, `control_parts` owns the used
+switch/segment/capsule/stepper roles, and `popups` uses the existing GPUI menu.
+Pages compose Theme, Layout, Motion and Custom themes instead of drawing parts
+or collecting unrelated preferences in Interface.
+
+Carry forward 40/52-point rows, 10-point groups, non-layout one-pixel hairlines,
+15/13/11.5-point title/body/secondary hierarchy, label-derived equal segments,
+24-point visible controls, capsule geometry and top-lit fixed-hue tiles.
+The original theme card is 144 points wide, with an 88-point palette preview,
+terminal cursor, eight actual ANSI swatches and a centered 11.5-point caption.
+The original small switch is 28×16 with a 12-point knob; the earlier port's
+152-point cards and 32×18 switches were not owner constraints.
+
+Do not restore the experiment's known defects: keyboard focus remains a
+separate gapped, translucent contrast-safe ring; Light selection is white and
+both switch knobs are white. Retain at least 28-point hit targets, selected
+indication under hover, real caption ellipses/full accessible names, Japanese
+wrapping and no nested cards. Disabled controls and popup options remain inert;
+opening or navigating a popup does not emit a preference. Native effect owners,
+consent, persistence and Analyze revision handling are unchanged.
+Visible summaries and full hover/accessibility descriptions remain separate;
+the Analyze input and trailing actions compose one group with a non-layout
+separator. Switch motion respects both the effective system policy and the
+app preference. Equal segment widths use the actual UI font's shaped labels,
+not the experiment's Latin-only character-width estimate.
+
+The requested Light/Dark presentation extends the same theme owner: classify
+with `Theme.dark`, mount two labeled horizontal strips, retain one global theme
+value and one Light-then-Dark roving group, and keep each strip's browsing state
+independent. There are no per-mode defaults, copied gallery or new backend API.
+
+The original 212-point sidebar/32-point rows are not compressed to fit zoom.
+Its outer width has a 55% ceiling and can flex below that ceiling to leave the
+detail's role-derived minimum: a whole numeric unit plus group insets, or a
+144-point theme card plus its full unscaled logical-pixel focus clearance,
+whichever is wider.
+One existing-style vertical scroll handle owns overflow and keyboard reveal.
+Full sidebar names remain accessible and available on hover when truncated.
+This preserves the 715-point host/640-point ceiling; it is not a new minimum
+window policy or a promise about arbitrarily tiny displays.
+
+The [production construction contract](../ui/modern-ui.md#settings-final-kit-construction-contract)
+maps final v9 roles and their rest/hover/pressed/focus/selected/disabled states
+to those owners. Preserve the distilled one-shot composition rules, not a
+second gallery or an image-only reconstruction. Full-width group/text wrappers
+forward natural wrapped sizes; shrink-to-fit trailing controls retain their own
+layout. Text → control → row → group containment and actual ellipsis/tooltip
+paint are consumer gates. A normal segment is one equal-width rail; Japanese
+text may grow its height rather than stacking whole options or clipping.
+Analyze's leading status wraps within the group's inner width, while its
+wrapping action cluster shares the trailing edge.
+
+GPUI `Pixels` are logical window pixels. Focus stroke/gap/clearance do not scale
+with UI zoom, but native backing scale still multiplies them in captured PNGs;
+this unit clarification changes no geometry.
+
+

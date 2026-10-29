@@ -28,20 +28,26 @@
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Mutex;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use gpui::{hsla, rgb, App, Hsla};
 use serde::Serialize;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::settings::{read_setting, write_setting, Settings};
 
 #[cfg(any(test, feature = "gui-e2e"))]
 pub use crate::system_accent::AccentInjection;
 pub use crate::system_accent::{
-    detected_system_accent, follows_system_accent, refresh_system_accent,
-    set_follows_system_accent, SystemAccent,
+    detected_system_accent, follows_system_accent, init_loaded_accent, SystemAccent,
 };
-pub use crate::theme_custom::{themes_dir, ThemeLoadError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::system_accent::{refresh_system_accent, set_follows_system_accent};
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::theme_custom::themes_dir;
+pub use crate::theme_custom::ThemeLoadError;
 
 // Compatibility re-export: font constants historically lived in `theme`.
 pub use crate::fonts::{ui_font, CJK_FONT, MONO_FONT, UI_FONT};
@@ -554,6 +560,7 @@ static REGISTRY: RwLock<Registry> = RwLock::new(Registry {
 static NEXT_CUSTOM_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Load errors from startup, held until the UI can show them.
+#[cfg(not(target_arch = "wasm32"))]
 static STARTUP_ERRORS: Mutex<Vec<ThemeLoadError>> = Mutex::new(Vec::new());
 
 /// [`ACTIVE`] value meaning "a user theme is active; read the registry".
@@ -620,6 +627,7 @@ pub fn theme_by_slug(slug: &str) -> Option<ThemeHandle> {
 /// registry. May perform slow filesystem I/O and JSON parsing; callers with a
 /// live window must run this on a background executor. `Err` when the folder
 /// exists but cannot be listed: keep the themes already installed.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_custom_themes() -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLoadError> {
     match themes_dir() {
         Some(dir) => crate::theme_custom::load_dir(&dir),
@@ -631,6 +639,7 @@ pub fn read_custom_themes() -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLo
 /// The native UI reload uses `read_custom_themes` off-thread and calls
 /// `install_custom_themes` on the foreground after checking its request version.
 /// An unlistable folder installs nothing and is reported like a bad file.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn reload_custom_themes() -> Vec<ThemeLoadError> {
     match read_custom_themes() {
         Ok((themes, errors)) => {
@@ -670,6 +679,7 @@ pub fn install_custom_themes(themes: Vec<Theme>) {
 
 /// Errors from loading user themes at startup ([`init_active`]); returns
 /// them once so the UI can report each file after it is ready.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn take_theme_load_errors() -> Vec<ThemeLoadError> {
     std::mem::take(&mut *STARTUP_ERRORS.lock().unwrap_or_else(|e| e.into_inner()))
 }
@@ -896,8 +906,17 @@ pub fn viewport_w() -> Option<f32> {
     }
 }
 
+/// Initialize host-loaded zoom without reading, migrating, or persisting settings.
+/// Returns the clamped value. Hosts apply `rem_size_px()` to their window.
+pub fn init_loaded_zoom(z: f32) -> f32 {
+    let clamped = clamp_zoom(z);
+    UI_ZOOM_PERMILLE.store((clamped * 1000.0).round() as usize, Ordering::Relaxed);
+    clamped
+}
+
 /// Set the active zoom factor (clamped) and persist it to `settings.json`.
 /// Returns the clamped value that is now active.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_zoom(z: f32) -> f32 {
     let clamped = clamp_zoom(z);
     let permille = (clamped * 1000.0).round() as usize;
@@ -910,6 +929,7 @@ pub fn set_zoom(z: f32) -> f32 {
 /// stored as a permille integer). Convert legacy values and record the scale
 /// version together before reading; missing or unparsable zoom uses 1.0×,
 /// while out-of-range values are clamped.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_zoom() {
     if let Some(permille) = crate::settings::migrate_ui_scale_base() {
         let z = clamp_zoom(permille as f32 / 1000.0);
@@ -931,6 +951,7 @@ pub fn compact_threshold_rem() -> u32 {
 
 /// Set and persist the compact switch width, clamped to the supported range.
 /// Returns the usable whole-rem value that is now active.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_compact_threshold_rem(threshold: u32) -> u32 {
     let threshold = threshold.clamp(
         kagi_domain::compact::MIN_THRESHOLD_REM,
@@ -943,6 +964,7 @@ pub fn set_compact_threshold_rem(threshold: u32) -> u32 {
 
 /// Restore the compact switch width once at startup. Invalid or missing saved
 /// values use the default without rewriting the user's settings document.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_compact_threshold_rem() {
     COMPACT_THRESHOLD_REM.store(Settings::load().compact_threshold_rem(), Ordering::Relaxed);
     klog!("compact_threshold_rem: {}", compact_threshold_rem());
@@ -955,11 +977,13 @@ pub fn init_compact_threshold_rem() {
 /// Persist one commit-list column width (logical px, rounded) to `settings.json`.
 /// `key` is `"badge_col_w"` or `"graph_col_w"`. Called from the resize-drag
 /// handler; the final drag move writes the final value (settings.json is tiny).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_col_width(key: &str, w: f32) {
     write_setting(key, Some(&format!("{}", w.round() as i64)));
 }
 
 /// Read a persisted column width (logical px) from `settings.json`, if present.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_col_width(key: &str) -> Option<f32> {
     read_setting(key).and_then(|s| s.trim().parse::<f32>().ok())
 }
@@ -983,6 +1007,7 @@ pub fn compact_graph() -> bool {
 }
 
 /// Set + persist the compact-graph flag to `settings.json` (key `graph_compact`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_compact_graph(on: bool) {
     GRAPH_COMPACT.store(on, Ordering::Relaxed);
     write_setting("graph_compact", Some(if on { "true" } else { "false" }));
@@ -990,6 +1015,7 @@ pub fn set_compact_graph(on: bool) {
 
 /// Initialise the compact-graph flag at startup from `settings.json`
 /// (`"graph_compact"`, `"true"`/`"false"`). Missing/invalid → off.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_compact_graph() {
     if let Some(on) = Settings::load().graph_compact() {
         GRAPH_COMPACT.store(on, Ordering::Relaxed);
@@ -1011,6 +1037,7 @@ pub fn diff_split() -> bool {
 }
 
 /// Set + persist the split-diff flag to `settings.json` (key `diff_split`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_diff_split(on: bool) {
     DIFF_SPLIT.store(on, Ordering::Relaxed);
     write_setting("diff_split", Some(if on { "true" } else { "false" }));
@@ -1018,6 +1045,7 @@ pub fn set_diff_split(on: bool) {
 
 /// Initialise the split-diff flag at startup from `settings.json`
 /// (`"diff_split"`, `"true"`/`"false"`). Missing/invalid → off (unified).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_diff_split() {
     if let Some(on) = Settings::load().diff_split() {
         DIFF_SPLIT.store(on, Ordering::Relaxed);
@@ -1044,6 +1072,7 @@ pub fn graph_lane_compact() -> bool {
 
 /// Set + persist the swimlane-visuals flag to `settings.json`
 /// (key `graph_lane_compact`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_graph_lane_compact(on: bool) {
     GRAPH_LANE_COMPACT.store(on, Ordering::Relaxed);
     write_setting(
@@ -1053,6 +1082,7 @@ pub fn set_graph_lane_compact(on: bool) {
 }
 
 /// Initialise the swimlane-visuals flag at startup from `settings.json`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_graph_lane_compact() {
     if let Some(on) = Settings::load().graph_lane_compact() {
         GRAPH_LANE_COMPACT.store(on, Ordering::Relaxed);
@@ -1071,6 +1101,7 @@ pub fn auto_fetch() -> bool {
 }
 
 /// Set + persist the auto-fetch flag to `settings.json` (key `auto_fetch`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_auto_fetch(on: bool) {
     AUTO_FETCH.store(on, Ordering::Relaxed);
     write_setting("auto_fetch", Some(if on { "true" } else { "false" }));
@@ -1078,6 +1109,7 @@ pub fn set_auto_fetch(on: bool) {
 
 /// Initialise the auto-fetch flag at startup from `settings.json`
 /// (`"auto_fetch"`). Missing → on; only an explicit `"false"` disables it.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_auto_fetch() {
     if let Some(on) = Settings::load().auto_fetch() {
         AUTO_FETCH.store(on, Ordering::Relaxed);
@@ -1114,6 +1146,7 @@ pub fn pr_card_opaque_bg() -> u32 {
 }
 
 /// Set + persist the reduce-motion flag to `settings.json` (key `reduce_motion`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_reduce_motion(on: bool) {
     REDUCE_MOTION.store(on, Ordering::Relaxed);
     write_setting("reduce_motion", Some(if on { "true" } else { "false" }));
@@ -1121,6 +1154,7 @@ pub fn set_reduce_motion(on: bool) {
 
 /// Initialise the reduce-motion flag at startup from `settings.json`
 /// (`"reduce_motion"`). Missing → off; only an explicit `"true"` enables it.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_reduce_motion() {
     REDUCE_MOTION.store(Settings::load().reduce_motion(), Ordering::Relaxed);
     klog!("reduce_motion: {}", reduce_motion());
@@ -1156,8 +1190,21 @@ fn legacy_slug_alias(slug: &str) -> &str {
 #[cfg(test)]
 pub(crate) static ACTIVE_THEME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Initialize host-loaded theme selection in the existing registry, without I/O.
+/// Unknown slugs leave the current selection unchanged and return `false`.
+/// The host synchronizes the component theme after selecting successfully.
+pub fn init_loaded_active(slug: &str) -> bool {
+    let mut reg = registry_mut();
+    let Some(next) = reg.find(slug) else {
+        return false;
+    };
+    reg.activate(next);
+    true
+}
+
 /// Set the active theme (built-in or user) by slug and persist the slug to
 /// `settings.json`. Returns `true` if the slug was recognised.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_active(slug: &str) -> bool {
     let mut reg = registry_mut();
     let Some(next) = reg.find(slug) else {
@@ -1174,11 +1221,13 @@ pub fn set_active(slug: &str) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Read the persisted theme slug from `settings.json`, if present and valid.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_settings_slug() -> Option<String> {
     Settings::load().theme()
 }
 
 /// Persist the theme slug to `settings.json` (preserving other keys).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save_settings(slug: &str) {
     write_setting("theme", Some(slug));
 }
@@ -1189,6 +1238,7 @@ pub fn save_settings(slug: &str) {
 /// [`take_theme_load_errors`]), then resolves `KAGI_THEME` env override →
 /// persisted `settings.json` → default (Catppuccin Mocha) against the full
 /// list.  Logs `[kagi] theme: <slug> dark=<bool>`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_active() {
     crate::system_accent::init();
     let errors = reload_custom_themes();

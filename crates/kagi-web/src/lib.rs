@@ -1,11 +1,14 @@
 //! kagi-web — browser (WASM) harness for UI e2e tests.
 //!
-//! Renders a catalog of kagi UI pieces with gpui_web so Playwright can drive
-//! layout regressions (e.g. the pane-resize wrap jitter) in CI without a
-//! display server. git2 cannot compile to WASM, so only pure-domain-driven
-//! UI belongs here — never `kagi::git`.
+//! Mounts production portable views and focused pure-domain layout stories with
+//! gpui_web so Playwright drives their real input handlers without a native
+//! display server. Native effects are supplied only by explicit fixture adapters.
 
 use gpui::{div, prelude::*, px, rems, rgb, SharedString, Window};
+#[cfg(target_family = "wasm")]
+mod assets;
+#[cfg(target_family = "wasm")]
+mod settings_fixture;
 
 /// Catalog root: one story per known layout-regression class.
 /// Add a story when a UI bug is fixed so the e2e suite guards it.
@@ -102,12 +105,12 @@ mod web {
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
-    pub fn run() -> Result<(), JsValue> {
+    pub fn run(story: Option<String>) -> Result<(), JsValue> {
         console_error_panic_hook::set_once();
         let _ = console_log::init_with_level(log::Level::Info);
 
         gpui_platform::web_init();
-        let app = gpui_platform::single_threaded_web();
+        let app = gpui_platform::single_threaded_web().with_assets(assets::Assets);
         // Keep the app alive for the page's lifetime (same workaround as
         // upstream story-web): leak the Rc so drop never runs.
         let app = {
@@ -118,7 +121,7 @@ mod web {
             unsafe { std::mem::transmute::<WasmApplication, gpui::Application>(wasm_app) }
         };
 
-        app.run(|cx: &mut gpui::App| {
+        app.run(move |cx: &mut gpui::App| {
             // Browsers have no system fonts we can rely on — embed Inter
             // (same OFL files the native app bundles).
             if let Err(e) = cx.text_system().add_fonts(vec![
@@ -128,12 +131,39 @@ mod web {
                 std::borrow::Cow::Borrowed(
                     include_bytes!("../../../assets/fonts/Inter-Bold.ttf").as_slice(),
                 ),
+                std::borrow::Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/NotoSansJP-Regular.ttf").as_slice(),
+                ),
+                std::borrow::Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/NotoSansJP-Bold.ttf").as_slice(),
+                ),
             ]) {
                 log::warn!("add_fonts failed: {e}");
             }
-            cx.open_window(gpui::WindowOptions::default(), |_, cx| cx.new(|_| Catalog))
-                .expect("open window");
+            gpui_component::init(cx);
+            kagi_ui_core::keyboard_nav::bind_keys(cx);
+            if story.as_deref() == Some("settings") {
+                cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+                    let view = cx.new(|cx| settings_fixture::SettingsFixture::new(window, cx));
+                    cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                })
+                .expect("open Settings verification window");
+            } else {
+                cx.open_window(gpui::WindowOptions::default(), |_, cx| cx.new(|_| Catalog))
+                    .expect("open window");
+            }
         });
         Ok(())
+    }
+
+    #[wasm_bindgen]
+    pub fn settings_observed() -> String {
+        settings_fixture::observed()
+    }
+
+    #[wasm_bindgen]
+    pub fn settings_command(command: &str, value: Option<String>) -> Result<(), JsValue> {
+        settings_fixture::command(command, value.as_deref())
+            .map_err(|error| JsValue::from_str(&error))
     }
 }

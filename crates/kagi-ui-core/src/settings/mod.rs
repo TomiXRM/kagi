@@ -33,18 +33,27 @@
 //! collapsed into one file write; every other write still lands immediately.
 
 mod main_window_frame;
+#[cfg(not(target_arch = "wasm32"))]
 mod store;
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod store_env_tests;
 mod terminal_autolock;
 mod window_frame;
 
-pub use main_window_frame::{main_window_frame, write_main_window_frame, MainWindowFrame};
+pub use main_window_frame::MainWindowFrame;
+#[cfg(not(target_arch = "wasm32"))]
+pub use main_window_frame::{main_window_frame, write_main_window_frame};
+#[cfg(not(target_arch = "wasm32"))]
 pub use store::flush;
-pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
-pub use window_frame::{settings_window_frame, write_settings_window_frame, SettingsWindowFrame};
+pub use terminal_autolock::terminal_auto_lock;
+#[cfg(not(target_arch = "wasm32"))]
+pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock};
+pub use window_frame::SettingsWindowFrame;
+#[cfg(not(target_arch = "wasm32"))]
+pub use window_frame::{settings_window_frame, write_settings_window_frame};
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 use kagi_domain::compact::{DEFAULT_THRESHOLD_REM, MAX_THRESHOLD_REM, MIN_THRESHOLD_REM};
@@ -67,6 +76,7 @@ impl ToolbarDisplay {
 
 static TOOLBAR_DISPLAY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_toolbar_display() {
     let mode = Settings::load().toolbar_display();
     TOOLBAR_DISPLAY.store(
@@ -94,6 +104,7 @@ pub fn toolbar_display(theme_slug: &str) -> ToolbarDisplay {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_toolbar_display(mode: ToolbarDisplay) {
     write_setting("toolbar_display", Some(mode.as_str()));
     TOOLBAR_DISPLAY.store(
@@ -214,6 +225,7 @@ impl Settings {
     /// yields `Settings::default()` (empty); an *unparsable* one also reads as
     /// empty, but the original is kept on disk and moved aside rather than
     /// overwritten.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load() -> Self {
         Self {
             raw: store::snapshot(),
@@ -492,6 +504,7 @@ fp-info-cache
 ";
 
 /// Path to the `analyze_ignore` file (sibling of `settings.json`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_ignore_path() -> Option<PathBuf> {
     Some(settings_path()?.with_file_name("analyze_ignore"))
 }
@@ -499,6 +512,7 @@ pub fn analyze_ignore_path() -> Option<PathBuf> {
 /// Read the full text of the `analyze_ignore` file, seeding it with
 /// [`DEFAULT_ANALYZE_IGNORE`] on first run so the user has an editable,
 /// documented starting point.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_analyze_ignore_text() -> String {
     let Some(path) = analyze_ignore_path() else {
         return DEFAULT_ANALYZE_IGNORE.to_string();
@@ -515,6 +529,7 @@ pub fn read_analyze_ignore_text() -> String {
 }
 
 /// Persist Analyze ignore text through its settings owner, returning the OS cause.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_analyze_ignore(content: &str) -> std::io::Result<()> {
     let path = analyze_ignore_path().ok_or_else(|| {
         std::io::Error::new(
@@ -526,6 +541,7 @@ pub fn write_analyze_ignore(content: &str) -> std::io::Result<()> {
         .map_err(|error| std::io::Error::new(error.kind(), format!("{}: {error}", path.display())))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_analyze_ignore_at(path: &std::path::Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -535,6 +551,7 @@ fn write_analyze_ignore_at(path: &std::path::Path, content: &str) -> std::io::Re
 
 /// The Analyze exclude patterns (gitignore syntax, one per line) — comments /
 /// blanks included (the matcher ignores them).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_ignore_patterns() -> Vec<String> {
     read_analyze_ignore_text()
         .lines()
@@ -545,6 +562,7 @@ pub fn analyze_ignore_patterns() -> Vec<String> {
 /// Resolve the path to `settings.json` (`$KAGI_LOG_DIR/settings.json` first,
 /// then `$HOME/.kagi/settings.json`).  Returns `None` if no directory can be
 /// determined.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn settings_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("KAGI_LOG_DIR") {
         if !dir.is_empty() {
@@ -559,6 +577,7 @@ pub fn settings_path() -> Option<PathBuf> {
 }
 
 /// Read a single string-valued setting from `settings.json`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_setting(key: &str) -> Option<String> {
     store::read(key)
 }
@@ -566,6 +585,7 @@ pub fn read_setting(key: &str) -> Option<String> {
 /// Persist (or remove with `value = None`) one string-valued setting in
 /// `settings.json`, **preserving every other key** — including ones this build
 /// doesn't know about. Best-effort; failures are logged but non-fatal.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_setting(key: &str, value: Option<&str>) {
     store::write(key, value);
 }
@@ -573,6 +593,7 @@ pub fn write_setting(key: &str, value: Option<&str>) {
 /// Migrate saved zoom from the previous 90%-sized UI base to the new base.
 /// Returns the current saved permille when it parses, or `None` when absent
 /// or malformed. The store persists the zoom and version marker atomically.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn migrate_ui_scale_base() -> Option<u32> {
     store::migrate_ui_scale_base()
 }

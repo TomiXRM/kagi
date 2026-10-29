@@ -198,7 +198,6 @@ thread_local! {
     static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
     static EDITOR_DIFF_SEEDS: RefCell<std::collections::HashMap<gpui::EntityId, u64>> = RefCell::new(Default::default());
     static BUSY_ADVICE: RefCell<Option<String>> = const { RefCell::new(None) };
-    static SETTINGS_ZOOM_LABEL: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -366,14 +365,6 @@ pub(crate) fn record_busy_advice(text: &str) {
 #[cfg(feature = "gui-e2e")]
 pub fn take_busy_advice() -> Option<String> {
     BUSY_ADVICE.with(|slot| slot.borrow_mut().take())
-}
-#[cfg(feature = "gui-e2e")]
-pub(crate) fn record_settings_zoom_label(label: &str) {
-    SETTINGS_ZOOM_LABEL.with(|slot| *slot.borrow_mut() = Some(label.to_owned()));
-}
-#[cfg(feature = "gui-e2e")]
-pub fn settings_zoom_label() -> Option<String> {
-    SETTINGS_ZOOM_LABEL.with(|slot| slot.borrow().clone())
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_tab_load_commit_limit(session: crate::app::SessionId, limit: usize) {
@@ -865,6 +856,7 @@ pub fn build_kagi_entity(
             }
             if window.is_window_active() && theme::refresh_system_accent() {
                 theme::sync_gpui_component_theme(cx);
+                app.seed_settings(cx);
                 cx.refresh_windows();
                 cx.notify();
             }
@@ -883,7 +875,7 @@ pub fn build_kagi_entity(
             })
             .unwrap_or(true)
     });
-    super::theme_select::install(&kagi, window, cx);
+    super::settings_themes::install(&kagi, window, cx);
     if let Some(fh) = kagi.read(cx).root_focus.clone() {
         window.focus(&fh, cx);
     }
@@ -1257,13 +1249,6 @@ pub fn smart_model_row(
         state.scroll.bounds_for_item(*ix)?,
         state.scroll.viewport_bounds(),
     ))
-}
-
-/// What the last drawn frame named the switch `id` (`keyboard_nav::switch`)
-/// and the checked state it gave assistive technology (#970).
-#[cfg(feature = "gui-e2e")]
-pub fn recorded_switch(id: &str) -> Option<(String, bool)> {
-    super::keyboard_nav::recorded_switch(id)
 }
 
 /// Fetch the avatars of Home's review-request authors now, as a landed read

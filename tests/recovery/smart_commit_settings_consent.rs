@@ -12,6 +12,7 @@ const MODEL: &str = "smart_commit_model";
 const MODEL_NAME: &str = "consent-fixture-model";
 
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    e2e::clear_control_bounds(window.window_id(), "settings-smart-consent-alert");
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -22,65 +23,23 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 
 fn settle(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     for _ in 0..4 {
-        // The pinned Switch retains its keyed state until its 150ms thumb
-        // animation timer settles; finish it before closing/remounting hosts.
+        // Settle host presentation before closing or remounting its window.
         cx.advance_clock(std::time::Duration::from_millis(200));
         drain_native_events();
         draw(cx, window);
     }
 }
 
-fn settings_body(window: AnyWindowHandle) -> gpui::Bounds<gpui::Pixels> {
-    e2e::control_bounds(window.window_id(), "settings-window-scrollbar")
-        .or_else(|| e2e::control_bounds(window.window_id(), "settings-scrollbar"))
-        .expect("the actual Settings host's scroll viewport")
+fn settings_body(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+) -> gpui::Bounds<gpui::Pixels> {
+    crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
+        .expect("the production Settings detail viewport")
 }
 
 fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
-    draw(cx, window);
-    let mut bounds = e2e::control_bounds(window.window_id(), id)
-        .unwrap_or_else(|| panic!("production control {id} is drawn"));
-    let viewport = cx
-        .update_window(window, |_, window, _| window.viewport_size())
-        .unwrap();
-    // Settings is a scrolling form. Reveal pointer targets with real wheel
-    // input instead of relying on a fixture-written offset surviving Tab.
-    if id == "smart-commit-enabled-key" || id.starts_with("sc-model-") {
-        let body = settings_body(window);
-        for _ in 0..20 {
-            if bounds.top() >= body.top() && bounds.bottom() <= body.bottom() {
-                break;
-            }
-            cx.simulate_event(
-                window,
-                gpui::ScrollWheelEvent {
-                    position: body.center(),
-                    delta: gpui::ScrollDelta::Pixels(gpui::point(
-                        gpui::px(0.),
-                        gpui::px(if bounds.top() < body.top() {
-                            300.
-                        } else {
-                            -300.
-                        }),
-                    )),
-                    touch_phase: gpui::TouchPhase::Moved,
-                    ..Default::default()
-                },
-            );
-            settle(cx, window);
-            bounds = e2e::control_bounds(window.window_id(), id).unwrap();
-        }
-        crate::recovery_layout::contained(
-            body,
-            bounds,
-            "Settings pointer target is inside its scroll body",
-        );
-    }
-    assert!(
-        bounds.top() >= gpui::px(0.) && bounds.bottom() <= viewport.height,
-        "{id} is reachable in its actual host viewport: {bounds:?}"
-    );
-    cx.simulate_click(window, bounds.center(), Modifiers::none());
+    crate::settings_controls::click(cx, window, id);
     cx.run_until_parked();
     settle(cx, window);
 }
@@ -90,7 +49,7 @@ fn fresh_settings() {
         settings::write_setting(key, None);
     }
     settings::write_setting("smart_commit_provider", Some("ollama"));
-    settings::write_setting("settings_pane", Some("2"));
+    settings::write_setting("settings_pane", Some("smart_commit"));
 }
 
 fn open_settings(
@@ -112,17 +71,14 @@ fn open_settings(
         root
     };
     settle(cx, host);
-    // The native host restores pane 2; the portable host may begin at General.
-    if e2e::control_bounds(host.window_id(), "settings-pane-2").is_some() {
-        click(cx, host, "settings-pane-2");
-    }
-    assert!(e2e::control_bounds(host.window_id(), "settings-smart-heading").is_some());
+    click(cx, host, "settings-pane-smart_commit");
+    assert!(crate::settings_controls::probe(cx, host, "sc-enabled-toggle").is_some());
     host
 }
 
 fn switch_on(
     cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
+    _app: &Entity<KagiApp>,
     host: AnyWindowHandle,
     space: bool,
 ) {
@@ -132,11 +88,8 @@ fn switch_on(
         for _ in 0..80 {
             keys(cx, host, "tab");
             draw(cx, host);
-            reached = cx
-                .update_window(host, |_, window, cx| {
-                    app.read(cx).settings_switch_focused_for_e2e(window) == Some(5)
-                })
-                .unwrap();
+            reached = crate::settings_controls::probe(cx, host, "sc-enabled-toggle")
+                .is_some_and(|probe| probe.focused);
             if reached {
                 break;
             }
@@ -144,24 +97,25 @@ fn switch_on(
         assert!(reached, "real Tab reaches the Smart Commit switch");
         settle(cx, host);
         crate::recovery_layout::contained(
-            settings_body(host),
-            e2e::control_bounds(host.window_id(), "smart-commit-enabled-key").unwrap(),
+            settings_body(cx, host),
+            crate::settings_controls::bounds(cx, host, "sc-enabled-toggle").unwrap(),
             "real Tab reveals the focused Smart switch before consent activation",
         );
         keys(cx, host, "space");
         settle(cx, host);
     } else {
-        click(cx, host, "smart-commit-enabled-key");
+        click(cx, host, "sc-enabled-toggle");
     }
 }
 
 fn assert_switch(cx: &mut VisualTestAppContext, host: AnyWindowHandle, expected: bool) {
     draw(cx, host);
-    let (label, checked) =
-        e2e::recorded_switch("smart-commit-enabled").expect("production Switch AX input");
-    assert_eq!(label, i18n::Msg::SettingsSmartEnable.t());
+    let control = crate::settings_controls::probe(cx, host, "sc-enabled-toggle")
+        .expect("production switch AX input");
+    assert_eq!(control.role, gpui::Role::Switch);
+    assert_eq!(control.name, i18n::Msg::SettingsSmartEnable.t());
     assert_eq!(
-        checked, expected,
+        control.selected, expected,
         "switch remains OFF until explicit consent"
     );
 }
@@ -240,12 +194,10 @@ fn assert_declined(
     assert!(cx.read(|cx| app.read(cx).smart_commit_modal().is_none()));
     assert_switch(cx, host, false);
     assert_no_post(server);
-    assert_eq!(
-        cx.update_window(host, |_, window, cx| {
-            app.read(cx).settings_switch_focused_for_e2e(window)
-        })
-        .unwrap(),
-        Some(5),
+    assert!(
+        crate::settings_controls::probe(cx, host, "sc-enabled-toggle")
+            .unwrap()
+            .focused,
         "decline returns focus to the owning Settings switch"
     );
 }
@@ -308,6 +260,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     };
     assert_eq!(cx.read(|cx| app.read(cx).tabs.is_empty()), home);
     let mut host = open_settings(cx, root, native);
+    let retained = cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id());
     assert_switch(cx, host, false);
 
     switch_on(cx, &app, host, space);
@@ -340,6 +293,14 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     assert_no_post(&server);
     host = open_settings(cx, root, native);
     assert_switch(cx, host, false);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()),
+        retained
+    );
+    assert!(
+        e2e::control_bounds(host.window_id(), "settings-smart-consent-alert").is_none(),
+        "reopening retains the view but never resurrects the closed host's consent"
+    );
 
     switch_on(cx, &app, host, space);
     assert_pending(cx, &app, host, &server);
@@ -357,12 +318,10 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     );
     assert_switch(cx, host, true);
     assert_no_post(&server);
-    assert_eq!(
-        cx.update_window(host, |_, window, cx| app
-            .read(cx)
-            .settings_switch_focused_for_e2e(window))
-            .unwrap(),
-        Some(5),
+    assert!(
+        crate::settings_controls::probe(cx, host, "sc-enabled-toggle")
+            .unwrap()
+            .focused,
         "Confirm restores Settings focus"
     );
 
@@ -391,7 +350,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     assert!(cx.read(|cx| app.read(cx).smart_commit.llm_enabled));
     let host = open_settings(cx, root, native);
     assert_switch(cx, host, true);
-    click(cx, host, "smart-commit-enabled-key");
+    click(cx, host, "sc-enabled-toggle");
     assert_switch(cx, host, false);
     assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("0"));
     assert_eq!(
@@ -511,6 +470,124 @@ fn generate_leg(cx: &mut VisualTestAppContext, legacy_enabled: bool) {
     unmount(cx, app, root);
 }
 
+/// Generate is a repository command, but its consent and enable effects must
+/// reseed the already-open nonmodal Settings view without reopening the host.
+fn native_external_generate_sync(cx: &mut VisualTestAppContext) {
+    let _host = SettingsHostGuard::native(cx);
+    fresh_settings();
+    let server = Ollama::new(&[MODEL_NAME.to_string()]);
+    let fixture = build_fixture();
+    std::fs::write(
+        fixture.path().join("consent.txt"),
+        "staged external Generate fixture\n",
+    )
+    .unwrap();
+    git(fixture.path(), &["add", "consent.txt"]);
+    let (app, root) = mount(cx, fixture.path());
+    open_panel(cx, &app, root);
+    let host = open_settings(cx, root, true);
+    let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .smart_commit
+            .detected_models
+            .iter()
+            .any(|model| model == MODEL_NAME)),
+        "real fixture discovery supplies the model picker"
+    );
+    let request = |cx: &mut VisualTestAppContext| {
+        // This is the existing external Generate entry point, not an enable
+        // setter or a Settings event injected by the test.
+        cx.update_window(root, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.smart_generate(app.active_session().unwrap(), window, cx);
+            });
+        })
+        .unwrap();
+        settle(cx, root);
+        settle(cx, host);
+    };
+    assert_switch(cx, host, false);
+    assert!(!cx.read(|cx| view.read(cx).snapshot().smart_enabled));
+    request(cx);
+    assert!(cx.read(|cx| matches!(
+        app.read(cx).smart_commit_modal(),
+        Some(smart_commit::SmartCommitModal::Consent)
+    )));
+    assert_lines(cx, root);
+    assert_switch(cx, host, false);
+    assert!(!cx.read(|cx| view.read(cx).snapshot().smart_enabled));
+    assert!(!cx.read(|cx| view.read(cx).snapshot().smart_consent_accepted));
+    assert_eq!(settings::read_setting(ENABLED), None);
+    assert_eq!(settings::read_setting(CONSENT), None);
+    assert_no_post(&server);
+    click(cx, root, "smart-consent-cancel");
+    assert_switch(cx, host, false);
+    assert!(!cx.read(|cx| view.read(cx).snapshot().smart_enabled));
+    assert_eq!(settings::read_setting(CONSENT), None);
+
+    request(cx);
+    assert_switch(cx, host, false);
+    click(cx, root, "smart-consent-confirm");
+    settle(cx, host);
+    assert_switch(cx, host, true);
+    assert!(cx.read(|cx| view.read(cx).snapshot().smart_enabled));
+    assert!(cx.read(|cx| view.read(cx).snapshot().smart_consent_accepted));
+    assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("1"));
+    assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("1"));
+    assert_eq!(
+        settings::read_setting(MODEL),
+        None,
+        "external consent cannot auto-select the only available model"
+    );
+    assert!(cx.read(|cx| matches!(
+        app.read(cx).smart_commit_modal(),
+        Some(smart_commit::SmartCommitModal::ModelPicker { .. })
+    )));
+    assert_no_post(&server);
+    keys(cx, root, "escape");
+    settle(cx, root);
+
+    click(cx, host, "sc-enabled-toggle");
+    assert_switch(cx, host, false);
+    assert!(!cx.read(|cx| view.read(cx).snapshot().smart_enabled));
+    assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("0"));
+    assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("1"));
+    request(cx);
+    assert_switch(cx, host, true);
+    assert!(
+        cx.read(|cx| view.read(cx).snapshot().smart_enabled),
+        "external Generate reseeds the retained Settings snapshot after OFF"
+    );
+    assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("1"));
+    assert!(
+        cx.read(|cx| matches!(
+            app.read(cx).smart_commit_modal(),
+            Some(smart_commit::SmartCommitModal::ModelPicker { .. })
+        )),
+        "accepted re-enable reaches model selection without a second consent"
+    );
+    assert_eq!(settings::read_setting(MODEL), None);
+    assert_no_post(&server);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()),
+        view.entity_id()
+    );
+    assert!(
+        cx.read(|cx| cx
+            .windows()
+            .iter()
+            .any(|window| window.window_id() == host.window_id())),
+        "the same nonmodal Settings window remains open throughout external effects"
+    );
+    keys(cx, root, "escape");
+    settle(cx, root);
+    close_settings(cx, &app, root, host, true);
+    drop(view);
+    unmount(cx, app, root);
+}
+
 fn native_preserves_plan(cx: &mut VisualTestAppContext) {
     let _host = SettingsHostGuard::native(cx);
     fresh_settings();
@@ -589,6 +666,7 @@ pub fn scenario_smart_commit_settings_consent(cx: &mut VisualTestAppContext) {
         generate_leg(cx, false);
         generate_leg(cx, true);
         native_preserves_plan(cx);
+        native_external_generate_sync(cx);
     }
     eprintln!("[gui-e2e] PASS smart_commit_settings_consent");
 }

@@ -516,6 +516,8 @@ RULES: tuple[Rule, ...] = (
         summary="JA localization keeps Git domain terms in English (ADR-0048 / #1465)",
         pattern="|".join(
             {
+                # Owner-approved feature name (#1816), not the Git commit verb.
+                "コミット": r"(?<!スマート)コミット",
                 "マージ": r"マージ(?!ン)",
                 "ステージ": r"ステージ(?!マネージャ)",
                 "リモート": r"リモート(?!デスクトップ)",
@@ -540,6 +542,7 @@ RULES: tuple[Rule, ...] = (
                 )
             ),
             'Lang::Ja => {\n let label = "commit";\n format!("{} をコミット", label)\n}',
+            '(Ja, Action) => "スマートコミット後にコミットする",',
             'Lang::Ja => match state { Some(_) => "ブランチ", None => "なし" },',
             'fn note_ja(note: &Note) -> String {\n format!("未コミット: {}", note)\n}',
             'fn note_ja_any(note: &Note) -> String { format!("作業ツリー: {}", note) }',
@@ -600,6 +603,7 @@ RULES: tuple[Rule, ...] = (
             'Lang::Ja => "ステージマネージャ",',
             'Lang::Ja => "プルダウン",',
             'Lang::Ja => "リモートデスクトップ",',
+            '(Ja, SettingsPaneSmartCommit) => "スマートコミット",',
             'Lang::Ja => "既存の ref `{}` と名前空間が競合しています。",',
             'fn name_error_ja() -> String { "ref namespace が競合しています".into() }',
             'const ADVICE_NAME: &str = "ref の名前空間が競合しています";',
@@ -841,6 +845,95 @@ RULES: tuple[Rule, ...] = (
         message="kagi-ui-* crates must not depend on git2 or kagi-git (ADR-0121).",
         samples=("use kagi_git::Backend;",),
         samples_ok=("/// libgit2 does this differently; see the git2 token doc.\n",),
+    ),
+    Rule(
+        name="ui-settings-host-boundary",
+        summary="shared Settings renders host snapshots without native effects (#1816)",
+        # Scan every cfg branch: native feature unification must not expose a
+        # back door. Match forbidden imported symbols too, before aliasing can
+        # hide a call; reject core glob imports at this narrow boundary.
+        pattern=(
+            r"\b(?:std|tokio|async_std)\s*::\s*(?:fs|io|process|net|env|os)\b"
+            r"|\b(?:fs|process|env|git2|kagi_git|theme_custom|system_accent|store)\s*::"
+            r"|\b(?:theme_custom|system_accent|pr_viewed)\b"
+            r"|\.\s*(?:exists|try_exists|is_file|is_dir|read_dir|read_link"
+            r"|canonicalize|metadata|symlink_metadata)\s*\("
+            r"|\b(?:File|OpenOptions|Command|Repository)\s*::"
+            r"|\buse\b[^;]*\b(?:fs|io|process|net|env|os)\b"
+            r"|\buse\b[^;]*\b(?:kagi_ui_core|theme|i18n|settings)\b[^;]*\*"
+            r"|\b(?:extern\s+crate\s+(?:git2|kagi_git)|Settings\s*::\s*load)\b"
+            r"|\bSettings\s+as\b"
+            r"|\bsettings\s*::\s*(?:read|write|flush|store)\b"
+            r"|\buse\b[^;]*\bsettings\b[^;]*\b(?:read|write|flush|store)\b"
+            r"|\b(?:read_setting|write_setting|settings_path|analyze_ignore_path"
+            r"|read_analyze_ignore_text|write_analyze_ignore|migrate_ui_scale_base"
+            r"|main_window_frame|write_main_window_frame"
+            r"|settings_window_frame|write_settings_window_frame"
+            r"|read_custom_themes|themes_dir|read_col_width"
+            r"|reload_custom_themes|install_custom_themes|take_theme_load_errors"
+            r"|init_active|init_loaded_active|init_loaded_zoom|init_loaded_accent"
+            r"|set_zoom|set_active|set_lang|set_lang_no_persist|resolve_lang"
+            r"|set_compact_threshold_rem|set_col_width|set_compact_graph"
+            r"|set_diff_split|set_graph_lane_compact|set_auto_fetch|set_reduce_motion"
+            r"|set_toolbar_display|set_terminal_auto_lock|set_follows_system_accent"
+            r"|refresh_system_accent|detected_system_accent"
+            r"|init_zoom|init_lang|init_compact_threshold_rem|init_compact_graph"
+            r"|init_diff_split|init_graph_lane_compact|init_auto_fetch"
+            r"|init_reduce_motion|init_toolbar_display|init_terminal_auto_lock)\b"
+        ),
+        globs=("crates/kagi-ui-settings/**/*.rs",),
+        message=(
+            "Shared Settings may only read presentation state and emit typed intents; "
+            "storage, discovery and application/persistence belong to the host (ADR-0121)."
+        ),
+        select_source=lambda text: _rust_literal_spans(text)[0],
+        samples=(
+            'std::fs::read("settings.json");',
+            "use std::{fs as disk};",
+            "use std::process::Command as Child;",
+            "use kagi_ui_core::theme_custom as custom; custom::load_dir(path);",
+            "use kagi_ui_core::pr_viewed as viewed; viewed::load(repo, number);",
+            "path.exists();",
+            "use kagi_ui_core::settings::{flush as save};",
+            "Command::new(program).spawn();",
+            "git2::Repository::open(path);",
+            "kagi_git::Backend::new();",
+            "theme::set_zoom(1.0);",
+            "theme::set_active(slug);",
+            "i18n::set_lang(Lang::En);",
+            "use kagi_ui_core::theme::{set_zoom as apply};",
+            "use kagi_ui_core::{theme as palette}; palette::set_active(slug);",
+            "use kagi_ui_core::theme::*;",
+            "settings::read(key);",
+            "settings::write(key, value);",
+            "settings::read_setting(key);",
+            "settings::write_setting(key, value);",
+            "settings::flush();",
+            "Settings::load();",
+            "use kagi_ui_core::settings::Settings as Preferences;",
+            "theme::read_custom_themes();",
+            "theme::themes_dir();",
+            "theme::refresh_system_accent();",
+            "theme_custom::load_dir(path);",
+            "theme::reload_custom_themes();",
+            "theme::install_custom_themes(themes);",
+            "theme::init_loaded_active(slug);",
+            "theme::init_loaded_zoom(1000);",
+            "theme::init_loaded_accent(true);",
+            "i18n::set_lang_no_persist(Lang::En);",
+            '#[cfg(not(target_family = "wasm"))]\nfn native() { theme::init_zoom(); }',
+        ),
+        samples_ok=(
+            "use gpui::prelude::*; use gpui_component::*;",
+            "use kagi_ui_core::{i18n, theme, keyboard_nav};",
+            "use kagi_ui_core::theme::{theme, scaled_px};",
+            "theme(); scaled_px(12.0); i18n::lang();",
+            "theme::theme(); theme::scaled_px(12.0);",
+            "use kagi_ui_core::settings::{ToolbarDisplay, MarkdownDefaultView};",
+            "let mode = ToolbarDisplay::IconOnly;",
+            "// Host calls theme::set_zoom; shared renderer emits an intent.\n",
+            'let help = "Settings::load() belongs to the native host";',
+        ),
     ),
     Rule(
         name="plan-verbatim",
@@ -1138,20 +1231,58 @@ class ManifestRule:
     # this map and never against the live root manifest, so a sample means the
     # same thing in every checkout — `hits()` still reads the real table.
     sample_aliases: tuple[tuple[str, str], ...] = ()
+    # A closed dependency surface is stronger than an ever-growing denylist.
+    allowed: tuple[str, ...] | None = None
+
+    def dependency_hits(
+        self, text: str, aliases: dict[str, str] | None = None
+    ) -> list[tuple[str, str]]:
+        if self.allowed is None:
+            return manifest_dep_hits(text, self.banned, aliases)
+        allowed = {crate_name(name) for name in self.allowed}
+        return [
+            (key, name)
+            for key, name in manifest_dep_names(text, aliases)
+            if crate_name(name) not in allowed
+        ]
 
     def fires_on(self, text: str) -> bool:
-        return bool(manifest_dep_hits(text, self.banned, dict(self.sample_aliases)))
+        return bool(self.dependency_hits(text, dict(self.sample_aliases)))
 
     def hits(self) -> list[tuple[Path, str, str]]:
         """(file, declared key, banned crate name) for every offending dependency."""
         out: list[tuple[Path, str, str]] = []
         for rel in iter_files(list(self.globs), self.excludes):
-            for key, name in manifest_dep_hits(read_text(rel), self.banned):
+            for key, name in self.dependency_hits(read_text(rel)):
                 out.append((rel, key, name))
         return out
 
 
 MANIFEST_RULES: tuple[ManifestRule, ...] = (
+    ManifestRule(
+        name="ui-settings-host-manifest",
+        summary="shared Settings has only its four presentation dependencies (#1816)",
+        globs=("crates/kagi-ui-settings/**/Cargo.toml",),
+        banned=(),
+        allowed=("kagi-domain", "kagi-ui-core", "gpui", "gpui-component"),
+        message="kagi-ui-settings may depend only on domain, UI core, GPUI and gpui-component.",
+        samples=(
+            '[dependencies]\nkagi-git = "0.1"\n',
+            '[dependencies]\ndisk = { package = "tokio", version = "1" }\n',
+            "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n",
+            '[build-dependencies]\ncc = "1"\n',
+            '[dev-dependencies]\ntempfile = "3"\n',
+            "[dependencies]\nbackend.workspace = true\n",
+            '[dependencies.disk]\npackage = "std-fs"\nversion = "1"\n',
+        ),
+        samples_ok=(
+            '[dependencies]\nkagi-domain = { path = "../kagi-domain" }\n'
+            'kagi-ui-core = { path = "../kagi-ui-core" }\n'
+            'gpui = "0.2"\ngpui-component = "0.5"\n',
+            "[dependencies]\nui.workspace = true\n",
+        ),
+        sample_aliases=(("backend", "kagi-git"), ("ui", "gpui")),
+    ),
     ManifestRule(
         name="ui-core-layering-manifest",
         summary="kagi-ui-* manifests never depend on git2 / kagi-git (ADR-0121)",

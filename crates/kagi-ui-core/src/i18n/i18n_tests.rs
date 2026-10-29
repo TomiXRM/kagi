@@ -6,6 +6,33 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn settings_analyze_ignore_placeholder_has_production_japanese() {
+    for (message, japanese) in [
+        (Msg::SettingsAnalyzeIgnore, "分析の除外設定"),
+        (
+            Msg::SettingsAnalyzeIgnoreSaved,
+            "分析の除外設定を保存しました",
+        ),
+        (
+            Msg::SettingsAnalyzeIgnoreFailed,
+            "分析の除外設定を保存できませんでした",
+        ),
+        (
+            Msg::SettingsAnalyzeResetTitle,
+            "変更を破棄して分析の除外設定をリセットしますか？",
+        ),
+        (
+            Msg::SettingsAnalyzeResetDetail,
+            "未保存のパターンは破棄されます。分析の除外パターンを既定値に置き換えます。",
+        ),
+    ] {
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+        assert!(!message.t_for(Lang::Ja).contains("Analyze ignore"));
+    }
+    assert_eq!(Msg::SettingsAnalyzeIgnore.t_for(Lang::En), "Analyze ignore");
+}
+
+#[test]
 fn diff_line_ending_annotations_are_localized_in_both_languages() {
     for (message, english, japanese) in [
         (Msg::DiffLineEndingLf, "LF line ending", "LF 改行"),

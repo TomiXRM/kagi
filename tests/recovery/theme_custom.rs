@@ -10,10 +10,8 @@ use crate::evidence_support::deferred;
 use std::path::PathBuf;
 
 use gpui::{AnyWindowHandle, Entity, SharedString, VisualTestAppContext};
-use gpui_component::select::SelectEvent;
 use gpui_component::ActiveTheme as _;
 use kagi::ui::command_palette::{self, PaletteAction};
-use kagi::ui::settings_view::ThemeOption;
 use kagi::ui::{commands, e2e, i18n, settings, theme, KagiApp, ToastKind};
 use serde_json::{json, Value};
 
@@ -169,7 +167,6 @@ fn assert_notice_visible_in_invoking_window(
     });
     let probe = format!("toast-dismiss-{id}");
     e2e::clear_control_bounds(window.window_id(), &probe);
-    e2e::clear_control_bounds(window.window_id(), "settings-page-controls");
     kagi.update(cx, |_, cx| cx.notify());
     cx.update_window(window, |_, window, cx| {
         window.refresh();
@@ -182,7 +179,13 @@ fn assert_notice_visible_in_invoking_window(
             && bounds.size.height > gpui::px(0.)),
         "the actual notice is painted with Settings closed"
     );
-    assert!(e2e::control_bounds(window.window_id(), "settings-page-controls").is_none());
+    assert!(
+        cx.read(|cx| !matches!(
+            kagi.read(cx).menu_overlay,
+            Some(commands::MenuOverlay::Settings)
+        )),
+        "notice is visible without mounting the Settings renderer"
+    );
 }
 
 /// Type `query` into the real command palette and run its top row, the way
@@ -209,34 +212,27 @@ fn run_palette(
     row.unwrap_or_else(|| panic!("palette has no row for {query:?}"))
 }
 
-/// The Settings picker's own items hold `slug`: selecting it by value finds
-/// a row. The selection is put back to the active theme afterwards.
+/// Inspect the production renderer's host-supplied catalog without changing
+/// selection; cards use these exact ThemeHandles, including custom palettes.
 fn select_lists(
     cx: &mut VisualTestAppContext,
     kagi: &Entity<KagiApp>,
-    window: AnyWindowHandle,
+    _window: AnyWindowHandle,
     slug: &str,
 ) -> bool {
-    let select = cx.read(|cx| kagi.read(cx).theme_select.clone().expect("theme select"));
-    let active = SharedString::from(theme::theme().slug.to_string());
-    cx.update_window(window, |_, window, cx| {
-        select.update(cx, |state, cx| {
-            state.set_selected_value(&SharedString::from(slug.to_string()), window, cx);
-            let found = state.selected_value().is_some_and(|value| value == slug);
-            state.set_selected_value(&active, window, cx);
-            found
-        })
+    cx.read(|cx| {
+        kagi.read(cx)
+            .settings_snapshot()
+            .themes
+            .iter()
+            .any(|theme| theme.slug == slug)
     })
-    .expect("window")
 }
 
 fn select_shows(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>) -> Option<String> {
     cx.read(|cx| {
-        let select = kagi.read(cx).theme_select.clone()?;
-        select
-            .read(cx)
-            .selected_value()
-            .map(|value| value.to_string())
+        let view = kagi.read(cx).settings_entity()?;
+        Some(view.read(cx).snapshot().theme_slug.to_string())
     })
 }
 
@@ -326,18 +322,14 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     assert_eq!(settings::read_setting("theme").as_deref(), Some(INHERITED));
 
     // Opening Settings after a menu selection must highlight the theme that
-    // was just applied, not the startup theme retained by its Select entity.
+    // was just applied, not the startup snapshot retained by its view entity.
     cx.dispatch_action(window, commands::OpenSettings);
     cx.run_until_parked();
     assert_eq!(select_shows(cx, &kagi).as_deref(), Some(INHERITED));
 
-    // The Settings picker's Confirm, as a click on its row emits it.
-    let select = cx.read(|cx| kagi.read(cx).theme_select.clone().expect("theme select"));
-    select.update(cx, |_, cx| {
-        cx.emit(SelectEvent::<Vec<ThemeOption>>::Confirm(Some(
-            SharedString::from(STANDALONE),
-        )))
-    });
+    // Activate the actual data-driven card through its painted hit target.
+    crate::settings_controls::draw(cx, window);
+    crate::settings_controls::click(cx, window, &format!("settings-theme-{STANDALONE}"));
     cx.run_until_parked();
     assert_eq!(theme::theme().slug, STANDALONE);
     assert_eq!(theme::theme().bg_base, 0x204060);

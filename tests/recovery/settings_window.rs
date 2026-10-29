@@ -24,11 +24,30 @@ fn settle(cx: &mut VisualTestAppContext, handle: AnyWindowHandle) {
     }
 }
 
-fn assert_screen_fit(cx: &mut VisualTestAppContext, settings: AnyWindowHandle, step: &str) {
+fn assert_screen_fit(
+    cx: &mut VisualTestAppContext,
+    settings: AnyWindowHandle,
+    step: &str,
+) -> gpui::Bounds<gpui::Pixels> {
     settle(cx, settings);
     cx.update_window(settings, |_, window, cx| {
         let frame = window.window_bounds().get_bounds();
         let visible = window.display(cx).expect("Settings display").visible_bounds();
+        let viewport = window.viewport_size();
+        let expected = gpui::size(
+            gpui::px(900.).min(visible.size.width - (frame.size.width - viewport.width)),
+            gpui::px(760.).min(visible.size.height - (frame.size.height - viewport.height)),
+        );
+        assert!(
+            (f32::from(viewport.width) - f32::from(expected.width)).abs() <= 1.
+                && (f32::from(viewport.height) - f32::from(expected.height)).abs() <= 1.,
+            "Settings stays fixed at 900 × 760, reduced only for screen containment after {step}: {viewport:?}, expected {expected:?}"
+        );
+        assert!(
+            window.viewport_size().height <= visible.size.height,
+            "fixed Settings stays bounded by its actual display after {step}: {:?}",
+            window.viewport_size()
+        );
         assert!(
             frame.left() >= visible.left() - gpui::px(1.)
                 && frame.top() >= visible.top() - gpui::px(1.)
@@ -37,10 +56,14 @@ fn assert_screen_fit(cx: &mut VisualTestAppContext, settings: AnyWindowHandle, s
             "Settings entire frame must fit visible screen after {step} ({:?}/{}/{}) — frame {frame:?}, visible {visible:?}",
             i18n::lang(), theme::zoom(), theme::theme().slug
         );
-    }).unwrap();
+        frame
+    }).unwrap()
 }
 
-fn assert_manual_move_preserved(cx: &mut VisualTestAppContext, settings: AnyWindowHandle) {
+fn assert_manual_move_preserved(
+    cx: &mut VisualTestAppContext,
+    settings: AnyWindowHandle,
+) -> gpui::Bounds<gpui::Pixels> {
     use objc2::{msg_send, rc::Retained, runtime::AnyObject};
     use objc2_foundation::NSRect;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -87,6 +110,7 @@ fn assert_manual_move_preserved(cx: &mut VisualTestAppContext, settings: AnyWind
             "ordinary bounds notifications and redraws must preserve a user's partially off-screen move"
         );
     }).unwrap();
+    expected
 }
 
 fn assert_last_setting_reachable(
@@ -94,20 +118,13 @@ fn assert_last_setting_reachable(
     repo: AnyWindowHandle,
     settings: AnyWindowHandle,
 ) {
-    let owner = cx
-        .update_window(repo, |_, window, cx| {
-            window
-                .root::<gpui_component::Root>()
-                .flatten()
-                .unwrap()
-                .read(cx)
-                .view()
-                .clone()
-                .downcast::<kagi::ui::KagiApp>()
-                .unwrap()
+    let view = cx
+        .update_window(settings, |_, window, cx| {
+            kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx).unwrap()
         })
         .unwrap();
-    let viewport = e2e::control_bounds(settings.window_id(), "settings-window-scrollbar")
+    let scroll = cx.read(|cx| view.read(cx).scroll_handle());
+    let viewport = crate::settings_controls::bounds(cx, settings, "settings-detail-scroll")
         .expect("existing page scrollbar viewport");
     cx.simulate_event(
         settings,
@@ -119,8 +136,8 @@ fn assert_last_setting_reachable(
         },
     );
     draw(cx, settings);
-    let last = e2e::control_bounds(settings.window_id(), "terminal-auto-lock-toggle-key")
-        .expect("last General setting");
+    let last = crate::settings_controls::bounds(cx, settings, "settings-theme-guide")
+        .expect("final Appearance action");
     assert!(
         last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
         "wheel reaches entire final control: {last:?} in {viewport:?}"
@@ -134,45 +151,167 @@ fn assert_last_setting_reachable(
     );
     // Switching away/back uses the production scroll reset, rather than a test
     // setter that could hide an inaccessible keyboard path.
-    for pane in ["settings-pane-1", "settings-pane-0"] {
-        let at = e2e::control_bounds(settings.window_id(), pane)
+    for pane in ["settings-pane-general", "settings-pane-appearance"] {
+        let at = crate::settings_controls::bounds(cx, settings, pane)
             .unwrap()
             .center();
         cx.simulate_click(settings, at, gpui::Modifiers::none());
         settle(cx, settings);
     }
+    // Begin near the top with a real early control focused. Checking PageDown
+    // only after Tab reveals the final action would not prove page scrolling.
+    let first_card = format!("settings-theme-{}", theme::theme().slug);
+    let mut first_focused = false;
+    for _ in 0..80 {
+        cx.simulate_keystrokes(settings, "tab");
+        draw(cx, settings);
+        first_focused = crate::settings_controls::probe(cx, settings, &first_card)
+            .is_some_and(|probe| probe.focused);
+        if first_focused {
+            break;
+        }
+    }
+    assert!(first_focused, "Tab reaches the selected theme card");
+    let before_page = scroll.offset();
+    cx.simulate_keystrokes(settings, "pagedown");
+    draw(cx, settings);
+    let after_down = scroll.offset();
+    assert!(
+        after_down.y < before_page.y - gpui::px(20.),
+        "PageDown moves the actual detail scroll owner: {before_page:?} -> {after_down:?}"
+    );
+    assert!(
+        crate::settings_controls::probe(cx, settings, &first_card)
+            .unwrap()
+            .focused,
+        "PageDown preserves the earlier control's keyboard focus"
+    );
+    cx.simulate_keystrokes(settings, "pageup");
+    draw(cx, settings);
+    let after_up = scroll.offset();
+    assert!(
+        after_up.y > after_down.y + gpui::px(20.) && after_up.y <= gpui::px(0.),
+        "PageUp returns toward the earlier offset: {after_down:?} -> {after_up:?}"
+    );
+    assert!((after_up.y - before_page.y).abs() < (after_down.y - before_page.y).abs());
+    assert!(
+        crate::settings_controls::probe(cx, settings, &first_card)
+            .unwrap()
+            .focused,
+        "PageUp preserves keyboard focus"
+    );
     let mut reached = false;
     for _ in 0..80 {
         cx.simulate_keystrokes(settings, "tab");
         draw(cx, settings);
-        reached = cx
-            .update_window(settings, |_, window, cx| {
-                owner.read(cx).settings_switch_focused_for_e2e(window) == Some(4)
-            })
-            .unwrap();
+        reached = crate::settings_controls::probe(cx, settings, "settings-theme-guide")
+            .is_some_and(|probe| probe.focused);
         if reached {
             break;
         }
     }
-    assert!(reached, "real Tab reaches the final General switch");
-    // Ordinary Page Down moves the existing page scroller while keeping focus
-    // on the setting; no test-only scroll setter.
-    for _ in 0..4 {
-        cx.simulate_keystrokes(settings, "pagedown");
-        draw(cx, settings);
-    }
-    let last = e2e::control_bounds(settings.window_id(), "terminal-auto-lock-toggle-key").unwrap();
+    assert!(reached, "real Tab reaches the final Appearance action");
+    let last = crate::settings_controls::bounds(cx, settings, "settings-theme-guide").unwrap();
     assert!(
         last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
         "keyboard reveals entire final control: {last:?} in {viewport:?}"
     );
     crate::native_ax::activate(cx);
     draw(cx, settings);
-    let node = crate::native_ax::node(cx, settings, "terminal-auto-lock-toggle-key".into());
+    let node = crate::native_ax::node(cx, settings, "settings-theme-guide".into());
     assert_eq!(
         node["aria"]["label"],
-        kagi::ui::i18n::Msg::SettingsTerminalAutoLock.t()
+        format!("{}…", kagi::ui::i18n::Msg::SettingsCustomThemesGuide.t())
     );
+    assert_analyze_page_keys_stay_in_editor(cx, repo, settings);
+}
+
+fn assert_analyze_page_keys_stay_in_editor(
+    cx: &mut VisualTestAppContext,
+    repo: AnyWindowHandle,
+    settings: AnyWindowHandle,
+) {
+    use gpui::Focusable as _;
+    use gpui_component::scroll::ScrollbarHandle as _;
+    let owner = cx
+        .update_window(repo, |_, window, cx| {
+            window
+                .root::<gpui_component::Root>()
+                .flatten()
+                .unwrap()
+                .read(cx)
+                .view()
+                .clone()
+                .downcast::<kagi::ui::KagiApp>()
+                .unwrap()
+        })
+        .unwrap();
+    crate::settings_controls::click(cx, settings, "settings-pane-analyze");
+    let input = cx.read(|cx| owner.read(cx).analyze_ignore_input.clone().unwrap());
+    let view = cx.read(|cx| owner.read(cx).settings_entity().unwrap());
+    let scroll = cx.read(|cx| view.read(cx).scroll_handle());
+    let original = cx.read(|cx| input.read(cx).value());
+    let draft = (0..120)
+        .map(|line| format!("page-key-fixture-{line}/\n"))
+        .collect::<String>();
+    cx.update_window(settings, |_, window, cx| {
+        input.update(cx, |input, cx| input.set_value(draft.clone(), window, cx));
+        input.read(cx).focus_handle(cx).focus(window, cx);
+    })
+    .unwrap();
+    draw(cx, settings);
+    let viewport =
+        crate::settings_controls::bounds(cx, settings, "settings-detail-scroll").unwrap();
+    if scroll.content_size().height > viewport.size.height + gpui::px(20.) {
+        // Where Analyze itself overflows, demonstrate that its outer owner
+        // handles the same key with a button focused before testing the editor.
+        cx.update_window(settings, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.focus_control("settings-analyze-save", window, cx)
+            });
+        })
+        .unwrap();
+        draw(cx, settings);
+        let button_offset = scroll.offset();
+        cx.simulate_keystrokes(settings, "pageup");
+        draw(cx, settings);
+        assert!(
+            scroll.offset().y > button_offset.y + gpui::px(1.),
+            "Analyze PageUp moves the detail owner when a non-editor control is focused"
+        );
+        cx.update_window(settings, |_, window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        })
+        .unwrap();
+        draw(cx, settings);
+    }
+    let before = scroll.offset();
+    for key in ["pagedown", "pageup"] {
+        cx.simulate_keystrokes(settings, key);
+        draw(cx, settings);
+        assert_eq!(
+            scroll.offset(),
+            before,
+            "{key} consumed by Analyze editor must not move the surrounding detail pane"
+        );
+        assert!(
+            cx.update_window(settings, |_, window, cx| {
+                input.read(cx).focus_handle(cx).is_focused(window)
+            })
+            .unwrap(),
+            "page navigation retains Analyze input focus"
+        );
+        assert_eq!(
+            cx.read(|cx| input.read(cx).value()).as_ref(),
+            draft.as_str(),
+            "page navigation cannot change the Analyze draft"
+        );
+    }
+    cx.update_window(settings, |_, window, cx| {
+        input.update(cx, |input, cx| input.set_value(original, window, cx));
+    })
+    .unwrap();
+    crate::settings_controls::click(cx, settings, "settings-pane-appearance");
 }
 
 pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
@@ -185,33 +324,84 @@ pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
                 let repo_before = cx
                     .update_window(repo, |_, window, _| window.window_bounds())
                     .unwrap();
-                assert_screen_fit(cx, settings, "first content-driven resize");
-                assert_manual_move_preserved(cx, settings);
-                for pane in [1, 2, 3, 0] {
-                    let bounds = e2e::control_bounds(
-                        settings.window_id(),
-                        [
-                            "settings-pane-0",
-                            "settings-pane-1",
-                            "settings-pane-2",
-                            "settings-pane-3",
-                        ][pane],
+                let fixed_frame = assert_screen_fit(cx, settings, "first open");
+                let view = cx
+                    .update_window(settings, |_, window, cx| {
+                        kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                            .unwrap()
+                    })
+                    .unwrap();
+                let initial = cx.read(|cx| view.read(cx).pane());
+                let panes = kagi_ui_settings::Pane::ALL;
+                let initial_index = panes.iter().position(|pane| *pane == initial).unwrap();
+                // Every real transition, including shortest and tallest panes,
+                // retains the same native frame.
+                for offset in 1..=panes.len() {
+                    let pane = panes[(initial_index + offset) % panes.len()];
+                    assert_ne!(cx.read(|cx| view.read(cx).pane()), pane);
+                    let bounds = crate::settings_controls::bounds(
+                        cx,
+                        settings,
+                        &format!("settings-pane-{}", pane.id()),
                     )
                     .expect("pane control");
                     cx.simulate_click(settings, bounds.center(), gpui::Modifiers::none());
-                    assert_screen_fit(cx, settings, "pane switch");
+                    assert_eq!(
+                        assert_screen_fit(cx, settings, "pane switch"),
+                        fixed_frame,
+                        "switching panes must not resize or reposition Settings"
+                    );
+                    assert_eq!(
+                        cx.read(|cx| view.read(cx).pane()),
+                        pane,
+                        "pointer activation must actually switch the pane"
+                    );
                 }
+                crate::settings_controls::click(cx, settings, "settings-pane-appearance");
                 let zoom = theme::zoom();
                 theme::set_zoom(1.);
                 cx.update(theme::sync_gpui_component_theme);
-                assert_screen_fit(cx, settings, "100% zoom");
+                assert_eq!(assert_screen_fit(cx, settings, "100% zoom"), fixed_frame);
                 theme::set_zoom(1.67);
                 cx.update(theme::sync_gpui_component_theme);
-                assert_screen_fit(cx, settings, "100% to 167% zoom");
+                assert_eq!(
+                    assert_screen_fit(cx, settings, "100% to 167% zoom"),
+                    fixed_frame,
+                    "zoom changes content, not native window geometry"
+                );
                 assert_last_setting_reachable(cx, repo, settings);
                 theme::set_zoom(zoom);
                 cx.update(theme::sync_gpui_component_theme);
-                assert_screen_fit(cx, settings, "zoom restoration");
+                assert_eq!(
+                    assert_screen_fit(cx, settings, "zoom restoration"),
+                    fixed_frame
+                );
+                let moved_frame = assert_manual_move_preserved(cx, settings);
+                for pane in ["settings-pane-general", "settings-pane-appearance"] {
+                    crate::settings_controls::click(cx, settings, pane);
+                    settle(cx, settings);
+                    assert_eq!(
+                        cx.update_window(settings, |_, window, _| window
+                            .window_bounds()
+                            .get_bounds())
+                            .unwrap(),
+                        moved_frame,
+                        "pane changes preserve the user's manual placement"
+                    );
+                }
+                for zoom in [1., 1.67, zoom] {
+                    theme::set_zoom(zoom);
+                    cx.update(theme::sync_gpui_component_theme);
+                    settle(cx, settings);
+                    assert_eq!(
+                        cx.update_window(settings, |_, window, _| window
+                            .window_bounds()
+                            .get_bounds())
+                            .unwrap(),
+                        moved_frame,
+                        "zoom changes preserve the user's manual placement"
+                    );
+                }
                 cx.simulate_keystrokes(settings, "cmd-w");
                 cx.run_until_parked();
                 drain_native_events();
@@ -352,7 +542,7 @@ fn configurations(cx: &mut VisualTestAppContext, mut run: impl FnMut(&mut Visual
             i18n::set_lang(lang);
             theme::set_zoom(zoom);
             theme::set_active("apple-light");
-            kagi::ui::settings::write_setting("settings_pane", Some("0"));
+            kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
             cx.update(theme::sync_gpui_component_theme);
             run(cx);
         }
@@ -363,7 +553,10 @@ fn matrix(cx: &mut VisualTestAppContext, leg: Leg) {
     configurations(cx, |cx| run_cell(cx, leg));
 }
 
-fn run_cell(cx: &mut VisualTestAppContext, leg: Leg) {
+fn run_cell(
+    cx: &mut VisualTestAppContext,
+    leg: impl FnOnce(&mut VisualTestAppContext, AnyWindowHandle, AnyWindowHandle),
+) {
     let lang = i18n::lang();
     let zoom = theme::zoom();
     let fixture = build_fixture();
@@ -407,6 +600,255 @@ fn run_cell(cx: &mut VisualTestAppContext, leg: Leg) {
     unmount(cx, app, repo);
 }
 
+/// G1 captures only composition: no focus, hover, AX or state matrix.
+pub fn scenario_settings_window_composition(cx: &mut VisualTestAppContext) {
+    use gpui_component::scroll::ScrollbarHandle as _;
+    let _saved = GlobalSettings::capture();
+    let _keys = crate::gui_isolation::SavedKeys::keep(&[
+        "theme",
+        "lang",
+        "ui_zoom",
+        "settings_pane",
+        "settings_window_frame",
+        "smart_commit_provider",
+    ]);
+    let _host = SettingsHostGuard::native(cx);
+    theme::set_zoom(1.);
+    // Keep the canonical provider/model row composition deterministic while
+    // retaining the real adapter/catalog and restoring the preference on exit.
+    kagi::ui::settings::write_setting("smart_commit_provider", Some("ollama"));
+    let output = std::path::Path::new("target/ui-fidelity/settings");
+    std::fs::create_dir_all(output).unwrap();
+    for (lang, locale) in [(i18n::Lang::En, "en"), (i18n::Lang::Ja, "ja")] {
+        i18n::set_lang(lang);
+        for appearance in ["apple-light", "apple-dark"] {
+            theme::set_active(appearance);
+            kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
+            cx.update(theme::sync_gpui_component_theme);
+            run_cell(cx, |cx, _, settings| {
+                for pane in kagi_ui_settings::Pane::ALL {
+                    crate::settings_controls::click(
+                        cx,
+                        settings,
+                        &format!("settings-pane-{}", pane.id()),
+                    );
+                    settle(cx, settings);
+                    cx.update_window(settings, |_, window, cx| {
+                        let view =
+                            kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
+                                .unwrap();
+                        let probes: Vec<_> = view
+                            .read(cx)
+                            .control_probes()
+                            .into_iter()
+                            .map(|probe| {
+                                serde_json::json!({
+                                    "id": probe.id,
+                                    "bounds": [
+                                        f32::from(probe.bounds.left()),
+                                        f32::from(probe.bounds.top()),
+                                        f32::from(probe.bounds.size.width),
+                                        f32::from(probe.bounds.size.height),
+                                    ],
+                                    "role": format!("{:?}", probe.role),
+                                    "name": probe.name,
+                                    "value": probe.value,
+                                    "selected": probe.selected,
+                                    "paint": probe.paint.map(|paint| serde_json::json!({
+                                        "font_size": f32::from(paint.font_size),
+                                        "font_weight": format!("{:?}", paint.font_weight),
+                                    })),
+                                })
+                            })
+                            .collect();
+                        let image = window
+                            .render_to_image()
+                            .expect("whole native Settings render");
+                        let stem = format!("native-{}-{appearance}-{locale}-100", pane.id());
+                        image.save(output.join(format!("{stem}.png"))).unwrap();
+                        let lights = traffic_light_bounds(window);
+                        let scale = window.scale_factor();
+                        crate::settings_composition::assert_composition(
+                            window,
+                            cx,
+                            view.read(cx),
+                            &lights,
+                            |point| {
+                                image
+                                    .get_pixel(
+                                        (f32::from(point.x) * scale) as u32,
+                                        (f32::from(point.y) * scale) as u32,
+                                    )
+                                    .0
+                            },
+                        );
+                        let viewport = window.viewport_size();
+                        let frame = window.window_bounds().get_bounds();
+                        let visible = window.display(cx).unwrap().visible_bounds();
+                        let scroll = view.read(cx).scroll_handle();
+                        let receipt = serde_json::json!({
+                            "source": "production native SettingsWindow; window.render_to_image()",
+                            "locale": locale,
+                            "pane": pane.id(),
+                            "scroll_content_height": f32::from(scroll.content_size().height),
+                            "scroll_viewport_height": f32::from(scroll.bounds().size.height),
+                            "captured_unix_ms": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                            "composition_assertions": "passed",
+                            "native_frame": [
+                                f32::from(frame.left()), f32::from(frame.top()),
+                                f32::from(frame.size.width), f32::from(frame.size.height),
+                            ],
+                            "visible_screen": [
+                                f32::from(visible.left()), f32::from(visible.top()),
+                                f32::from(visible.size.width), f32::from(visible.size.height),
+                            ],
+                            "backing_scale": window.scale_factor(),
+                            "viewport": [f32::from(viewport.width), f32::from(viewport.height)],
+                            "png": [image.width(), image.height()],
+                            "traffic_lights": lights,
+                            "probes": probes,
+                        });
+                        std::fs::write(
+                            output.join(format!("{stem}.json")),
+                            serde_json::to_vec_pretty(&receipt).unwrap(),
+                        )
+                        .unwrap();
+                    })
+                    .unwrap();
+                    if pane == kagi_ui_settings::Pane::Appearance {
+                        capture_appearance_tail(
+                            cx,
+                            settings,
+                            output,
+                            &format!("native-appearance-{appearance}-{locale}-100-tail"),
+                        );
+                    }
+                }
+            });
+        }
+    }
+    eprintln!("[gui-e2e] PASS settings_window_composition");
+}
+
+fn capture_appearance_tail(
+    cx: &mut VisualTestAppContext,
+    settings: AnyWindowHandle,
+    output: &std::path::Path,
+    stem: &str,
+) {
+    use gpui_component::scroll::ScrollbarHandle as _;
+    let initial_frame = cx
+        .update_window(settings, |_, window, cx| {
+            let view =
+                kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx).unwrap();
+            let scroll = view.read(cx).scroll_handle();
+            scroll.set_offset(gpui::point(gpui::px(0.), -scroll.content_size().height));
+            window.window_bounds().get_bounds()
+        })
+        .unwrap();
+    settle(cx, settings);
+    cx.update_window(settings, |_, window, cx| {
+        assert_eq!(
+            window.window_bounds().get_bounds(),
+            initial_frame,
+            "scrolling tall Appearance content never changes the native frame"
+        );
+        let view = kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx).unwrap();
+        let probes = view.read(cx).control_probes();
+        let scroll = view.read(cx).scroll_handle();
+        assert!(scroll.offset().y < gpui::px(-20.));
+        for id in [
+            "settings-theme-folder-open",
+            "settings-theme-reload",
+            "settings-theme-guide",
+        ] {
+            let control = probes.iter().find(|probe| probe.id == id).unwrap();
+            crate::recovery_layout::contained(
+                scroll.bounds(),
+                control.bounds,
+                "canonical full action caption is reachable inside the native detail viewport",
+            );
+        }
+        let group = probes
+            .iter()
+            .find(|probe| probe.id == "settings-custom-themes-group")
+            .unwrap();
+        assert!(
+            ((scroll.bounds().bottom() - group.bounds.bottom()) - gpui::px(20.)).abs()
+                <= gpui::px(1.),
+            "scrolled content retains the canonical20pt bottom inset"
+        );
+        let image = window
+            .render_to_image()
+            .expect("whole scrolled native Settings");
+        image.save(output.join(format!("{stem}.png"))).unwrap();
+        let viewport = window.viewport_size();
+        let measured: Vec<_> = probes
+            .iter()
+            .map(|probe| {
+                serde_json::json!({
+                    "id": probe.id, "name": probe.name, "value": probe.value,
+                    "bounds": [
+                        f32::from(probe.bounds.left()), f32::from(probe.bounds.top()),
+                        f32::from(probe.bounds.size.width), f32::from(probe.bounds.size.height),
+                    ],
+                })
+            })
+            .collect();
+        let receipt = serde_json::json!({
+            "source": "production native SettingsWindow; actual scrolled detail owner",
+            "viewport": [f32::from(viewport.width), f32::from(viewport.height)],
+            "backing_scale": window.scale_factor(),
+            "scroll_offset": f32::from(scroll.offset().y),
+            "scroll_content_height": f32::from(scroll.content_size().height),
+            "scroll_viewport_height": f32::from(scroll.bounds().size.height),
+            "assertions": "passed: fixed frame, reachable full captions,20pt bottom inset",
+            "probes": measured,
+        });
+        std::fs::write(
+            output.join(format!("{stem}.json")),
+            serde_json::to_vec_pretty(&receipt).unwrap(),
+        )
+        .unwrap();
+    })
+    .unwrap();
+}
+
+/// OS-drawn buttons are absent from Metal images; measure their actual AppKit
+/// rectangles in the GPUI content view, without showing or activating a window.
+fn traffic_light_bounds(window: &gpui::Window) -> Vec<[f64; 4]> {
+    use objc2::{msg_send, runtime::AnyObject};
+    use objc2_foundation::NSRect;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = HasWindowHandle::window_handle(window).unwrap();
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        panic!("native Settings requires AppKit");
+    };
+    // SAFETY: the exact live NSView and its NSWindow, on the native main thread.
+    unsafe {
+        let view = handle.ns_view.as_ptr().cast::<AnyObject>();
+        let native: *mut AnyObject = msg_send![view, window];
+        let flipped: bool = msg_send![view, isFlipped];
+        (0_usize..3)
+            .map(|kind| {
+                let button: *mut AnyObject = msg_send![native, standardWindowButton: kind];
+                assert!(!button.is_null(), "native traffic light {kind}");
+                let bounds: NSRect = msg_send![button, bounds];
+                let rect: NSRect = msg_send![button, convertRect: bounds, toView: view];
+                let y = if flipped {
+                    rect.origin.y
+                } else {
+                    f64::from(f32::from(window.viewport_size().height))
+                        - rect.origin.y
+                        - rect.size.height
+                };
+                [rect.origin.x, y, rect.size.width, rect.size.height]
+            })
+            .collect()
+    }
+}
+
 pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, repo, settings| {
         cx.simulate_keystrokes(repo, "cmd-,");
@@ -433,12 +875,15 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
             2,
             "Escape does not close Settings"
         );
-        let pane = e2e::control_bounds(settings.window_id(), "settings-pane-1")
-            .expect("Language pane")
+        let pane = crate::settings_controls::bounds(cx, settings, "settings-pane-general")
+            .expect("General pane")
             .center();
         cx.simulate_click(settings, pane, gpui::Modifiers::none());
         draw(cx, settings);
-        assert!(e2e::control_bounds(settings.window_id(), "settings-language-heading").is_some());
+        assert_eq!(
+            kagi::ui::settings::read_setting("settings_pane").as_deref(),
+            Some("general")
+        );
         cx.simulate_keystrokes(settings, "cmd-w");
         cx.run_until_parked();
         cx.simulate_keystrokes(repo, "cmd-,");
@@ -451,19 +896,78 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
         });
         draw(cx, reopened);
         assert!(
-            e2e::control_bounds(reopened.window_id(), "settings-language-heading").is_some(),
+            crate::settings_controls::probe(cx, reopened, "settings-pane-general")
+                .unwrap()
+                .selected,
             "reopen restores the last pane"
         );
         cx.update_window(reopened, |_, window, _| {
             assert_eq!(
                 window.viewport_size().width,
-                gpui::px(715.),
-                "fixed logical width at either zoom"
+                gpui::px(900.),
+                "canonical logical width at either zoom"
             );
         })
         .unwrap();
         cx.simulate_keystrokes(reopened, "cmd-w");
         cx.run_until_parked();
+    });
+    configurations(cx, |cx| {
+        kagi::ui::settings::write_setting("settings_pane", None);
+        run_cell(cx, |cx, _, settings| {
+            assert!(
+                kagi::ui::settings::read_setting("settings_pane").is_none(),
+                "opening Settings must not persist an implicit default pane"
+            );
+            assert!(
+                crate::settings_controls::probe(cx, settings, "settings-pane-appearance")
+                    .unwrap()
+                    .selected,
+                "an absent preference still presents the default Appearance pane"
+            );
+        });
+        assert!(
+            kagi::ui::settings::read_setting("settings_pane").is_none(),
+            "closing Settings without a pane choice must not create a preference"
+        );
+    });
+    configurations(cx, |cx| {
+        for (legacy, expected) in [
+            ("0", kagi_ui_settings::Pane::Appearance),
+            ("1", kagi_ui_settings::Pane::General),
+            ("2", kagi_ui_settings::Pane::SmartCommit),
+            ("3", kagi_ui_settings::Pane::Analyze),
+        ] {
+            kagi::ui::settings::write_setting("settings_pane", Some(legacy));
+            let fixture = build_fixture();
+            let (app, repo) = mount(cx, fixture.path());
+            cx.simulate_keystrokes(repo, "cmd-,");
+            cx.run_until_parked();
+            let host = cx.read(|cx| {
+                cx.windows()
+                    .into_iter()
+                    .find(|window| window.window_id() != repo.window_id())
+                    .unwrap()
+            });
+            draw(cx, host);
+            assert!(
+                crate::settings_controls::probe(
+                    cx,
+                    host,
+                    &format!("settings-pane-{}", expected.id())
+                )
+                .unwrap()
+                .selected
+            );
+            assert_eq!(
+                kagi::ui::settings::read_setting("settings_pane").as_deref(),
+                Some(expected.id()),
+                "legacy pane migrates to a stable ID"
+            );
+            cx.simulate_keystrokes(host, "cmd-w");
+            cx.run_until_parked();
+            unmount(cx, app, repo);
+        }
     });
     eprintln!("[gui-e2e] PASS settings_window_open_raise");
 }
@@ -495,16 +999,12 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let (other_app, other_repo) = mount(cx, fixture.path());
         let before_token = theme::theme().chrome_surface();
-        let picker = e2e::control_bounds(settings.window_id(), "settings-theme-select")
-            .expect("existing theme picker in host");
-        cx.simulate_click(settings, picker.center(), gpui::Modifiers::none());
-        draw(cx, settings);
-        cx.simulate_keystrokes(settings, "up enter");
+        crate::settings_controls::click(cx, settings, "settings-theme-apple-dark");
         cx.run_until_parked();
         assert_ne!(
             theme::theme().slug,
             "apple-light",
-            "picker applies a different theme through its existing callback"
+            "theme card applies a different theme through its production handler"
         );
         // The blank toolbar drag region shows the unified frame's chrome fill,
         // not the panel fill (distinct in Apple Dark's elevation ladder).
@@ -515,7 +1015,7 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
         );
         for repo in [repo, other_repo] {
             draw(cx, repo);
-            let at = e2e::control_bounds(repo.window_id(), "toolbar-drag-region")
+            let at = crate::settings_controls::bounds(cx, repo, "toolbar-drag-region")
                 .expect("blank repository chrome")
                 .center();
             cx.update_window(repo, |_, window, _| {
@@ -581,8 +1081,8 @@ pub fn scenario_settings_window_owner_release(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_settings_window_position_restore(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, repo, settings| {
-        let pane = e2e::control_bounds(settings.window_id(), "settings-pane-1")
-            .expect("Language pane")
+        let pane = crate::settings_controls::bounds(cx, settings, "settings-pane-general")
+            .expect("General pane")
             .center();
         cx.simulate_click(settings, pane, gpui::Modifiers::none());
         settle(cx, settings);
@@ -622,7 +1122,7 @@ pub fn scenario_settings_window_position_restore(cx: &mut VisualTestAppContext) 
 
 fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
-    // Start at a different saved height, then let the actual page resize.
+    // A legacy saved height cannot select geometry for the fixed native host.
     let mut frame = kagi::ui::settings::settings_window_frame().unwrap_or(
         kagi::ui::settings::SettingsWindowFrame {
             x: 100.,
@@ -644,12 +1144,12 @@ fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
             .unwrap()
     });
     settle(cx, settings);
+    assert_screen_fit(cx, settings, "restoring a legacy 500-point height");
     let before = cx
         .update_window(settings, |_, window, _| {
             (window.bounds(), f32::from(window.viewport_size().height))
         })
         .unwrap();
-    assert!(before.1 > 500., "General pane resized the initial frame");
     let _quit = QuitGuard::capture(cx);
     cx.simulate_keystrokes(repo, "cmd-q");
     cx.run_until_parked();
@@ -662,7 +1162,7 @@ fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
         .height;
     assert!(
         (saved_height - before.1).abs() <= 1.,
-        "app quit persists Settings height without closing it"
+        "app quit persists the fixed viewport's compatibility height without closing it"
     );
     // Process shutdown does not dispatch per-window close. Dispose Settings
     // first so owner-release cleanup cannot accidentally save missing geometry.

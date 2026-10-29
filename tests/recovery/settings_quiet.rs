@@ -20,137 +20,268 @@ pub(crate) fn luminance(color: u32) -> f64 {
 }
 
 pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom", "lang"]);
-    let old_lang = kagi::ui::i18n::lang();
-    let old_theme = theme::theme().slug.to_string();
-    let old_zoom = theme::zoom();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&[
+        "theme",
+        "ui_zoom",
+        "lang",
+        "settings_pane",
+        "accent_source",
+    ]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    kagi::ui::settings::write_setting("settings_pane", Some("general"));
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
-    // Secondary labels must remain readable against the Settings panel.
     for slug in ["apple-light", "apple-dark"] {
         for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
-            kagi::ui::i18n::set_lang(lang);
             for accent in [theme::SystemAccent::Blue, theme::SystemAccent::Purple] {
                 let _accent = theme::AccentInjection::new(accent, None);
                 for zoom in [1.0, 1.67] {
                     app.update(cx, |app, cx| {
+                        app.set_lang(lang, cx);
                         app.set_theme(slug, cx);
+                        theme::set_follows_system_accent(true);
                         theme::set_zoom(zoom);
+                        theme::sync_gpui_component_theme(cx);
+                        app.seed_settings(cx);
                         cx.notify();
                     });
-                    let card_fill = if slug == "apple-dark" {
-                        0x2a2a2c
-                    } else {
-                        0xf7f7f7
-                    };
-                    let separator = if slug == "apple-dark" {
-                        0x414144
-                    } else {
-                        0xe5e5e5
-                    };
-                    for shift in [16, 8, 0] {
-                        let line_channel = ((separator >> shift) & 255) as u8;
-                        let fill_channel = ((card_fill >> shift) & 255) as u8;
-                        assert!(
-                            line_channel.abs_diff(fill_channel) >= 16,
-                            "separator and fill must exceed both RGB tolerance bands"
-                        );
-                    }
-                    let (label, panel) = (luminance(theme::theme().text_sub), luminance(card_fill));
-                    assert!(
-                        (label.max(panel) + 0.05) / (label.min(panel) + 0.05) >= 4.5,
-                        "Settings heading contrast"
-                    );
                     cx.update_window(window, |_, window, cx| {
                         app.update(cx, |app, cx| {
                             app.handle_menu_command("app.settings", window, cx)
                         });
-                        window.refresh();
-                        window.draw(cx).clear();
                     })
                     .unwrap();
-                    let heading =
-                        e2e::control_paint(window.window_id(), "settings-appearance-heading")
-                            .expect("heading painted");
-                    assert_eq!(
-                        heading.text_color,
-                        rgb(theme::theme().text_sub).into(),
-                        "neutral secondary-label role"
+                    crate::settings_controls::draw(cx, window);
+                    crate::settings_controls::click(cx, window, "settings-pane-general");
+                    let palette = theme::theme();
+                    // Independent PR1814 role oracle, not production kit helpers.
+                    let window_fill = if palette.dark {
+                        palette.bg_base
+                    } else {
+                        palette.panel
+                    };
+                    let card_fill = if palette.dark {
+                        fidelity_mix(palette.bg_base, palette.surface, 0.42)
+                    } else {
+                        palette.bg_base
+                    };
+                    let sidebar_fill = fidelity_mix(
+                        window_fill,
+                        palette.surface,
+                        if palette.dark { 0.22 } else { 0.35 },
                     );
-                    assert_eq!(heading.font_weight, FontWeight::SEMIBOLD);
-                    assert_eq!(heading.font_size, theme::scaled_px(12.));
-                    let bounds =
-                        e2e::control_bounds(window.window_id(), "settings-appearance-heading")
+                    let heading =
+                        crate::settings_controls::probe(cx, window, "settings-pane-title")
+                            .expect("actual shared pane title is painted");
+                    assert_eq!(heading.role, gpui::Role::Heading);
+                    assert_eq!(heading.name, kagi_ui_settings::Pane::General.title());
+                    let paint = heading
+                        .paint
+                        .expect("title records its resolved text style");
+                    assert_eq!(
+                        paint.text_color,
+                        rgb(palette.text_main).into(),
+                        "neutral primary title"
+                    );
+                    assert_eq!(paint.font_weight, FontWeight::BOLD);
+                    assert_eq!(
+                        paint.font_size,
+                        theme::scaled_px(15. * 16. / theme::BASE_REM_PX)
+                    );
+                    let (title, panel) = (luminance(palette.text_main), luminance(window_fill));
+                    assert!((title.max(panel) + 0.05) / (title.min(panel) + 0.05) >= 4.5);
+                    // Descriptions sit on the group fill; section content sits
+                    // directly on the pane, without the removed nested cards.
+                    for background in [card_fill, window_fill] {
+                        let (label, fill) = (luminance(palette.text_sub), luminance(background));
+                        assert!(
+                            (label.max(fill) + 0.05) / (label.min(fill) + 0.05) >= 4.5,
+                            "secondary Settings text remains readable on {background:06x}"
+                        );
+                    }
+                    let sidebar =
+                        crate::settings_controls::bounds(cx, window, "settings-sidebar").unwrap();
+                    let detail =
+                        crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
                             .unwrap();
-                    let title =
-                        e2e::control_bounds(window.window_id(), "settings-titlebar").unwrap();
-                    let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
+                    let group =
+                        crate::settings_controls::bounds(cx, window, "settings-language-group")
+                            .unwrap();
+                    crate::recovery_layout::contained(
+                        detail,
+                        group,
+                        "language row group fits detail pane",
+                    );
+                    assert!(
+                        sidebar.right() <= detail.left(),
+                        "navigation and detail have distinct columns"
+                    );
+                    for pane in kagi_ui_settings::Pane::ALL {
+                        let probe = crate::settings_controls::probe(
+                            cx,
+                            window,
+                            &format!("settings-pane-{}", pane.id()),
+                        )
+                        .unwrap();
+                        assert_eq!(probe.role, gpui::Role::Tab);
+                        assert_eq!(probe.name, pane.title());
+                        assert_eq!(probe.selected, pane == kagi_ui_settings::Pane::General);
+                        let tile = crate::settings_controls::bounds(
+                            cx,
+                            window,
+                            &format!("settings-pane-tile-{}", pane.id()),
+                        )
+                        .expect("actual category tile");
+                        let expected = gpui::px(20. * zoom);
+                        assert!((tile.size.width - expected).abs() <= gpui::px(0.5));
+                        assert!((tile.size.height - expected).abs() <= gpui::px(0.5));
+                    }
+                    // Sample interiors away from text, rounded corners and
+                    // focus rings. The new hierarchy has neutral surfaces, not
+                    // the old heading/titlebar hairlines or floating-card frame.
+                    let samples = [
+                        (
+                            gpui::point(sidebar.left() + gpui::px(2.), sidebar.center().y),
+                            sidebar_fill,
+                            "sidebar interior (outside rounded corners)",
+                        ),
+                        (
+                            gpui::point(detail.left() + gpui::px(2.), detail.center().y),
+                            window_fill,
+                            "detail background",
+                        ),
+                        (
+                            gpui::point(group.left() + gpui::px(2.), group.center().y),
+                            card_fill,
+                            "row group interior",
+                        ),
+                    ];
                     cx.update_window(window, |_, window, _| {
-                        let image = window.render_to_image().expect("Settings native image");
+                        let image = window
+                            .render_to_image()
+                            .expect("shared Settings native image");
                         let scale = window.scale_factor();
-                        for b in [bounds, title] {
-                            let p = image
+                        for (point, color, label) in samples {
+                            let pixel = image
                                 .get_pixel(
-                                    (f32::from(b.center().x) * scale) as u32,
-                                    ((f32::from(b.bottom()) + 0.5) * scale) as u32,
+                                    (f32::from(point.x) * scale) as u32,
+                                    (f32::from(point.y) * scale) as u32,
                                 )
                                 .0;
-                            let color = separator;
-                            for (got, expected) in p[..3].iter().zip([
+                            for (got, expected) in pixel[..3].iter().zip([
                                 (color >> 16) as u8,
                                 (color >> 8) as u8,
                                 color as u8,
                             ]) {
                                 assert!(
                                     got.abs_diff(expected) <= 2,
-                                    "separator {p:?} expected {color:06x}"
+                                    "{label}: {pixel:?}, expected {color:06x} at {point:?}; theme={slug} zoom={zoom}, sidebar={sidebar:?}, detail={detail:?}, group={group:?}"
                                 );
                             }
-                            // Adjacent pixels retain the floating-card fill:
-                            // a scaled 1.67px separator would cross this oracle.
-                            for offset in [-0.5, 1.5] {
-                                let p = image
-                                    .get_pixel(
-                                        (f32::from(b.center().x) * scale) as u32,
-                                        ((f32::from(b.bottom()) + offset) * scale) as u32,
-                                    )
-                                    .0;
-                                let color = card_fill;
-                                for (got, expected) in p[..3].iter().zip([
-                                    (color >> 16) as u8,
-                                    (color >> 8) as u8,
-                                    color as u8,
-                                ]) {
-                                    assert!(
-                                        got.abs_diff(expected) <= 2,
-                                        "separator is exactly one logical pixel: {p:?}"
-                                    );
-                                }
-                            }
-                        }
-                        let p = image
-                            .get_pixel(
-                                ((f32::from(frame.left()) - 0.5) * scale) as u32,
-                                (f32::from(frame.center().y) * scale) as u32,
-                            )
-                            .0;
-                        let color = if slug == "apple-dark" {
-                            0x414144
-                        } else {
-                            0xe5e5e5
-                        };
-                        for (got, expected) in p[..3].iter().zip([
-                            (color >> 16) as u8,
-                            (color >> 8) as u8,
-                            color as u8,
-                        ]) {
-                            assert!(
-                                got.abs_diff(expected) <= 2,
-                                "frame {p:?} expected {color:06x}"
-                            );
                         }
                     })
                     .unwrap();
+                    // Keep the pointer over the selected control. A neutral
+                    // hover fill must not erase selection on same-height panes.
+                    for pane in kagi_ui_settings::Pane::ALL {
+                        let id = format!("settings-pane-{}", pane.id());
+                        crate::settings_controls::click(cx, window, &id);
+                        assert!(
+                            crate::settings_controls::probe(cx, window, &id)
+                                .unwrap()
+                                .selected
+                        );
+                        assert_hover_fill(
+                            cx,
+                            window,
+                            &id,
+                            if slug == "apple-light" {
+                                0xd3d3d3
+                            } else {
+                                0x3a3a3c
+                            },
+                            zoom,
+                        );
+                    }
+                    let language = if lang == kagi::ui::i18n::Lang::En {
+                        "settings-language-en"
+                    } else {
+                        "settings-language-ja"
+                    };
+                    // Independent canonical neutral-selection colors, not a
+                    // comparison against the helper that produces the fill.
+                    assert_hover_fill(
+                        cx,
+                        window,
+                        language,
+                        if slug == "apple-light" {
+                            0xd3d3d3
+                        } else {
+                            0x3a3a3c
+                        },
+                        zoom,
+                    );
+                    let hit = crate::settings_controls::bounds(cx, window, language).unwrap();
+                    let selected_label =
+                        crate::settings_controls::probe(cx, window, &format!("{language}-label"))
+                            .expect("selected segment label is the actual production text");
+                    assert_eq!(
+                        selected_label
+                            .paint
+                            .expect("resolved selected text")
+                            .font_weight,
+                        FontWeight::MEDIUM,
+                    );
+                    let other_language = if lang == kagi::ui::i18n::Lang::En {
+                        "ja"
+                    } else {
+                        "en"
+                    };
+                    let unselected_label = crate::settings_controls::probe(
+                        cx,
+                        window,
+                        &format!("settings-language-{other_language}-label"),
+                    )
+                    .expect("unselected segment label");
+                    assert_eq!(
+                        unselected_label
+                            .paint
+                            .expect("resolved unselected text")
+                            .font_weight,
+                        FontWeight::NORMAL,
+                    );
+                    let track =
+                        crate::settings_controls::bounds(cx, window, "settings-language-visual")
+                            .unwrap();
+                    let pill =
+                        crate::settings_controls::bounds(cx, window, &format!("{language}-visual"))
+                            .unwrap();
+                    assert!(
+                        hit.size.height >= gpui::px(28. * zoom - 0.5),
+                        "segment hit target remains at least 28 points: {hit:?}"
+                    );
+                    for (bounds, height, inset, name) in
+                        [(track, 24., 2., "track"), (pill, 20., 4., "pill")]
+                    {
+                        if zoom == 1. {
+                            assert!(
+                                (bounds.size.height - gpui::px(height)).abs() <= gpui::px(0.5),
+                                "normal one-line segment {name} is {height} points: {bounds:?}"
+                            );
+                        }
+                        // GPUI rounds absolute near/far edges independently.
+                        for gap in [bounds.top() - hit.top(), hit.bottom() - bounds.bottom()] {
+                            assert!(
+                                (gap - gpui::px(inset * zoom)).abs() <= gpui::px(0.5),
+                                "segment {name} inset is {inset} scaled points: {bounds:?}, hit={hit:?}"
+                            );
+                        }
+                        assert!(
+                            bounds.top() >= hit.top() && bounds.bottom() <= hit.bottom(),
+                            "segment {name} stays within the larger hit target"
+                        );
+                    }
                     app.update(cx, |app, cx| {
                         app.menu_overlay = None;
                         cx.notify();
@@ -159,13 +290,56 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
             }
         }
     }
-    app.update(cx, |app, cx| {
-        app.set_theme(&old_theme, cx);
-        theme::set_zoom(old_zoom);
-        cx.notify();
-    });
-    kagi::ui::i18n::set_lang(old_lang);
     unmount(cx, app, window);
+}
+
+fn fidelity_mix(a: u32, b: u32, amount: f32) -> u32 {
+    let channel = |shift| {
+        let a = ((a >> shift) & 255_u32) as f32;
+        let b = ((b >> shift) & 255_u32) as f32;
+        (a + (b - a) * amount).round() as u32
+    };
+    (channel(16) << 16) | (channel(8) << 8) | channel(0)
+}
+
+fn assert_hover_fill(
+    cx: &mut VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    id: &str,
+    expected: u32,
+    zoom: f32,
+) {
+    let bounds = crate::settings_controls::bounds(cx, window, id).unwrap();
+    cx.simulate_event(
+        window,
+        gpui::MouseMoveEvent {
+            position: bounds.center(),
+            ..Default::default()
+        },
+    );
+    crate::settings_controls::draw(cx, window);
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().expect("selected hovered control");
+        let scale = window.scale_factor();
+        // Inside the leading padding, away from text, glyphs and focus rings.
+        let pixel = image
+            .get_pixel(
+                ((f32::from(bounds.left()) + 3. * zoom) * scale) as u32,
+                (f32::from(bounds.center().y) * scale) as u32,
+            )
+            .0;
+        for (got, want) in pixel[..3].iter().zip([
+            (expected >> 16) as u8,
+            (expected >> 8) as u8,
+            expected as u8,
+        ]) {
+            assert!(
+                got.abs_diff(want) <= 2,
+                "{id} selected hover fill {pixel:?}, expected {expected:06x}"
+            );
+        }
+    })
+    .unwrap();
 }
 
 struct RadioProbe;
@@ -250,8 +424,9 @@ pub fn scenario_settings_radio_dot(cx: &mut VisualTestAppContext) {
                         (u32::from(dot[0]) << 16) | (u32::from(dot[1]) << 8) | u32::from(dot[2]);
                     let (dot_luma, fill_luma) =
                         (luminance(dot_rgb), luminance(theme::theme().ui_accent()));
+                    // The selected dot is a non-text state indicator (#1468).
                     assert!(
-                        (dot_luma.max(fill_luma) + 0.05) / (dot_luma.min(fill_luma) + 0.05) >= 4.5
+                        (dot_luma.max(fill_luma) + 0.05) / (dot_luma.min(fill_luma) + 0.05) >= 3.
                     );
                     if slug == "apple-dark" && source.is_none() {
                         assert!(

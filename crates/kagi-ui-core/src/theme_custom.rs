@@ -12,14 +12,21 @@
 //! out-of-range numbers, a slug a built-in or an earlier file already uses —
 //! rejects that one file and leaves the rest loading.
 //!
-//! This module only parses; the runtime registry lives in [`crate::theme`].
+//! Native discovery and parsing live here; the runtime registry lives in
+//! [`crate::theme`]. Wasm retains the load-error type for host-provided outcomes,
+//! but does not compile the native file parser or its private helpers.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::borrow::Cow;
 use std::fmt;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
 use serde_json::{Map, Value};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::theme::{index_of, SyntaxPalette, Theme, THEMES};
 
 /// One theme file that could not be loaded, and why.
@@ -45,6 +52,7 @@ impl fmt::Display for ThemeLoadError {
 
 /// The custom-theme folder: `themes/` next to `settings.json`
 /// (`$KAGI_LOG_DIR/themes`, else `~/.kagi/themes`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn themes_dir() -> Option<PathBuf> {
     Some(crate::settings::settings_path()?.parent()?.join("themes"))
 }
@@ -56,6 +64,7 @@ pub fn themes_dir() -> Option<PathBuf> {
 /// is reported. A folder that exists but cannot be listed is `Err`: that is
 /// not "no themes", and a reload must keep the themes it already has
 /// (#930 review).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn load_dir(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLoadError> {
     let mut themes: Vec<Theme> = Vec::new();
     let mut errors = Vec::new();
@@ -109,6 +118,7 @@ pub(crate) fn load_dir(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeLoadError>), 
 /// the listing could not read (a network mount dropping mid-listing) fails
 /// the whole listing: a partial list would install as "these are all the
 /// themes" and drop the rest (#930 review).
+#[cfg(not(target_arch = "wasm32"))]
 fn json_files(
     entries: impl Iterator<Item = std::io::Result<PathBuf>>,
 ) -> std::io::Result<Vec<PathBuf>> {
@@ -128,6 +138,7 @@ fn json_files(
 }
 
 /// Parse and validate one theme file's text into a complete [`Theme`].
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn parse_theme(text: &str) -> Result<Theme, String> {
     let value: Value = serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
     let Value::Object(map) = value else {
@@ -186,6 +197,7 @@ pub(crate) fn parse_theme(text: &str) -> Result<Theme, String> {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn required_str<'a>(map: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
     match map.get(key) {
         Some(Value::String(s)) => Ok(s),
@@ -196,6 +208,7 @@ fn required_str<'a>(map: &'a Map<String, Value>, key: &str) -> Result<&'a str, S
 
 /// Slugs end up in `settings.json`, `KAGI_THEME` and command ids, so keep them
 /// to the same lowercase shape the built-ins use.
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_slug(slug: &str) -> Result<(), String> {
     let valid = (1..=64).contains(&slug.len())
         && slug
@@ -213,6 +226,7 @@ fn validate_slug(slug: &str) -> Result<(), String> {
 
 // ── Value parsers ────────────────────────────────────────────────────────
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_rgb(v: &Value) -> Result<u32, String> {
     let bad = || format!("expected a \"#rrggbb\" colour, got {v}");
     let s = v.as_str().ok_or_else(bad)?;
@@ -223,15 +237,18 @@ fn parse_rgb(v: &Value) -> Result<u32, String> {
     u32::from_str_radix(hex, 16).map_err(|_| bad())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn split_rgb(c: u32) -> (u8, u8, u8) {
     ((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_bool(v: &Value) -> Result<bool, String> {
     v.as_bool()
         .ok_or_else(|| format!("expected true or false, got {v}"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_unit(v: &Value) -> Result<f32, String> {
     match v.as_f64() {
         Some(x) if (0.0..=1.0).contains(&x) => Ok(x as f32),
@@ -239,6 +256,7 @@ fn parse_unit(v: &Value) -> Result<f32, String> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_lanes(v: &Value) -> Result<[(f32, f32, f32); 8], String> {
     let bad = || format!("expected 8 [h, s, l] triples, got {v}");
     let items = v.as_array().filter(|a| a.len() == 8).ok_or_else(bad)?;
@@ -254,6 +272,7 @@ fn parse_lanes(v: &Value) -> Result<[(f32, f32, f32); 8], String> {
     Ok(lanes)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_term_selection(v: &Value) -> Result<(u8, u8, u8, u8), String> {
     let obj = v.as_object().ok_or_else(|| {
         format!("expected {{\"color\": \"#rrggbb\", \"alpha\": 0..255}}, got {v}")
@@ -280,6 +299,7 @@ fn parse_term_selection(v: &Value) -> Result<(u8, u8, u8, u8), String> {
 
 /// `Some(v)` from the file, else the base theme's value, else record the key
 /// as missing (the placeholder is discarded with the theme).
+#[cfg(not(target_arch = "wasm32"))]
 fn pick<T: Copy + Default>(
     value: Option<T>,
     base: Option<&Theme>,
@@ -303,6 +323,7 @@ fn pick<T: Copy + Default>(
 // `Theme` literal. The literals below are exhaustive (no `..`), so adding a
 // field to `Theme` or `SyntaxPalette` fails to compile until it is listed.
 
+#[cfg(not(target_arch = "wasm32"))]
 macro_rules! theme_fields {
     (
         rgb: [$($rgb:ident),* $(,)?],
@@ -441,6 +462,7 @@ macro_rules! theme_fields {
     };
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 theme_fields! {
     rgb: [
         bg_base, bg_row_alt, surface, selected, inactive_selected, panel, sidebar, modal, modal_overlay,
@@ -465,7 +487,7 @@ theme_fields! {
     ],
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

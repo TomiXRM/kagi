@@ -198,6 +198,88 @@ spacing into the dense file row.
    - **Record what was not observed** and why. An unobserved item is not
      "done".
 
+## Settings: final-kit construction contract
+
+Settings carries forward the **rules**, not just an image, from PR #1814's
+[final v9 skill](https://github.com/TomiXRM/kagi/blob/1c6486202fdd28d5c2f600da18baaade645ef5d6/experiments/settings-skill/skill/SKILL.md)
+and i10 kit. Its first sentence remains the construction rule:
+
+> A settings page is **composed**, not drawn.
+
+Production has one owner, `crates/kagi-ui-settings`, rather than a copied
+gallery or a new page-local approximation. `panes.rs` and `analyze.rs` compose the roles below;
+the native adapter supplies snapshots and handles typed intents. Experimental
+`Forced` states, no-op handlers and gallery-only APIs are not production input.
+Do not import unused experiment controls just to reproduce its module surface.
+
+| Used role | Production owner | Contract carried forward |
+| --- | --- | --- |
+| Metrics and ink | `kit_style.rs` | 15/13/11.5-point hierarchy; theme-derived surfaces, neutral OFF/control fills and distinct hover/pressed fills. No global theme loosening or per-pane restyling. |
+| Sidebar and sections | `sidebar.rs`, `controls.rs`, `model.rs` | One selected destination, matching page title, fixed category `Hue` table and one 20-point sidebar tile; 212-point inset panel, 40-point top padding, 32-point rows and 2-point gap. Selection uses the kit's neutral `segment_selected_bg()`. |
+| Groups and rows | `controls.rs` | One card per related group, with 12-point horizontal padding, a 1px border only in Light and no reserved border in Dark. In-flow 1px separators make card height equal the sum of actual row heights plus separators and Light's two border pixels; content width equals card width minus padding and actual borders. 40/52-point row minima may grow for real text. No nested cards. |
+| Switch, segments, capsules, stepper | `control_parts.rs` | Role-specific geometry, not one generic div look: 28×16 switch/12-point knob, 24-point normal visible controls and ≥28-point hits. Label-derived equal segments stay in one rail; long labels may wrap and grow. |
+| Provider/model popup | `popups.rs`, pinned `PopupMenu` | Canonical `popup_value`: unfilled rest trigger and 18-point filled chevron box. Real named radio menu roots, checked/disabled state and eligible keyboard navigation. Long/open catalogs are menus, not growing segmented rails. |
+| Theme choice | `theme_cards.rs` | Canonical 132×84-point previews with palette-driven content, accent badge/cursor/eight ANSI swatches, one-line caption with real ellipsis and full name. Two peer Light/Dark sections each contain one group card around their independent strip; `Theme.dark` classification and one global selection. Accent has its own titled section. |
+
+Preserve every applicable role state, not only its rest screenshot:
+
+- **Rest, hover, pressed:** use the role's ink and geometry; hover must not
+  erase selection. Same-role controls share height, radius, fill and centre line.
+- **Focus, selection, ON:** real focus does not change the value. The separate
+  gapped, translucent contrast-safe focus ring is not a selected border or ON
+  fill. Selected fill delegates directly to the canonical neutral
+  `segment_selected_bg()` role; white switch knobs remain distinct from selection.
+- **Disabled:** no intent, with the reason available to mouse, keyboard and AX.
+  Opening/navigating a menu does not commit a value. Keep unavailable saved
+  values readable and discard transient menus when the host reopens.
+- **Loading, empty, error, saved:** compose the effective state supplied by the
+  existing owner. A dispatched save is not durable success; retain Analyze's
+  draft/revision/acknowledgement contract and native consent/effect ownership.
+
+The v9 critique rules are acceptance checks: **one trailing edge**, **same row,
+same height**, **indicators on their value**, and **Light and Dark both read**.
+Keep a stepper and its helper as one composite. A wrapped action cluster aligns
+to the trailing edge while its status remains leading. Do not shorten real
+labels or inflate individual widths to repair layout.
+
+Constrain the **actual text leaf** for both wrapping and ellipsis. Full-width
+row/group wrappers must account for the wrapped child's natural height, not
+just contain it somewhere in the window. A shrink-to-fit trailing control is
+different: it already owns its internal layout; adding another vertical flex
+context can compress a multiline rail. Verify text → control → row → group
+bounds, not only parent boxes or accessible-name echoes.
+
+`pt` metrics scale with UI zoom; GPUI `px` decorations are logical window
+pixels, not Retina PNG pixels. The 2px focus stroke/3px gap are unscaled by UI
+zoom; native screenshot comparisons additionally use the actual backing scale.
+The native host is fixed at 900×760 logical points, reduced only to fit the visible
+screen including native frame/content insets. Switching panes or changing UI zoom
+never resizes it; taller content scrolls inside the detail. Saved frame height is
+retained only for on-disk compatibility and never selects geometry. Fitting runs
+on open/reopen and changed connected-display geometry; manual moves survive pane,
+content and zoom changes.
+There is no Kagi-drawn host title band: sidebar and detail start at the window top and
+the pane title appears once. OS-drawn traffic lights occupy the sidebar's top
+inset. These owner-designated canonical rules supersede the compact port.
+Initial/reopened Appearance starts at the top; meaningful focus/selection changes
+reveal their target, while ordinary redraws preserve manual browsing.
+
+Choose the smallest faithful production host for the changed behavior, optimizing
+independent verification and change-to-visible/checked time rather than a platform.
+The current shared Settings browser host is a measured cheap option for portable
+layout/input; native-only window or OS changes use the appropriate scoped native
+host. Future components are not required to target WASM. Reuse production components,
+never a separate drawing. For the current browser option, build via
+`scripts/build-web.sh`; from `e2e`, use the affected
+`settings-fidelity.spec.ts` / `settings.spec.ts` cases, e.g.
+`--grep 'production text leaves'` for Editor/Analyze text and
+`--grep 'production popup'` for real popup input, labels and tooltip paint.
+Then inspect the actual PNGs beside the final experiment at the same viewport,
+language, theme, zoom and state. Capture lower controls/footer states explicitly.
+The [verify skill](../../.claude/skills/verify/SKILL.md) owns the fuller matrix,
+artifact identity and native gates. Browser paint/input is not native window
+lifecycle, persistence, OS activation or VoiceOver proof.
+
 ## The PR block
 
 ```

@@ -2,6 +2,7 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::i18n::Msg;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::settings::{read_setting, write_setting};
 
 /// AppleAccentColor: graphite (-1), red (0), orange (1), yellow (2), green
@@ -100,6 +101,7 @@ pub(crate) fn follows_system_accent_for(dark: bool) -> bool {
     }
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn source_from_setting(value: Option<&str>) -> Option<bool> {
     match value {
         Some("system") => Some(true),
@@ -108,6 +110,21 @@ fn source_from_setting(value: Option<&str>) -> Option<bool> {
     }
 }
 
+/// Initialize host-loaded accent state without querying OS preferences or storage.
+/// `None` follows the preset default; `Some` explicitly selects system/theme.
+pub fn init_loaded_accent(accent: SystemAccent, follow: Option<bool>) {
+    DETECTED.store(accent as u8, Ordering::Relaxed);
+    ACCENT_SOURCE.store(
+        match follow {
+            Some(true) => 1,
+            Some(false) => 2,
+            None => 0,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_follows_system_accent(follow: bool) {
     #[cfg(any(test, feature = "gui-e2e"))]
     let injected = INJECTED.with(|slot| {
@@ -129,6 +146,7 @@ pub fn set_follows_system_accent(follow: bool) {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn init() {
     let source = read_setting("accent_source");
     let legacy = read_setting("accent");
@@ -173,6 +191,7 @@ fn from_cf_value(value: Option<core_foundation::base::CFType>) -> SystemAccent {
 
 /// Read-only, in-process global preference query, only at startup/activation.
 /// Multicolour (missing or unsupported value) follows the application's blue.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn refresh_system_accent() -> bool {
     #[cfg(any(test, feature = "gui-e2e"))]
     if INJECTED.with(std::cell::Cell::get).is_some() {

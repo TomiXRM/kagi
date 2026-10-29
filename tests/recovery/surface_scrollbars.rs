@@ -2,7 +2,7 @@
 use crate::macos::{build_fixture, mount, unmount};
 use gpui::{point, px, size, AnyWindowHandle, Modifiers, MouseButton, VisualTestAppContext};
 use gpui_component::scroll::{ScrollbarHandle, ScrollbarShow};
-use kagi::ui::{e2e, theme};
+use kagi::ui::theme;
 
 /// Restore both disk keys and thread-local/kit presentation state on unwind.
 pub(crate) struct PresentationRestore {
@@ -65,7 +65,7 @@ pub(crate) fn drag<H: ScrollbarHandle>(
 ) {
     draw(cx, win);
     let bounds =
-        e2e::control_bounds(win.window_id(), id).expect("production scrollbar region drawn");
+        crate::settings_controls::bounds(cx, win, id).expect("production scrollbar region drawn");
     let height = bounds.size.height;
     let extent = handle.content_size().height;
     assert!(extent > height + px(20.), "content must overflow");
@@ -103,6 +103,9 @@ pub(crate) fn drag<H: ScrollbarHandle>(
 
 pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
     let _restore = PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    kagi::ui::settings::write_setting("settings_pane", Some("appearance"));
     let fixture = build_fixture();
     let (app, win) = mount(cx, fixture.path());
     assert!(theme::set_active("apple-light"));
@@ -117,9 +120,16 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.set_lang(lang, cx));
         for zoom in [1., 1.67] {
             theme::set_zoom(zoom);
+            app.update(cx, |app, cx| app.seed_settings(cx));
             for policy in [ScrollbarShow::Always, ScrollbarShow::Scrolling] {
                 cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = policy);
-                let handle = cx.read(|cx| app.read(cx).settings_scroll.clone());
+                let handle = cx.read(|cx| {
+                    app.read(cx)
+                        .settings_entity()
+                        .unwrap()
+                        .read(cx)
+                        .scroll_handle()
+                });
                 handle.set_offset(point(px(0.), px(0.)));
                 // Start auto-hide's visibility interval through the actual owner.
                 draw(cx, win);
@@ -127,12 +137,18 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
                     handle.set_offset(point(px(0.), px(-1.)));
                     draw(cx, win);
                 }
-                drag(cx, win, "settings-scrollbar", &handle);
+                let sidebar_before =
+                    crate::settings_controls::bounds(cx, win, "settings-pane-appearance").unwrap();
+                drag(cx, win, "settings-detail-scroll", &handle);
+                assert_eq!(
+                    crate::settings_controls::bounds(cx, win, "settings-pane-appearance").unwrap(),
+                    sidebar_before,
+                    "detail scrolling never moves sidebar navigation",
+                );
             }
         }
     }
-    // Settings' existing Switch springs retain bool entities until their
-    // animation callbacks finish (same teardown as settings_switches).
+    // Let outstanding presentation callbacks finish before closing the host.
     for _ in 0..10 {
         cx.advance_clock(std::time::Duration::from_millis(100));
         draw(cx, win);
@@ -148,7 +164,13 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
     .unwrap();
     draw(cx, win);
     assert_eq!(
-        cx.read(|cx| app.read(cx).settings_scroll.offset()),
+        cx.read(|cx| app
+            .read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .scroll_handle()
+            .offset()),
         gpui::Point::default(),
         "reopening Settings reveals the first controls"
     );

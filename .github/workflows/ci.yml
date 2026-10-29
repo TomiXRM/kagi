@@ -145,6 +145,24 @@ jobs:
       - name: release gate fixtures
         run: uv run --frozen --project ci python -m unittest kagi_checks.test_release_ci -v
 
+  # ── BLOCKING: production Settings and its browser host stay portable ────────
+  # Match scripts/build-web.sh: wasm_thread requires nightly. Check only this
+  # graph, not the native application or native-only syntax grammar features.
+  check-wasm:
+    name: check (WASM Settings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-18
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # rust-toolchain.toml overrides the action's default toolchain. Select the
+      # nightly that owns the installed WASM target, exactly as build-web.sh does.
+      - name: Check shared core, Settings and browser host
+        run: cargo +nightly-2026-10-18 check --locked --target wasm32-unknown-unknown -p kagi-ui-core -p kagi-ui-settings -p kagi-web
+
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:
     name: test (macOS)
@@ -186,7 +204,7 @@ jobs:
   # aggregate, not skip the verification step. Matrix success covers every leg.
   # Only install-linux may be skipped, and only when changes selected false.
   blocking-ci:
-    needs: [changes, invariants, gates-lint, test-macos, build-windows, install-linux]
+    needs: [changes, invariants, gates-lint, check-wasm, test-macos, build-windows, install-linux]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:

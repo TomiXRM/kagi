@@ -272,9 +272,9 @@ pub fn scenario_command_period_overflow(cx: &mut VisualTestAppContext) {
 pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
     use kagi_ui_core::{settings, theme};
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane"]);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane", "theme"]);
     let _host = crate::settings_window::SettingsHostGuard::portable(cx);
-    settings::write_setting("settings_pane", Some("0"));
+    settings::write_setting("settings_pane", Some("appearance"));
     theme::set_zoom(1.);
     cx.update(theme::sync_gpui_component_theme);
     let fixture = build_fixture();
@@ -286,40 +286,38 @@ pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     paint(cx, window);
-    cx.update_window(window, |_, window, cx| {
-        app.read(cx)
-            .theme_select
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .focus_handle(cx)
-            .focus(window, cx);
-    })
-    .unwrap();
-    crate::keyboard_nav::keys(cx, window, "enter");
-    paint(cx, window);
-    assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .expanded,
-        Some(true)
-    );
     let before = theme::theme().slug.to_string();
+    let card = format!("settings-theme-{before}");
+    // The former Select is now a theme card, with no child popup to cancel.
+    // Command-Period aliases Escape and must close the portable overlay itself.
+    crate::settings_controls::click(cx, window, &card);
+    assert!(
+        cx.read(|cx| {
+            let view = app.read(cx).settings_entity().unwrap();
+            let probe = view.read(cx).control_probe(&card).unwrap();
+            probe.selected && probe.focused
+        }),
+        "the selected production theme card holds focus before cancellation"
+    );
+    let background = cx.read(|cx| {
+        (
+            app.read(cx).ui().selected,
+            app.read(cx).ui().main_diff.is_some(),
+        )
+    });
     crate::keyboard_nav::keys(cx, window, "cmd-.");
     paint(cx, window);
     assert!(
-        cx.read(|cx| matches!(
-            app.read(cx).menu_overlay,
-            Some(kagi::ui::commands::MenuOverlay::Settings)
-        )),
-        "Command-Period in the theme dropdown must not close Settings"
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "Command-Period on a theme card closes portable Settings without a popup"
     );
     assert_eq!(
-        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
-            .unwrap()
-            .expanded,
-        Some(false),
-        "Command-Period must close only the focused Select dropdown"
+        cx.read(|cx| (
+            app.read(cx).ui().selected,
+            app.read(cx).ui().main_diff.is_some()
+        )),
+        background,
+        "Settings cancellation must not also dismiss the background selection or diff"
     );
     assert_eq!(theme::theme().slug, before);
     unmount(cx, app, window);

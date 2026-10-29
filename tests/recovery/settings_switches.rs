@@ -1,103 +1,62 @@
-//! Settings' switches from the keyboard and to assistive technology (#970),
-//! Tier A: each is a Tab stop, in drawing order; Space and Enter flip it and
-//! save the setting; the checked state given to assistive technology
-//! follows; the pointer still flips it after real wheel input reveals it.
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
-use kagi::ui::i18n::Msg;
-use kagi::ui::{e2e, settings, KagiApp};
-
+//! Production Settings switches: focus is not ON, keyboard/pointer events persist,
+//! and each pane's controls remain reachable in its single detail scroller.
 use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, mount, unmount};
+use crate::settings_controls::{bounds, click, draw, probe};
+use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use kagi::ui::i18n::Msg;
+use kagi::ui::{settings, KagiApp};
 
-/// Each switch: its id, the setting it saves (None: flipping it starts work
-/// Tier A must not do, so it is only reached), and its row's title.
-const SWITCHES: [(&str, Option<&str>, Msg); 6] = [
+const SWITCHES: [(&str, &str, Option<&str>, Msg); 6] = [
     (
+        "graph",
         "compact-toggle",
         Some("graph_compact"),
         Msg::SettingsCompact,
     ),
     (
+        "graph",
         "lane-compact-toggle",
         Some("graph_lane_compact"),
         Msg::SettingsLaneCompact,
     ),
     (
+        "network",
         "auto-fetch-toggle",
         Some("auto_fetch"),
         Msg::SettingsAutoFetch,
     ),
     (
+        "appearance",
         "reduce-motion-toggle",
         Some("reduce_motion"),
         Msg::SettingsReduceMotion,
     ),
     (
+        "terminal",
         "terminal-auto-lock-toggle",
         Some("terminal_auto_lock"),
         Msg::SettingsTerminalAutoLock,
     ),
-    // Turning Smart Commit on probes for local LLMs.
-    ("smart-commit-enabled", None, Msg::SettingsSmartEnable),
+    (
+        "smart_commit",
+        "sc-enabled-toggle",
+        None,
+        Msg::SettingsSmartEnable,
+    ),
 ];
 
-fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-}
-
-/// The checked state switch `id` last gave assistive technology.
-fn toggled(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> bool {
+fn focus(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle, id: &str) {
+    cx.update_window(window, |_, window, cx| {
+        let view = app.read(cx).settings_entity().unwrap();
+        view.update(cx, |view, cx| assert!(view.focus_control(id, window, cx)));
+    })
+    .unwrap();
     draw(cx, window);
-    e2e::recorded_switch(id)
-        .unwrap_or_else(|| panic!("{id} is drawn"))
-        .1
-}
-
-fn saved(key: &str) -> Option<String> {
-    settings::read_setting(key)
 }
 
 fn on_off(on: bool) -> Option<String> {
     Some(if on { "true" } else { "false" }.to_string())
-}
-
-fn click_switch(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
-    draw(cx, window);
-    let body = e2e::control_bounds(window.window_id(), "settings-scrollbar")
-        .expect("the Settings scroll viewport");
-    let measurement = format!("{id}-key");
-    let mut bounds =
-        e2e::control_bounds(window.window_id(), &measurement).expect("the switch is measured");
-    // Keyboard focus may have revealed a later switch. Layout bounds alone
-    // do not mean this pointer target is inside the scroll owner's clip.
-    for _ in 0..20 {
-        if bounds.top() >= body.top() && bounds.bottom() <= body.bottom() {
-            break;
-        }
-        cx.simulate_event(
-            window,
-            gpui::ScrollWheelEvent {
-                position: body.center(),
-                delta: gpui::ScrollDelta::Pixels(gpui::point(
-                    gpui::px(0.),
-                    gpui::px(if bounds.top() < body.top() {
-                        300.
-                    } else {
-                        -300.
-                    }),
-                )),
-                touch_phase: gpui::TouchPhase::Moved,
-                ..Default::default()
-            },
-        );
-        cx.run_until_parked();
-        draw(cx, window);
-        bounds = e2e::control_bounds(window.window_id(), &measurement).unwrap();
-    }
-    crate::recovery_layout::contained(body, bounds, "pointer switch is inside Settings");
-    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
-    cx.run_until_parked();
 }
 
 pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
@@ -107,7 +66,11 @@ pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
         "auto_fetch",
         "reduce_motion",
         "terminal_auto_lock",
+        "settings_pane",
+        "smart_commit_llm_enabled",
+        "smart_commit_consent_accepted",
     ]);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
     cx.update_window(window, |_, window, cx| {
@@ -118,88 +81,117 @@ pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
     .unwrap();
     draw(cx, window);
 
-    // Named for assistive technology by their row's title.
-    for (id, _, title) in SWITCHES {
-        let (label, _) = e2e::recorded_switch(id).unwrap_or_else(|| panic!("{id} drawn"));
-        assert_eq!(label, title.t(), "{id} is named by its row");
-    }
-
-    // Tab, from the window, reaches the six switches in drawing order, one
-    // stop each (other controls in between are passed over here).
-    let order = cx
-        .update_window(window, |_, window, cx| {
-            let root = app.read(cx).root_focus.clone().expect("root focus");
-            root.focus(window, cx);
-            let mut seen: Vec<usize> = Vec::new();
-            for _ in 0..80 {
-                window.focus_next(cx);
-                window.draw(cx).clear();
-                if let Some(slot) = app.read(cx).settings_switch_focused_for_e2e(window) {
-                    if seen.last() != Some(&slot) {
-                        if seen.contains(&slot) {
+    for pane in ["appearance", "graph", "terminal", "network", "smart_commit"] {
+        click(cx, window, &format!("settings-pane-{pane}"));
+        let expected: Vec<_> = SWITCHES
+            .iter()
+            .filter(|entry| entry.0 == pane)
+            .map(|entry| entry.1.to_string())
+            .collect();
+        let order = cx
+            .update_window(window, |_, window, cx| {
+                let view = app.read(cx).settings_entity().unwrap();
+                view.update(cx, |view, cx| {
+                    assert!(view.focus_control(&format!("settings-pane-{pane}"), window, cx));
+                });
+                let mut seen = Vec::new();
+                for _ in 0..80 {
+                    window.focus_next(cx);
+                    window.draw(cx).clear();
+                    if let Some(control) = view
+                        .read(cx)
+                        .control_probes()
+                        .into_iter()
+                        .find(|control| control.role == gpui::Role::Switch && control.focused)
+                    {
+                        if seen.contains(&control.id) {
                             break;
                         }
-                        seen.push(slot);
+                        seen.push(control.id);
                     }
                 }
-            }
-            seen
-        })
-        .unwrap();
-    assert_eq!(
-        order,
-        vec![0, 1, 2, 3, 4, 5],
-        "Tab walks the switches in order"
-    );
-
-    // Space flips each switch, Enter flips it back: the setting is saved
-    // each time, and the state given to assistive technology follows.
-    for (slot, (id, key, _)) in SWITCHES.into_iter().enumerate() {
-        let Some(key) = key else { continue };
-        let start = toggled(cx, window, id);
-        focus(cx, &app, window, slot);
-        keys(cx, window, "space");
-        assert_eq!(saved(key), on_off(!start), "Space saves {key}");
+                seen
+            })
+            .unwrap();
         assert_eq!(
-            toggled(cx, window, id),
-            !start,
-            "{id} reports the new state"
+            order, expected,
+            "Tab visits this pane's switches once in drawing order"
         );
-        keys(cx, window, "enter");
-        assert_eq!(saved(key), on_off(start), "Enter saves {key} back");
-        assert_eq!(toggled(cx, window, id), start, "{id} reports it again");
+        for (_, id, key, title) in SWITCHES.iter().filter(|entry| entry.0 == pane) {
+            let start = probe(cx, window, id).expect("production switch");
+            assert_eq!(start.role, gpui::Role::Switch);
+            assert_eq!(start.name, title.t());
+            let visual = bounds(cx, window, &format!("{id}-visual")).expect("actual switch track");
+            let knob = bounds(cx, window, &format!("{id}-knob")).expect("actual white knob");
+            let zoom = kagi::ui::theme::zoom();
+            for (actual, expected) in [
+                (visual.size.width, 28.),
+                (visual.size.height, 16.),
+                (knob.size.width, 12.),
+                (knob.size.height, 12.),
+            ] {
+                assert!((actual - gpui::px(expected * zoom)).abs() <= gpui::px(0.5));
+            }
+            assert!(start.bounds.size.height >= gpui::px(28. * zoom - 0.5));
+            let before = key.and_then(settings::read_setting);
+            let smart_enabled = settings::read_setting("smart_commit_llm_enabled");
+            let consent = settings::read_setting("smart_commit_consent_accepted");
+            focus(cx, &app, window, id);
+            let focused = probe(cx, window, id).unwrap();
+            assert!(focused.focused);
+            assert_eq!(focused.selected, start.selected, "focus cannot flip ON");
+            assert_eq!(key.and_then(settings::read_setting), before);
+            let Some(key) = key else {
+                assert_eq!(
+                    settings::read_setting("smart_commit_llm_enabled"),
+                    smart_enabled
+                );
+                assert_eq!(
+                    settings::read_setting("smart_commit_consent_accepted"),
+                    consent
+                );
+                continue;
+            };
+            keys(cx, window, "space");
+            draw(cx, window);
+            assert_eq!(
+                settings::read_setting(key),
+                on_off(!start.selected),
+                "Space saves {key}"
+            );
+            assert_eq!(probe(cx, window, id).unwrap().selected, !start.selected);
+            keys(cx, window, "enter");
+            draw(cx, window);
+            assert_eq!(
+                settings::read_setting(key),
+                on_off(start.selected),
+                "Enter saves {key}"
+            );
+            assert_eq!(probe(cx, window, id).unwrap().selected, start.selected);
+            click(cx, window, id);
+            assert_eq!(
+                settings::read_setting(key),
+                on_off(!start.selected),
+                "one click, one flip"
+            );
+            assert_eq!(probe(cx, window, id).unwrap().selected, !start.selected);
+            click(cx, window, id);
+            assert_eq!(settings::read_setting(key), on_off(start.selected));
+            assert_eq!(probe(cx, window, id).unwrap().selected, start.selected);
+        }
     }
-
-    // The pointer still flips a switch (the Switch's own handling under the
-    // keyboard wrapper), and a second click flips it back.
-    let (id, key) = ("compact-toggle", "graph_compact");
-    let start = toggled(cx, window, id);
-    click_switch(cx, window, id);
-    assert_eq!(saved(key), on_off(!start), "one click, one flip");
-    assert_eq!(toggled(cx, window, id), !start);
-    click_switch(cx, window, id);
-    assert_eq!(saved(key), on_off(start));
-
-    // The Switch's thumb springs to each new state; let those animations end
-    // on the dispatcher's clock before the window goes, so nothing they hold
-    // outlives it.
-    for _ in 0..10 {
-        cx.advance_clock(std::time::Duration::from_millis(100));
-        draw(cx, window);
-        cx.run_until_parked();
-    }
-    app.update(cx, |app, cx| {
-        app.menu_overlay = None;
-        cx.notify();
-    });
+    keys(cx, window, "escape");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_switches");
 }
 
-/// Migrated 150% must keep its physical size and appear as 167% in the real
-/// Settings renderer. Legacy 167% steps to 170%; the upper bound is 200%.
+/// Migrated 150% retains its physical size and appears as 167%; real stepper
+/// events use presets and cannot persist a value outside the allowed range.
 pub fn scenario_settings_zoom_bound(cx: &mut VisualTestAppContext) {
-    let restore = crate::recovery_layout::GlobalSettings::capture();
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    settings::write_setting("settings_pane", Some("appearance"));
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
     cx.update_window(window, |_, window, cx| {
@@ -208,43 +200,41 @@ pub fn scenario_settings_zoom_bound(cx: &mut VisualTestAppContext) {
         })
     })
     .unwrap();
-
-    let check = |cx: &mut VisualTestAppContext, zoom: f32, label: &str, saved: &str| {
+    for (zoom, label, saved) in [(1.556, "156%", "1556"), (1.667, "167%", "1667")] {
         assert_eq!(kagi_ui_core::theme::set_zoom(zoom), zoom);
+        app.update(cx, |app, cx| app.seed_settings(cx));
         draw(cx, window);
-        assert_eq!(
-            e2e::settings_zoom_label().as_deref(),
-            Some(label),
-            "Settings must show the active migrated zoom"
-        );
+        assert_eq!(probe(cx, window, "zoom-value").unwrap().value, label);
         assert_eq!(settings::read_setting("ui_zoom").as_deref(), Some(saved));
-    };
-    check(cx, 1.556, "156%", "1556");
-    check(cx, 1.667, "167%", "1667");
-    let next = kagi_ui_core::theme::step_zoom(kagi_ui_core::theme::zoom(), true);
-    check(cx, next, "170%", "1700");
-    check(cx, 2., "200%", "2000");
-    let capped = kagi_ui_core::theme::step_zoom(kagi_ui_core::theme::zoom(), true);
-    check(cx, capped, "200%", "2000");
-    let lower = kagi_ui_core::theme::step_zoom(kagi_ui_core::theme::zoom(), false);
-    check(cx, lower, "190%", "1900");
-
-    app.update(cx, |app, cx| {
-        app.menu_overlay = None;
-        cx.notify();
-    });
+    }
+    click(cx, window, "zoom-inc");
+    assert_eq!(probe(cx, window, "zoom-value").unwrap().value, "170%");
+    assert_eq!(settings::read_setting("ui_zoom").as_deref(), Some("1700"));
+    for _ in 0..3 {
+        click(cx, window, "zoom-inc");
+    }
+    assert_eq!(probe(cx, window, "zoom-value").unwrap().value, "200%");
+    assert!(probe(cx, window, "zoom-inc").unwrap().disabled);
+    click(cx, window, "zoom-inc");
+    assert_eq!(settings::read_setting("ui_zoom").as_deref(), Some("2000"));
+    click(cx, window, "zoom-dec");
+    assert_eq!(probe(cx, window, "zoom-value").unwrap().value, "190%");
+    assert_eq!(settings::read_setting("ui_zoom").as_deref(), Some("1900"));
+    keys(cx, window, "escape");
     unmount(cx, app, window);
-    drop(restore);
     eprintln!(
         "[gui-e2e] PASS settings_zoom_bound legacy 167%, 170% preset, 200% upper bound and 190% lower preset"
     );
 }
 
-/// #1200: semantic containers remain horizontally contained and every group
-/// can be brought into the single page viewport at both supported densities.
+/// Eight real panes replace the removed single-page group list. Every measured
+/// control/description is horizontally contained and reachable by the same
+/// detail scroller; the sidebar stays still while overflowing content scrolls.
 pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
     use gpui::{point, px, size};
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
     cx.update_window(window, |_, w, cx| {
@@ -253,323 +243,254 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.set_theme("apple-light", cx));
     })
     .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        crate::macos::drain_native_events();
-        cx.run_until_parked();
-        if cx
-            .update_window(window, |_, w, _| w.viewport_size())
-            .unwrap()
-            == size(px(1392.), px(883.))
-        {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "1392×883 native viewport"
-        );
-    }
     for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
         app.update(cx, |app, cx| app.set_lang(lang, cx));
         for zoom in [1., 1.67] {
             kagi::ui::theme::set_zoom(zoom);
-            let scroll = cx.read(|cx| app.read(cx).settings_scroll.clone());
-            scroll.set_offset(point(px(0.), px(0.)));
-            draw(cx, window);
-            let viewport = e2e::control_bounds(window.window_id(), "settings-scrollbar")
-                .expect("page viewport");
-            for name in [
-                "settings-appearance-group",
-                "settings-graph-group",
-                "settings-network-group",
-                "settings-behaviour-group",
-                "settings-language-group",
-                "settings-smart-group",
-                "settings-analyze-group",
-            ] {
-                draw(cx, window);
-                let group = e2e::control_bounds(window.window_id(), name)
-                    .unwrap_or_else(|| panic!("semantic group {name} must exist"));
-                assert!(group.left() >= viewport.left() - px(1.), "{name} left");
-                assert!(group.right() <= viewport.right() + px(1.), "{name} right");
-                let delta = group.top() - viewport.top();
-                scroll.set_offset(point(px(0.), scroll.offset().y - delta));
-                draw(cx, window);
-                let reached = e2e::control_bounds(window.window_id(), name).unwrap();
-                assert!(reached.top() < viewport.bottom(), "{name} scroll reachable");
-                assert!(reached.bottom() > viewport.top(), "{name} not hidden");
-                check_group_surface(cx, window, name, &scroll);
-            }
-            assert!(
-                scroll.offset().y < px(-20.),
-                "one page owner reaches the tail"
-            );
-            check_grouped_rows(cx, &app, window, zoom);
-            check_extra_settings_controls(cx, &app, window, zoom);
-            check_analyze_spacing(window);
-            if zoom == 1. {
-                check_settings_help(cx, &app, window);
+            app.update(cx, |app, cx| app.seed_settings(cx));
+            for pane in kagi_ui_settings::Pane::ALL {
+                click(cx, window, &format!("settings-pane-{}", pane.id()));
+                let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
+                let scroll = cx.read(|cx| view.read(cx).scroll_handle());
+                let viewport = bounds(cx, window, "settings-detail-scroll").unwrap();
+                assert_eq!(
+                    viewport,
+                    scroll.bounds(),
+                    "the probe measures the actual GPUI scroll-owner viewport"
+                );
+                let frame = bounds(cx, window, "settings-frame").unwrap();
+                assert!(
+                    viewport.left() >= frame.left()
+                        && viewport.right() <= frame.right()
+                        && viewport.top() >= frame.top()
+                        && viewport.bottom() <= frame.bottom(),
+                    "fixed detail {viewport:?} stays inside the actual overlay frame {frame:?}"
+                );
+                let sidebar = bounds(cx, window, "settings-sidebar").unwrap();
+                let navigation = bounds(cx, window, "settings-sidebar-items").unwrap();
+                assert!(
+                    navigation.left() >= sidebar.left() - px(1.)
+                        && navigation.right() <= sidebar.right() + px(1.),
+                    "navigation {navigation:?} belongs to sidebar {sidebar:?}, not detail {viewport:?}"
+                );
+                crate::recovery_layout::contained(
+                    sidebar,
+                    bounds(cx, window, &format!("settings-pane-{}", pane.id())).unwrap(),
+                    "the activated pane remains reachable in its own sidebar viewport",
+                );
+                let probes = cx.read(|cx| view.read(cx).control_probes());
+                let controls: Vec<_> = probes
+                    .into_iter()
+                    .filter(|control| {
+                        !control.id.starts_with("settings-pane-")
+                            && !control.id.starts_with("settings-sidebar")
+                            && ![
+                                "settings-detail-scroll",
+                                "settings-detail-content",
+                                "settings-detail-viewport",
+                                "settings-pane-title",
+                            ]
+                            .contains(&control.id.as_str())
+                    })
+                    .collect();
+                assert!(!controls.is_empty(), "{} has production content", pane.id());
+                let required: &[&str] = match pane {
+                    kagi_ui_settings::Pane::Appearance => &[
+                        "settings-themes-light-scroll",
+                        "settings-themes-dark-scroll",
+                        "settings-layout-group",
+                        "settings-motion-group",
+                        "settings-theme-controls-group",
+                        "settings-custom-themes-group",
+                        "settings-theme-folder-open",
+                        "settings-theme-reload",
+                        "settings-theme-guide",
+                        "zoom-value",
+                        "compact-threshold-value",
+                        "reduce-motion-toggle",
+                    ],
+                    kagi_ui_settings::Pane::Graph => &[
+                        "settings-graph-group",
+                        "settings-copy-group",
+                        "compact-toggle",
+                        "lane-compact-toggle",
+                        "settings-copy-hash",
+                        "settings-copy-branch",
+                    ],
+                    kagi_ui_settings::Pane::Editor => &[
+                        "settings-editor-group",
+                        "settings-markdown-preview",
+                        "settings-markdown-source",
+                    ],
+                    kagi_ui_settings::Pane::Terminal => {
+                        &["settings-terminal-group", "terminal-auto-lock-toggle"]
+                    }
+                    kagi_ui_settings::Pane::Network => {
+                        &["settings-network-group", "auto-fetch-toggle"]
+                    }
+                    kagi_ui_settings::Pane::SmartCommit => &[
+                        "settings-smart-group",
+                        "sc-enabled-toggle",
+                        "sc-provider-select",
+                        "sc-model-select",
+                    ],
+                    kagi_ui_settings::Pane::Analyze => &[
+                        "settings-analyze-input",
+                        "settings-analyze-status",
+                        "settings-analyze-reset",
+                        "settings-analyze-save",
+                    ],
+                    kagi_ui_settings::Pane::General => &[
+                        "settings-language-group",
+                        "settings-language-en",
+                        "settings-language-ja",
+                    ],
+                };
+                for id in required {
+                    assert!(
+                        controls.iter().any(|control| control.id == *id),
+                        "{id} retained in {}",
+                        pane.id()
+                    );
+                }
+                let groups: Vec<_> = controls
+                    .iter()
+                    .filter(|control| control.id.ends_with("-group"))
+                    .collect();
+                for (index, group) in groups.iter().enumerate() {
+                    for other in groups.iter().skip(index + 1) {
+                        assert!(
+                            !group.bounds.contains(&other.bounds.center())
+                                && !other.bounds.contains(&group.bounds.center()),
+                            "row groups must not be nested"
+                        );
+                    }
+                }
+                let theme_ids: Vec<_> = controls
+                    .iter()
+                    .filter(|control| {
+                        control.role == gpui::Role::RadioButton
+                            && control.id.starts_with("settings-theme-")
+                    })
+                    .map(|control| control.id.clone())
+                    .collect();
+                if pane == kagi_ui_settings::Pane::Appearance {
+                    assert_eq!(
+                        theme_ids.len(),
+                        cx.read(|cx| view.read(cx).snapshot().themes.len()),
+                        "every catalog theme remains an actual production choice"
+                    );
+                }
+                for control in controls {
+                    if let Some(theme_id) = theme_ids.iter().find(|id| {
+                        let slug = id.strip_prefix("settings-theme-").unwrap();
+                        control.id == **id
+                            || control.id == format!("{id}-focus-ring")
+                            || control.id == format!("settings-theme-caption-{slug}")
+                            || control.id == format!("settings-theme-caption-text-{slug}")
+                            || control.id == format!("settings-theme-badge-{slug}")
+                            || control.id == format!("settings-theme-preview-{slug}")
+                    }) {
+                        // Preserve the actual containment assertion, but first
+                        // reveal this horizontal child with a real wheel event.
+                        crate::settings_controls::reveal(cx, window, theme_id);
+                    }
+                    let rect = bounds(cx, window, &control.id).unwrap();
+                    assert!(
+                        rect.left() >= viewport.left() - px(1.),
+                        "{} left: {rect:?} in {viewport:?}",
+                        control.id
+                    );
+                    assert!(
+                        rect.right() <= viewport.right() + px(1.),
+                        "{} right: {rect:?} in {viewport:?}",
+                        control.id
+                    );
+                    scroll.set_offset(point(
+                        px(0.),
+                        scroll.offset().y - rect.top() + viewport.top(),
+                    ));
+                    draw(cx, window);
+                    let reached = bounds(cx, window, &control.id).unwrap();
+                    assert!(
+                        reached.top() < viewport.bottom() && reached.bottom() > viewport.top(),
+                        "{} reachable in {}",
+                        control.id,
+                        pane.id()
+                    );
+                    if control.id.ends_with("-group") {
+                        let at = point(reached.left() + px(3.), reached.top() + px(16.));
+                        assert!(viewport.contains(&at), "group fill sample is visible");
+                        cx.update_window(window, |_, w, _| {
+                            let image = w.render_to_image().expect("real group fill");
+                            let pixel = image
+                                .get_pixel(
+                                    (f32::from(at.x) * w.scale_factor()) as u32,
+                                    (f32::from(at.y) * w.scale_factor()) as u32,
+                                )
+                                .0;
+                            let color = kagi::ui::theme::theme().bg_base;
+                            for (got, expected) in pixel[..3].iter().zip([
+                                (color >> 16) as u8,
+                                (color >> 8) as u8,
+                                color as u8,
+                            ]) {
+                                assert!(
+                                    got.abs_diff(expected) <= 2,
+                                    "group uses the production base surface"
+                                );
+                            }
+                        })
+                        .unwrap();
+                    }
+                    if reached.size.height > viewport.size.height {
+                        scroll.set_offset(point(
+                            px(0.),
+                            scroll.offset().y - reached.bottom() + viewport.bottom(),
+                        ));
+                        draw(cx, window);
+                        let tail = bounds(cx, window, &control.id).unwrap();
+                        assert!(
+                            tail.bottom() <= viewport.bottom() + px(1.)
+                                && tail.bottom() > viewport.top(),
+                            "{} oversized content tail reachable",
+                            control.id
+                        );
+                    }
+                    assert_eq!(
+                        bounds(cx, window, "settings-sidebar").unwrap(),
+                        sidebar,
+                        "detail scrolling never moves navigation"
+                    );
+                    assert_eq!(
+                        bounds(cx, window, "settings-detail-scroll").unwrap(),
+                        viewport,
+                        "content translation never moves the fixed viewport probe"
+                    );
+                    assert_eq!(scroll.bounds(), viewport);
+                }
+                if pane == kagi_ui_settings::Pane::Appearance {
+                    let before = scroll.offset().y;
+                    let delta = if before < px(-10.) { 100. } else { -100. };
+                    cx.simulate_event(
+                        window,
+                        gpui::ScrollWheelEvent {
+                            position: viewport.center(),
+                            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(delta))),
+                            touch_phase: gpui::TouchPhase::Moved,
+                            ..Default::default()
+                        },
+                    );
+                    draw(cx, window);
+                    assert!(
+                        (scroll.offset().y - before).abs() > px(1.),
+                        "wheel reaches the detail owner, not a nested group scroller"
+                    );
+                }
             }
         }
     }
-    app.update(cx, |app, cx| {
-        app.menu_overlay = None;
-        cx.notify();
-    });
+    keys(cx, window, "escape");
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS settings_groups EN/JA 100%/167% grouped page reachability");
-}
-
-fn check_settings_help(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-) {
-    use gpui::{point, px};
-    use kagi::ui::settings_view::take_settings_help_for_e2e;
-    let scroll = cx.read(|cx| app.read(cx).settings_scroll.clone());
-    let viewport = e2e::control_bounds(window.window_id(), "settings-scrollbar").unwrap();
-    for (id, measurement, detail) in [
-        (
-            "settings-avatar-help",
-            "settings-avatar-help",
-            Msg::SettingsLaneCompactDesc,
-        ),
-        (
-            "settings-custom-themes-help",
-            "settings-custom-description",
-            Msg::SettingsCustomThemesDesc,
-        ),
-        (
-            "settings-analyze-help",
-            "settings-analyze-description",
-            Msg::SettingsAnalyzeIgnoreDesc,
-        ),
-    ] {
-        cx.simulate_mouse_move(window, point(px(0.), px(0.)), None, gpui::Modifiers::none());
-        let bounds = e2e::control_bounds(window.window_id(), measurement).unwrap();
-        scroll.set_offset(point(
-            px(0.),
-            scroll.offset().y - bounds.top() + viewport.top() + px(8.),
-        ));
-        draw(cx, window);
-        let bounds = e2e::control_bounds(window.window_id(), measurement).unwrap();
-        take_settings_help_for_e2e(id);
-        cx.simulate_mouse_move(
-            window,
-            point(bounds.left() + px(10.), bounds.center().y),
-            None,
-            gpui::Modifiers::none(),
-        );
-        for _ in 0..3 {
-            cx.advance_clock(std::time::Duration::from_millis(400));
-            cx.run_until_parked();
-            draw(cx, window);
-        }
-        assert_eq!(
-            take_settings_help_for_e2e(id).as_deref(),
-            Some(detail.t()),
-            "{id} hover builds the full localized explanation"
-        );
-    }
-    cx.simulate_mouse_move(window, point(px(0.), px(0.)), None, gpui::Modifiers::none());
-    draw(cx, window);
-}
-
-fn check_analyze_spacing(window: AnyWindowHandle) {
-    let bounds = |name| e2e::control_bounds(window.window_id(), name).unwrap();
-    let group = bounds("settings-analyze-group");
-    let title = bounds("settings-analyze-label");
-    let description = bounds("settings-analyze-description");
-    let editor = bounds("settings-analyze-editor");
-    let reset = bounds("settings-analyze-reset");
-    let save = bounds("settings-analyze-save");
-    let spacing = kagi::ui::theme::scaled_px(8.) - gpui::px(1.);
-    assert!(title.top() - group.top() >= spacing, "Analyze top padding");
-    assert!(
-        description.top() - title.bottom() >= spacing,
-        "Analyze label gap"
-    );
-    assert!(
-        editor.top() - description.bottom() >= spacing,
-        "Analyze editor gap"
-    );
-    assert!(
-        reset.top() - editor.bottom() >= spacing,
-        "Analyze action gap"
-    );
-    assert!(
-        group.bottom() - save.bottom() >= spacing,
-        "Analyze bottom padding"
-    );
-}
-
-fn check_group_surface(
-    cx: &mut VisualTestAppContext,
-    window: AnyWindowHandle,
-    name: &str,
-    scroll: &gpui::ScrollHandle,
-) {
-    use gpui::{point, px};
-    let bounds = e2e::control_bounds(window.window_id(), name).unwrap();
-    let at = point(bounds.left() + px(3.), bounds.top() + px(16.));
-    cx.update_window(window, |_, w, _| {
-        let image = w.render_to_image().expect("group native fill");
-        let scale = w.scale_factor();
-        let pixel = image
-            .get_pixel(
-                (f32::from(at.x) * scale) as u32,
-                (f32::from(at.y) * scale) as u32,
-            )
-            .0;
-        let color = kagi::ui::theme::theme().bg_base;
-        for (got, expected) in
-            pixel[..3]
-                .iter()
-                .zip([(color >> 16) as u8, (color >> 8) as u8, color as u8])
-        {
-            assert!(got.abs_diff(expected) <= 2, "{name} shared base surface");
-        }
-    })
-    .unwrap();
-    let before = scroll.offset().y;
-    let delta = if before < px(-10.) { 10. } else { -10. };
-    cx.simulate_event(
-        window,
-        gpui::ScrollWheelEvent {
-            position: at,
-            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(delta))),
-            touch_phase: gpui::TouchPhase::Moved,
-            ..Default::default()
-        },
-    );
-    draw(cx, window);
-    assert!(
-        (scroll.offset().y - before).abs() > px(1.),
-        "{name} wheel must reach the page owner, not a nested group scroller"
-    );
-}
-
-fn check_extra_settings_controls(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    zoom: f32,
-) {
-    use gpui::{point, px};
-    let scroll = cx.read(|cx| app.read(cx).settings_scroll.clone());
-    let viewport = e2e::control_bounds(window.window_id(), "settings-scrollbar").unwrap();
-    for name in [
-        "settings-custom-themes-path",
-        "settings-custom-themes-open",
-        "settings-custom-themes-reload",
-        "settings-analyze-editor",
-        "settings-custom-themes-guide-control",
-        "settings-analyze-reset",
-        "settings-analyze-save",
-    ] {
-        let bounds = e2e::control_bounds(window.window_id(), name).expect("preserved control");
-        let delta = bounds.top() - viewport.top() - px(8.);
-        scroll.set_offset(point(px(0.), scroll.offset().y - delta));
-        draw(cx, window);
-        let bounds = e2e::control_bounds(window.window_id(), name).unwrap();
-        assert!(bounds.left() >= viewport.left() - px(1.), "{name} left");
-        assert!(bounds.right() <= viewport.right() + px(1.), "{name} right");
-        assert!(bounds.top() >= viewport.top() - px(1.), "{name} top");
-        if name == "settings-analyze-editor" && bounds.size.height > viewport.size.height {
-            // The existing 8–22-line editor is intentionally unchanged. An
-            // oversized editor's two edges must both be page-scroll reachable.
-            let delta = bounds.bottom() - viewport.bottom() + px(8.);
-            scroll.set_offset(point(px(0.), scroll.offset().y - delta));
-            draw(cx, window);
-            let bottom = e2e::control_bounds(window.window_id(), name)
-                .unwrap()
-                .bottom();
-            assert!(
-                bottom <= viewport.bottom() + px(1.) && bottom > viewport.top(),
-                "{name} tail reachable"
-            );
-        } else {
-            assert!(
-                bounds.bottom() <= viewport.bottom() + px(1.),
-                "{name} bottom"
-            );
-        }
-    }
-    if zoom == 1. {
-        for name in [
-            "settings-custom-description",
-            "settings-analyze-description",
-        ] {
-            let description = e2e::control_bounds(window.window_id(), name).unwrap();
-            assert!(description.size.height <= px(36.), "{name} <= two lines");
-        }
-    }
-}
-
-fn check_grouped_rows(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    zoom: f32,
-) {
-    use gpui::{point, px};
-    let scroll = cx.read(|cx| app.read(cx).settings_scroll.clone());
-    let viewport = e2e::control_bounds(window.window_id(), "settings-scrollbar").unwrap();
-    for title in [
-        Msg::SettingsTheme,
-        Msg::SettingsAccent,
-        Msg::SettingsZoom,
-        Msg::SettingsToolbarDisplay,
-        Msg::SettingsCompact,
-        Msg::SettingsLaneCompact,
-        Msg::SettingsAutoFetch,
-        Msg::SettingsGraphCopy,
-        Msg::SettingsReduceMotion,
-        Msg::SettingsTerminalAutoLock,
-        Msg::SettingsInterfaceLang,
-        Msg::SettingsSmartEnable,
-        Msg::SettingsSmartProvider,
-        Msg::SettingsSmartModel,
-    ] {
-        let name = format!("settings-control-{}", title.t());
-        let bounds = e2e::control_bounds(window.window_id(), &name).expect("preserved control");
-        let delta = bounds.top() - viewport.top() - px(8.);
-        scroll.set_offset(point(px(0.), scroll.offset().y - delta));
-        draw(cx, window);
-        let bounds = e2e::control_bounds(window.window_id(), &name).unwrap();
-        assert!(bounds.left() >= viewport.left() - px(1.), "{name} left");
-        assert!(bounds.right() <= viewport.right() + px(1.), "{name} right");
-        assert!(bounds.top() >= viewport.top() - px(1.), "{name} top");
-        assert!(
-            bounds.bottom() <= viewport.bottom() + px(1.),
-            "{name} bottom: control={bounds:?}, viewport={viewport:?}, zoom={zoom}"
-        );
-        if zoom == 1. {
-            let description = e2e::control_bounds(
-                window.window_id(),
-                &format!("settings-description-{}", title.t()),
-            )
-            .expect("description bounds");
-            assert!(
-                description.size.height <= px(36.),
-                "{name} description <= two lines"
-            );
-        }
-    }
-}
-
-fn focus(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    slot: usize,
-) {
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.focus_settings_switch_for_e2e(slot, window, cx)
-        })
-    })
-    .unwrap();
-    cx.run_until_parked();
+    eprintln!("[gui-e2e] PASS settings_groups EN/JA 100%/167% eight-pane reachability");
 }

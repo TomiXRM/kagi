@@ -321,22 +321,43 @@ copy — the skill changes when seams change.
   command; the alt text follows `#`. Attachments survive branch deletion, so
   there is nothing to keep around after the merge.
 
-## Workflow: PRs and multi-agent work
+## 作業手順: PR と複数エージェントでの作業
 
-The rules for pushing, resolving conflicts, answering Codex review and merging,
-and for driving several agents through herdr, live in
-[`docs/agents/workflow.md`](docs/agents/workflow.md). The ones that are broken most
-often:
+着手前の正、Draft PR、コミット、クロスレビュー、Skill 使用記録、push、競合の解消、
+Codex レビューへの返信、マージ、および herdr で複数エージェントを動かすときのルールは
+[`docs/agents/workflow.md`](docs/agents/workflow.md) にある。特によく破られるもの:
 
-- Never rewrite a pushed branch; after a push, check that the remote head
-  (`git ls-remote --exit-code --heads origin refs/heads/<branch>`) equals `HEAD`.
-- Resolve **code** conflicts by reading each hunk — never by keeping both sides.
-- Gate before push (build, tests, touched Tier A, `check-all`), chained so a
-  failure stops the push.
-- Read and answer every Codex comment before merge; fix P0/P1 and P2s that can
-  cause a wrong write.
-- herdr: use mail for assignments and replies; require `[ack]` and `[done]`.
-  No terminal-prompt fallback; see `docs/agents/workflow.md`.
+- **コードを書く前に「正」を決め、最初の不一致で止まる。** 比較する原本（正とされた
+  UI、Issue の受け入れ条件、オーナーの指示、該当 ADR など）、合否の条件、最初に比較する
+  時点を先に書く。最初に比較できる成果物ができたら比較して結果を PR に書き、違いが
+  出たら、直すかオーナーに確認するまで先に進まない。テストの成功は、この比較の代わりに
+  ならない（PR #1818: テスト 53 件が成功したまま、4 時間目から窓の構成が正と違っていた）。
+- **コードを書き始めたら、最初のコミット（ビルドとテストが通るもの）で push して Draft PR を
+  立てる。** PR 本文は `.github/PULL_REQUEST_TEMPLATE.md`（各節の書き方は
+  `docs/agents/workflow.md`）に従い、チェックポイントごとに最新に保つ。
+- **コミットはレビュー単位で切る。** 1 コミット 1 意図。各コミットで、触れた範囲の
+  ビルドとテストが通る。機械的な移動・リネームと挙動の変更を混ぜない。
+- **クロスレビューを受ける。** 最初に正と比較できる成果物ができたときと、Ready for
+  review にする前の確定した head に対して。作成者が、変更を書いていない新しい
+  エージェント（作成者の会話を引き継ぐフォークは不可）に依頼する。作成者と別系統の
+  モデルが望ましい。Codex レビューや HIG レビューの代わりにはならない。
+- **使った Skill ごとに使用記録を PR に残す。** 記録に失敗か曖昧さを書いたら、Skill を
+  直す PR か Issue へリンクするか、直さない理由を書く。
+- 小さな変更（30 行以下）で省けるのは 1 回目のクロスレビューだけ。依存の更新、書き込み
+  処理、受け入れ条件、エージェントの必須手順を変えるものは行数によらず 2 回受ける。
+  Draft PR もクロスレビューも不要なのは、挙動・ユーザーに見える文言・形式を変えない
+  誤字・整形・ツールによる機械的なリネームだけ。
+  基準は `docs/agents/workflow.md` の適用範囲表に従う。
+- push 済みのブランチは書き換えない。push 後、リモートの head
+  （`git ls-remote --exit-code --heads origin refs/heads/<branch>`）が `HEAD` と一致する
+  ことを確認する。
+- **コード**の競合は hunk ごとに読んで解消する。両方を残す解消はしない。
+- push 前の確認（ビルド、テスト、触れた Tier A、`check-all`）は、失敗したら push が
+  止まるようにつなげて実行する。
+- マージ前に Codex のコメントをすべて読んで返信する。P0/P1 と、誤った書き込みに
+  つながりうる P2 は直す。
+- herdr: 依頼と返信はメールで行い、`[ack]` と `[done]` を必須にする。端末への直接
+  入力で代用しない。詳細は `docs/agents/workflow.md`。
 
 ## Code Review Rules
 

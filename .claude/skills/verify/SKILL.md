@@ -4112,7 +4112,15 @@ Build `scripts/pidclick.swift` and, into the same directory, `scripts/pidcursor.
 all three isolation flags. `USER` namespaces the per-user socket name, while
 `KAGI_NO_RESTORE=1` and `KAGI_LOG_DIR` prevent fixture work from changing the
 user's persisted session, settings, trust, or oplog. `KAGI_NO_ACTIVATE=1` avoids
-stealing the foreground application.
+stealing the foreground application, including opening/raising the native Settings
+window. Record the frontmost application before and after the real Cmd-comma path;
+no application activation or tab-strip click is needed.
+After the last `--features gui-e2e` Cargo command, restore the ordinary binary
+with `cargo build --message-format=json-render-diagnostics`: integration tests can
+replace `target/debug/kagi` with the GUI-E2E binary, whose terminal shell fence
+rejects an ordinary launch. Retain the compiler artifact's `features=[]`, source
+and byte hash, and launch a preserved copy so later Cargo commands cannot replace
+it. Record the actual launch binary, not a stale hash of the target path.
 
 ```bash
 swiftc scripts/pidclick.swift -o /tmp/pidclick

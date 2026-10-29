@@ -271,3 +271,8 @@ Apple, Catppuccin, Nagi, One first in each appearance, then the remaining
 catalog in stable source order. Registry/default/persisted slugs and palettes
 are unchanged. Monokai's display label omits its former explanatory suffix,
 including the command entry; its implementation/provenance remain unchanged.
+
+The existing `KAGI_NO_ACTIVATE=1` isolated-launch option also governs creation
+and raising of this secondary window. Its normal activation behavior remains
+unchanged when the option is absent. This closes a verification-safety gap:
+previously the repository respected the option while Cmd-comma Settings did not.

@@ -36,9 +36,54 @@ fn assert_rgb(actual: [u8; 4], expected: [u8; 3], relation: &str) {
     }
 }
 
+fn assert_tile_gradient(
+    id: &str,
+    tile: Bounds<Pixels>,
+    base: u32,
+    backing: [u8; 3],
+    scale: f32,
+    sample: &impl Fn(Point<Pixels>) -> [u8; 4],
+) {
+    // Canonical 22%-white top stop, rounded before sRGB interpolation.
+    let bottom = [16, 8, 0].map(|shift| ((base >> shift) & 255) as f32);
+    let top = bottom.map(|channel| (channel + (255. - channel) * 0.22).round());
+    for fraction in [0.25, 0.5, 0.75] {
+        let point = Point::new(
+            tile.left() + px(2.),
+            tile.top() + tile.size.height * fraction,
+        );
+        let actual = sample(point);
+        // render_to_image samples an integer pixel; Metal shades its centre.
+        let pixel_y = (f32::from(point.y) * scale).floor() + 0.5;
+        let t = (pixel_y / scale - f32::from(tile.top())) / f32::from(tile.size.height);
+        for channel in 0..3 {
+            let ideal = top[channel] + (bottom[channel] - top[channel]) * t;
+            // Pinned GPUI shaders.metal:1232-1242 dithers RGB by ±2/255 AND
+            // alpha by ±3/255, then source-alpha blends over the row/sidebar.
+            // Bound that renderer noise, not an arbitrary pixel tolerance.
+            let mut lower = f32::INFINITY;
+            let mut upper = f32::NEG_INFINITY;
+            for rgb_noise in [-2., 2.] {
+                for alpha in [1. - 3. / 255., 1., 1. + 3. / 255.] {
+                    let value =
+                        (ideal + rgb_noise) * alpha + f32::from(backing[channel]) * (1. - alpha);
+                    lower = lower.min(value);
+                    upper = upper.max(value);
+                }
+            }
+            let actual = f32::from(actual[channel]);
+            assert!(
+                actual >= lower.floor() && actual <= upper.ceil(),
+                "{id} gradient at {point:?}, channel {channel}: {actual} outside {lower}..{upper}"
+            );
+        }
+    }
+}
+
 fn assert_sidebar_paint(
     panel: Bounds<Pixels>,
     probes: &[ControlProbe],
+    scale: f32,
     sample: &impl Fn(Point<Pixels>) -> [u8; 4],
 ) {
     // Pinned kit ink roles in Apple Light/Dark; never production kit helpers.
@@ -113,15 +158,17 @@ fn assert_sidebar_paint(
     ] {
         let tile = probe(probes, &format!("settings-pane-tile-{id}")).bounds;
         let base = if dark { dark_rgb } else { light };
-        let expected = [16, 8, 0].map(|shift| {
-            let channel = ((base >> shift) & 255) as f32;
-            (channel + (255. - channel) * 0.11).round() as u8
-        });
-        assert_rgb(
-            sample(Point::new(tile.left() + px(2.), tile.center().y)),
-            expected,
-            "canonical category hue at tile gradient midpoint",
-        );
+        let selected = probe(probes, &format!("settings-pane-{id}")).selected;
+        let backing = if selected {
+            if dark {
+                [58, 58, 60]
+            } else {
+                [211, 211, 211]
+            }
+        } else {
+            sidebar
+        };
+        assert_tile_gradient(id, tile, base, backing, scale, sample);
     }
 }
 
@@ -438,7 +485,7 @@ pub fn assert_composition(
             "canonical neutral selection: {pixel:?}"
         );
     }
-    assert_sidebar_paint(panel, &probes, &sample);
+    assert_sidebar_paint(panel, &probes, window.scale_factor(), &sample);
     assert_eq!(traffic_lights.len(), 3);
     for &[x, y, width, height] in traffic_lights {
         let light = Bounds::new(

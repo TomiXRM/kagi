@@ -38,10 +38,8 @@ Theme-caption coverage measures the actual caption allocation and screenshot
 ink span for short names in both Apple themes. Accessible-name or fixture-string
 echoes are insufficient: a caption can have 122px of usable space but paint only
 a 9px ellipsis after an incorrect text-layout cache reuse.
-Long names also require the painted `StyledText` layout's actual ellipsis text
-and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
-Do not replace this with the original full label: a correct 138px truncation
-measurement can still be hard-clipped if the final text leaf is allocated 165px.
+Long names require complete painted `StyledText` text/bounds inside the
+caption/card and final-line ink; input/AX labels are not painted-layout proof.
 The canonical chooser has two Light/Dark sections, each enclosing its horizontal
 strip in a group card, one global radio selection and Light-then-Dark keyboard
 order, not a value slider. Cards use the owner-selected132×84 preview geometry.
@@ -86,6 +84,9 @@ content width = card −24pt padding − actual borders (Light1px per side, Dark
 card height = sum of actual row heights + in-flow1px separators + actual borders.
 Transparent test recorders forward each child's LayoutId without adding a flex
 wrapper; do not derive the measured card's border box from its style constants.
+Canonical tile gradients use three glyph-free heights and pinned hues/stops.
+The oracle conservatively bounds renderer RGB/alpha dithering, pixel-centre
+sampling and backing compositing, not an undithered midpoint or global tolerance.
 
 `settings_quiet` also moves the pointer onto each selected sidebar row and
 samples native Metal pixels, including same-height pane transitions. It checks
@@ -120,12 +121,11 @@ Do not force one-line height onto genuinely wrapped labels or merely move the
 overflow into another wrapper. Then run affected segment/focus neighbors; do not
 repeat native/workspace gates for each unreviewed visual iteration.
 
-`production popup` cases require closed/open model triggers to remain inside
-their actual row/group, and actual text-layout ellipses plus trailing ink to
-use the menu's available label width in EN/JA. Hover the **current long model
-item** and inspect the full-name tooltip PNG; an earlier unavailable-value
-tooltip or the full AX-name field is not that proof. Actual exposed trigger
-bounds determine the second-click target when the popup overlaps its centre.
+`production popup` cases require closed/open triggers inside their actual row/group,
+complete painted `StyledText` layouts and final-line ink in EN/JA. Claude Code and
+gemma4:latest fit on one line; long values/menu items wrap without clipping.
+Ordinary names/descriptions have no duplicate tooltips (#1821/#1822). Exposed
+trigger bounds determine the second-click target when the popup overlaps its centre.
 Keep real disabled-first/wrap/confirm and host-reopen-discard assertions.
 The existing native `settings_provider_keys` leg also opens its actual popup,
 sends Cmd-W, reopens the retained production view in a new native window and

@@ -5,10 +5,29 @@ use gpui_component::{
     menu::{PopupMenu, PopupMenuItem},
     ElementExt as _, Icon, IconName, Sizable, Size,
 };
-use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::cell::Cell;
 
 type Entry = (String, SharedString, bool, bool, SettingsIntent);
+
+fn label_width(label: &SharedString, window: &Window) -> Pixels {
+    window
+        .text_system()
+        .shape_line(
+            label.clone(),
+            pt(metrics::BODY),
+            &[TextRun {
+                len: label.len(),
+                font: kagi_ui_core::theme::ui_font(),
+                color: ink::text(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+            None,
+        )
+        .width()
+        .ceil()
+}
 pub(super) struct SettingsPopup {
     id: &'static str,
     menu: Entity<PopupMenu>,
@@ -86,6 +105,11 @@ impl SettingsView {
         }
         self.close_popup(window, cx);
         let owner = cx.entity().downgrade();
+        let menu_width = entries
+            .iter()
+            .map(|entry| label_width(&entry.1, window) + pt(48.))
+            .fold(anchor.get().size.width.max(pt(120.)), Pixels::max)
+            .min(window.bounds().size.width - px(18.));
         let menu = PopupMenu::build(window, cx, |mut menu, _, _| {
             for (item_id, label, selected, enabled, intent) in entries.iter() {
                 let text_owner = owner.clone();
@@ -118,9 +142,9 @@ impl SettingsView {
                             .flex_col()
                             .role(Role::Label)
                             .aria_label(label.clone())
+                            .font(kagi_ui_core::theme::ui_font())
                             .text_size(pt(metrics::BODY))
                             .line_height(pt(20.))
-                            .truncate()
                             .children(
                                 cfg!(feature = "gui-e2e")
                                     .then(|| {
@@ -140,10 +164,6 @@ impl SettingsView {
                             )
                             .child(text)
                             .children(text_probe)
-                            .hover_tooltip(
-                                SharedString::from(format!("{item_id}-name")),
-                                label.clone(),
-                            )
                     })
                     .aria_label(accessible_label)
                     .radio_checked(selected)
@@ -159,7 +179,7 @@ impl SettingsView {
                     }),
                 );
             }
-            menu.scrollable(true).min_w(pt(120.)).max_w(pt(280.))
+            menu.scrollable(true).min_w(menu_width).max_w(menu_width)
         });
         let subscription =
             cx.subscribe_in(&menu, window, |this, _, _: &DismissEvent, window, cx| {
@@ -215,13 +235,9 @@ impl SettingsView {
         let click_entries = entries.clone();
         let pointer_entries = entries.clone();
         let key_entries = entries;
-        let width = (label
-            .chars()
-            .map(|ch| if ch.is_ascii() { 1. } else { 1.8 })
-            .sum::<f32>()
-            * 6.6
-            + 38.)
-            .clamp(100., 240.);
+        // Measure the same font the value paints; character counts underallocate
+        // ordinary names such as Claude Code and gemma4:latest.
+        let width = label_width(&label, window) + pt(8. + 8. + 18. + 3.);
         let text = StyledText::new(label.clone());
         #[cfg(feature = "gui-e2e")]
         let text_probe = Some(self.measured_text(format!("{id}-text"), label.to_string(), &text));
@@ -230,7 +246,11 @@ impl SettingsView {
         let visual = div()
             .id(SharedString::from(format!("{id}-visual")))
             .relative()
-            .h(pt(metrics::CONTROL_HEIGHT))
+            .min_h(pt(metrics::CONTROL_HEIGHT))
+            .py(pt(2.))
+            .font(kagi_ui_core::theme::ui_font())
+            .text_size(pt(metrics::BODY))
+            .line_height(pt(20.))
             .w_full()
             .min_w_0()
             .pl(pt(8.))
@@ -262,7 +282,6 @@ impl SettingsView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .truncate()
                     .child(text)
                     .children(text_probe),
             )
@@ -307,9 +326,10 @@ impl SettingsView {
         .aria_label(title.t())
         .aria_value(label.clone())
         .aria_expanded(open)
-        .w(pt(width))
+        .w(width.max(pt(100.)))
         .max_w_full()
-        .h(pt(metrics::CONTROL_HIT_HEIGHT))
+        .min_h(pt(metrics::CONTROL_HIT_HEIGHT))
+        .py(pt(2.))
         .flex()
         .items_center()
         .child(visual)
@@ -354,7 +374,6 @@ impl SettingsView {
                 cx.stop_propagation();
             }
         }))
-        .hover_tooltip(SharedString::from(format!("{id}-value")), label)
         .into_any_element()
     }
 

@@ -3,7 +3,6 @@ use super::kit_style::{ink, metrics, pt, Hue};
 use super::*;
 use gpui_component::{Icon, IconName, Sizable, Size};
 use kagi_ui_core::theme::{self, theme};
-use kagi_ui_core::tooltip::HoverTooltip as _;
 
 impl SettingsView {
     pub(crate) fn sidebar(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -119,7 +118,6 @@ impl SettingsView {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .truncate()
                         .font_weight(if selected {
                             FontWeight::SEMIBOLD
                         } else {
@@ -153,10 +151,7 @@ impl SettingsView {
                     .size_full(),
                 )
             });
-            sidebar = sidebar.child(item.hover_tooltip(
-                SharedString::from(format!("settings-pane-name-{}", pane.id())),
-                pane.title(),
-            ));
+            sidebar = sidebar.child(item);
         }
         if let Some(index) = focused {
             sidebar = sidebar.child(self.sidebar_focus_overlay(index));

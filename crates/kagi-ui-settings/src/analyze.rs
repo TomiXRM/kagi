@@ -4,7 +4,6 @@ use super::{
     *,
 };
 use kagi_ui_core::theme::theme;
-use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(crate) struct AnalyzeState {
     pub baseline: SharedString,
@@ -105,11 +104,7 @@ impl SettingsView {
                     false,
                     false,
                 )
-            }))
-            .hover_tooltip(
-                "settings-analyze-help-full",
-                Msg::SettingsAnalyzeIgnoreDesc.t(),
-            );
+            }));
         let input = div()
             .id("settings-analyze-input")
             .relative()

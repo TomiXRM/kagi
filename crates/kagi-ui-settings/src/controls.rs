@@ -3,7 +3,6 @@ use super::kit_style::{ink, metrics, pt};
 use super::*;
 use gpui_component::ElementExt as _;
 use kagi_ui_core::theme::{self, theme};
-use kagi_ui_core::tooltip::HoverTooltip as _;
 
 #[derive(IntoElement)]
 pub(crate) struct SettingsGroup {
@@ -371,12 +370,7 @@ impl SettingsView {
                     .ml_auto()
                     .child(control),
             );
-        if summary.is_some() {
-            row.hover_tooltip(SharedString::from(format!("{id}-full")), description)
-                .into_any_element()
-        } else {
-            row.into_any_element()
-        }
+        row.into_any_element()
     }
     pub(super) fn handle(&mut self, id: &str, cx: &mut App) -> FocusHandle {
         self.focus

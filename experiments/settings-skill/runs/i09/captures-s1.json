@@ -1,0 +1,68 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i09/s1/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/rest-picker-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/selected-bottom-right-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/selected-top-left-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/selected-top-right-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/selected-bottom-left-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/focus-picker-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/hover-picker-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/focus-switch-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s1/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "rest-picker",
+  "selected-bottom-right",
+  "selected-top-left",
+  "selected-top-right",
+  "selected-bottom-left",
+  "focus-picker",
+  "hover-picker",
+  "focus-switch"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 3,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 0,
+  ".rounded(": 1,
+  "Switch::new": 0,
+  "fn ": 7
+ },
+ "loc": 267
+}

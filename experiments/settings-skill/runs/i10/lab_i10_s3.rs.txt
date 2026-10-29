@@ -1,0 +1,175 @@
+//! I10/S3 — Kagi General settings in the reusable settings kit.
+use gpui::{prelude::*, AnyElement, App, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Msg;
+use kagi::ui::settings_kit::{
+    detail_page, group, icon_tile, popup_value, search_field, section, settings_window, sidebar,
+    sidebar_gap, sidebar_item, stepper, switch, Forced, Hue, Row, Segmented, StepperPart, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-s3",
+    states: &["default", "focus-auto-fetch"],
+    size: (900., 1_080.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn settings_sidebar() -> AnyElement {
+    let item = |id, icon, hue, label, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", Msg::SettingsTitle.t()).into_any_element(),
+        item(
+            "general",
+            IconName::Settings2,
+            Hue::Gray,
+            Msg::SettingsGeneral.t(),
+            true,
+        ),
+        item(
+            "language",
+            IconName::Globe,
+            Hue::Blue,
+            Msg::SettingsLanguage.t(),
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "smart-commit",
+            IconName::Bot,
+            Hue::Purple,
+            Msg::SettingsSmartCommit.t(),
+            false,
+        ),
+        item(
+            "analyze",
+            IconName::ChartPie,
+            Hue::Teal,
+            Msg::SettingsAnalyze.t(),
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let auto_fetch_state = if cx.state == "focus-auto-fetch" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        settings_sidebar(),
+        detail_page(
+            "general-scroll",
+            Msg::SettingsGeneral.t(),
+            [
+                section(
+                    Msg::SettingsAppearance.t(),
+                    None,
+                    None,
+                    group([
+                        Row::new(Msg::SettingsTheme.t())
+                            .subtitle(Msg::SettingsThemeDesc.t())
+                            .trailing(popup_value("theme", "Apple Dark", Forced::Rest))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsAccent.t())
+                            .trailing(
+                                Segmented::new(
+                                    "accent",
+                                    [Msg::SettingsAccentSystem.t(), Msg::SettingsAccentTheme.t()],
+                                    1,
+                                )
+                                .forced(0, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new(Msg::SettingsToolbarDisplay.t())
+                            .subtitle(Msg::SettingsToolbarDisplayDesc.t())
+                            .trailing(
+                                Segmented::new(
+                                    "toolbar",
+                                    [Msg::ToolbarIconAndText.t(), Msg::ToolbarIconOnly.t()],
+                                    1,
+                                )
+                                .forced(0, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new(Msg::SettingsZoom.t())
+                            .subtitle(Msg::SettingsZoomDesc.t())
+                            .trailing(stepper("ui-zoom", "100%", true, true, None))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsCompactThreshold.t())
+                            .subtitle(Msg::SettingsCompactThresholdDesc.t())
+                            .trailing(stepper(
+                                "compact-threshold",
+                                "70rem",
+                                true,
+                                true,
+                                Some((StepperPart::Increase, Forced::Rest)),
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    Msg::SettingsGraph.t(),
+                    None,
+                    None,
+                    group([
+                        Row::new(Msg::SettingsCompact.t())
+                            .subtitle(Msg::SettingsCompactDesc.t())
+                            .trailing(switch(
+                                "compact-graph",
+                                Msg::SettingsCompact.t(),
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsLaneCompact.t())
+                            .subtitle(Msg::SettingsLaneCompactDesc.t())
+                            .trailing(switch(
+                                "avatar-commit-nodes",
+                                Msg::SettingsLaneCompact.t(),
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    Msg::SettingsNetwork.t(),
+                    None,
+                    None,
+                    group([Row::new(Msg::SettingsAutoFetch.t())
+                        .subtitle(Msg::SettingsAutoFetchDesc.t())
+                        .trailing(switch(
+                            "auto-fetch",
+                            Msg::SettingsAutoFetch.t(),
+                            true,
+                            auto_fetch_state,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

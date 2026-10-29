@@ -1,0 +1,295 @@
+//! Gallery reconstruction of Rex's Notifications settings pane.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Role, Window};
+use gpui_component::{Icon, IconName, Sizable as _, Size};
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    detail_page, group, icon_tile, ink, metrics, pt, ring, search_field, section, settings_window,
+    sidebar, sidebar_gap, sidebar_item, switch, Forced, Hue, Row, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i06-s1",
+    states: &[
+        "default",
+        "rest-picker",
+        "selected-picker",
+        "focus-picker",
+        "hover-switch",
+    ],
+    size: (900., 790.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rex_sidebar() -> AnyElement {
+    let item = |id: &'static str, icon, hue, label: &'static str| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            id == "notifications",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 32.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Gray,
+            "Interface",
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes"),
+        sidebar_gap(),
+        item("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        item("shortcuts", IconName::CaseSensitive, Hue::Blue, "Shortcuts"),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+        ),
+        item("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        item("remote", IconName::Globe, Hue::Blue, "Remote Hosts"),
+        sidebar_gap(),
+        item("developer", IconName::Settings2, Hue::Gray, "Developer"),
+    ])
+    .into_any_element()
+}
+
+/// The kit has no spatial picker. This page-local gap keeps every selected
+/// indicator on the same cell-origin mapping used to place its six cells.
+fn position_picker(
+    id: &'static str,
+    selected: (usize, usize),
+    forced: Forced,
+) -> gpui::Stateful<gpui::Div> {
+    const CELL_W: f32 = 26.;
+    const CELL_H: f32 = 14.;
+    const GAP: f32 = 7.;
+    const PAD: f32 = 5.;
+    let cell_origin = |column: usize, row: usize| {
+        (
+            PAD + column as f32 * (CELL_W + GAP),
+            PAD + row as f32 * (CELL_H + GAP),
+        )
+    };
+    let selected_origin = cell_origin(selected.0, selected.1);
+    let labels = [
+        ["Top left", "Top center", "Top right"],
+        ["Bottom left", "Bottom center", "Bottom right"],
+    ];
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::control(),
+    };
+    let mut picker = div()
+        .id(id)
+        .relative()
+        .w(pt(PAD * 2. + CELL_W * 3. + GAP * 2.))
+        .h(pt(PAD * 2. + CELL_H * 2. + GAP))
+        .rounded(pt(metrics::CONTROL_RADIUS))
+        .bg(rgb(fill))
+        .role(Role::RadioGroup)
+        .aria_label("Notification position")
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        });
+
+    for (row, labels) in labels.into_iter().enumerate() {
+        for (column, label) in labels.into_iter().enumerate() {
+            let (x, y) = cell_origin(column, row);
+            let is_selected = (column, row) == selected;
+            let cell = div()
+                .id(("notification-position", row * 3 + column))
+                .absolute()
+                .left(pt(x))
+                .top(pt(y))
+                .w(pt(CELL_W))
+                .h(pt(CELL_H))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(6.))
+                .bg(if is_selected {
+                    ink::accent()
+                } else {
+                    rgb(ink::card()).into()
+                })
+                .role(Role::RadioButton)
+                .aria_label(label)
+                .aria_selected(is_selected)
+                .focusable();
+            picker = picker.child(cell);
+        }
+    }
+
+    picker = picker.child(
+        div()
+            .absolute()
+            .left(pt(selected_origin.0))
+            .top(pt(selected_origin.1))
+            .w(pt(CELL_W))
+            .h(pt(CELL_H))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(ink::accent_text())
+            .child(
+                Icon::new(IconName::Check)
+                    .with_size(Size::Size(pt(10.)))
+                    .text_color(ink::accent_text()),
+            ),
+    );
+
+    ring(picker, forced == Forced::Focus, metrics::CONTROL_RADIUS)
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let picker_state = match cx.state {
+        "selected-picker" => Forced::Pressed,
+        "focus-picker" => Forced::Focus,
+        _ => Forced::Rest,
+    };
+    let switch_state = if cx.state == "hover-switch" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        rex_sidebar(),
+        detail_page(
+            "notifications-scroll",
+            "Notifications",
+            [
+                section(
+                    "In-App Notifications",
+                    None,
+                    None,
+                    group([Row::new("Notification position")
+                        .subtitle("Displayed bottom right")
+                        .trailing(position_picker("position", (2, 1), picker_state))
+                        .into_any_element()]),
+                ),
+                section(
+                    "Program Activity",
+                    Some("How status from processes and agents is handled".into()),
+                    None,
+                    group([
+                        Row::new("Show activity in tabs")
+                            .trailing(switch(
+                                "show-activity",
+                                "Show activity in tabs",
+                                true,
+                                switch_state,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Show system notifications")
+                            .trailing(switch(
+                                "system-notifications",
+                                "Show system notifications",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Badge Dock icon")
+                            .trailing(switch(
+                                "badge-dock",
+                                "Badge Dock icon",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Play sounds")
+                            .trailing(switch(
+                                "play-sounds",
+                                "Play sounds",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                group([
+                    status_row("Working", "Tabs", IconName::Ellipsis, Tint::Hue(Hue::Blue)),
+                    status_row(
+                        "Blocked",
+                        "Tabs, Notifications, Dock Badge, Sound",
+                        IconName::CircleX,
+                        Tint::Warning,
+                    ),
+                    status_row(
+                        "Error",
+                        "Tabs, Notifications, Dock Badge, Sound",
+                        IconName::TriangleAlert,
+                        Tint::Danger,
+                    ),
+                    status_row(
+                        "Done",
+                        "Tabs, Notifications, Dock Badge, Sound",
+                        IconName::CircleCheck,
+                        Tint::Success,
+                    ),
+                ])
+                .into_any_element(),
+                group([
+                    Row::new("Include idle processes in activity")
+                        .trailing(switch(
+                            "include-idle",
+                            "Include idle processes in activity",
+                            true,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element(),
+                    Row::new("Show each process in tabs")
+                        .trailing(switch(
+                            "each-process",
+                            "Show each process in tabs",
+                            false,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element(),
+                ])
+                .into_any_element(),
+            ],
+        ),
+    )
+    .into_any_element()
+}
+
+fn status_row(
+    title: &'static str,
+    subtitle: &'static str,
+    icon: IconName,
+    tint: Tint,
+) -> AnyElement {
+    Row::new(title)
+        .subtitle(subtitle)
+        .leading(icon_tile(icon, tint, 26.))
+        .navigation(title, Forced::Rest)
+        .into_any_element()
+}

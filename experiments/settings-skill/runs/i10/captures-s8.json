@@ -1,0 +1,68 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i10/s8/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-appearance-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-graph-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-editor-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-smart-commit-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-terminal-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-network-sync-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-general-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/pane-analyze-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i10/s8/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "pane-appearance",
+  "pane-graph",
+  "pane-editor",
+  "pane-smart-commit",
+  "pane-terminal",
+  "pane-network-sync",
+  "pane-general",
+  "pane-analyze"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 5,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 0,
+  ".rounded(": 0,
+  "Switch::new": 0,
+  "fn ": 15
+ },
+ "loc": 421
+}

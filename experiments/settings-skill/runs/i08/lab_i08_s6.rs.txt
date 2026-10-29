@@ -1,0 +1,290 @@
+//! S6: a data-driven theme gallery composed with the settings kit.
+//!
+//! Placement suggestions (the scenario fixes this layout):
+//! light theme / extended palette -> Themes -> Light Mode;
+//! dark theme / extended palette -> Themes -> Dark Mode — Active.
+//! Kit gap: a fixed-width visual theme choice, including its ANSI preview.
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Role, SharedString, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+use kagi::ui::theme::{themes_by_name, Theme};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i08-s6",
+    states: &[
+        "default",
+        "hover-card",
+        "pressed-card",
+        "focus-card",
+        "disabled-card",
+    ],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn kagi_sidebar() -> AnyElement {
+    let panes = [
+        ("general", IconName::Settings2, Hue::Gray, "General"),
+        ("themes", IconName::Palette, Hue::Indigo, "Themes"),
+        ("graph", IconName::GalleryVerticalEnd, Hue::Orange, "Graph"),
+        ("editor", IconName::File, Hue::Teal, "Editor"),
+        ("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        ("network", IconName::Network, Hue::Blue, "Network & Sync"),
+        ("smart-commit", IconName::Bot, Hue::Purple, "Smart Commit"),
+    ];
+    sidebar(
+        [search_field("search", "Search Settings").into_any_element()]
+            .into_iter()
+            .chain(panes.into_iter().map(|(id, icon, hue, label)| {
+                sidebar_item(
+                    id,
+                    icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+                    label,
+                    None,
+                    id == "themes",
+                    Forced::Rest,
+                )
+                .into_any_element()
+            })),
+    )
+    .into_any_element()
+}
+
+fn terminal_rgb((r, g, b): (u8, u8, u8)) -> u32 {
+    (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+}
+
+const CARD_WIDTH: f32 = 164.;
+const DOT_SIZE: f32 = 13.;
+const DOT_PITCH: f32 = 16.;
+
+/// One index-to-position mapping for all eight ANSI indicators.
+fn ansi_x(index: usize) -> f32 {
+    index as f32 * DOT_PITCH
+}
+
+/// Page-local kit gap: a visual choice tile, never an icon segmented control.
+/// Only the outer selection/focus ring and name inherit the host's palette.
+/// Every pixel inside the preview comes from the supplied theme's fields.
+fn theme_card(theme: &Theme, selected: bool, forced: Forced) -> AnyElement {
+    let ansi = [
+        theme.term_black,
+        theme.term_red,
+        theme.term_green,
+        theme.term_yellow,
+        theme.term_blue,
+        theme.term_magenta,
+        theme.term_cyan,
+        theme.term_white,
+    ];
+    // Check the minimum, middle and maximum against the preview's inner width.
+    debug_assert_eq!(ansi_x(0), 0.);
+    debug_assert_eq!(ansi_x(4), 64.);
+    // Outer ring + its padding, preview border, and preview padding.
+    debug_assert!(ansi_x(7) + DOT_SIZE <= CARD_WIDTH - 2. * metrics::RING - 4. - 2. - 16.);
+    let preview = div()
+        .w_full()
+        .min_w_0()
+        .h(pt(90.))
+        .p(pt(8.))
+        .flex()
+        .flex_col()
+        .justify_between()
+        .rounded(pt(metrics::GROUP_RADIUS))
+        .bg(rgb(theme.bg_base))
+        .border_1()
+        .border_color(rgb(theme.text_muted))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(pt(25.))
+                        .text_color(rgb(theme.text_main))
+                        .child("Aa"),
+                )
+                .child(
+                    div()
+                        .px(pt(4.))
+                        .py(pt(2.))
+                        .rounded(pt(4.))
+                        .bg(rgb(terminal_rgb(theme.term_bg)))
+                        .text_color(rgb(terminal_rgb(theme.term_fg)))
+                        .text_size(pt(17.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("~/"),
+                )
+                .child(
+                    div()
+                        .w(pt(12.))
+                        .h(pt(25.))
+                        .rounded(pt(3.))
+                        .bg(rgb(terminal_rgb(theme.term_cursor)))
+                        .text_color(rgb(terminal_rgb(theme.term_bg)))
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .text_size(pt(metrics::BODY))
+                        .child("_"),
+                ),
+        )
+        .child(div().relative().h(pt(DOT_SIZE)).w_full().children(
+            ansi.into_iter().enumerate().map(|(index, color)| {
+                div()
+                    .absolute()
+                    .left(pt(ansi_x(index)))
+                    .top(pt(0.))
+                    .size(pt(DOT_SIZE))
+                    .rounded(pt(DOT_SIZE / 2.))
+                    .bg(rgb(terminal_rgb(color)))
+            }),
+        ));
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::card(),
+    };
+    div()
+        .id(SharedString::from(format!("theme-{}", theme.slug)))
+        .w(pt(CARD_WIDTH))
+        .min_w_0()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap(pt(4.))
+        .role(Role::Button)
+        .aria_label(format!(
+            "{}{}",
+            theme.display_name(),
+            if selected { ", selected" } else { "" }
+        ))
+        .child(ring(
+            div()
+                .w_full()
+                .min_w_0()
+                .p(pt(2.))
+                .bg(rgb(fill))
+                .child(preview),
+            selected || forced == Forced::Focus,
+            metrics::GROUP_RADIUS + 4.,
+        ))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .h(pt(36.))
+                .text_center()
+                .text_size(pt(metrics::SECONDARY + 0.5))
+                .text_color(if selected {
+                    ink::text()
+                } else {
+                    ink::secondary()
+                })
+                .font_weight(if selected {
+                    FontWeight::BOLD
+                } else {
+                    FontWeight::NORMAL
+                })
+                .when(forced == Forced::Disabled, |el| {
+                    el.opacity(ink::disabled_opacity())
+                })
+                .child(theme.display_name().to_owned()),
+        )
+        .into_any_element()
+}
+
+fn mode_section(dark: bool, state: &str) -> AnyElement {
+    let mode = if dark { "dark" } else { "light" };
+    let selected = if dark { "apple-dark" } else { "apple-light" };
+    let forced = match state {
+        "hover-card" => Forced::Hover,
+        "pressed-card" => Forced::Pressed,
+        "focus-card" => Forced::Focus,
+        "disabled-card" => Forced::Disabled,
+        _ => Forced::Rest,
+    };
+    let themes = themes_by_name();
+    let strip = div()
+        .id(SharedString::from(format!("{mode}-theme-strip")))
+        .w_full()
+        .min_w_0()
+        .overflow_x_scroll()
+        .flex()
+        .gap(pt(8.))
+        .py(pt(4.))
+        .children(
+            themes
+                .iter()
+                .filter(|theme| theme.dark == dark)
+                .map(|theme| {
+                    theme_card(
+                        theme,
+                        theme.slug == selected,
+                        if dark && theme.slug == "catppuccin" {
+                            forced
+                        } else {
+                            Forced::Rest
+                        },
+                    )
+                }),
+        );
+    section(
+        if dark {
+            "Dark Mode — Active"
+        } else {
+            "Light Mode"
+        },
+        None,
+        Some(
+            section_action(
+                SharedString::from(format!("{mode}-new")),
+                IconName::Plus,
+                "New",
+                Forced::Rest,
+            )
+            .into_any_element(),
+        ),
+        group([
+            div()
+                .w_full()
+                .min_w_0()
+                .py(pt(10.))
+                .flex()
+                .flex_col()
+                .gap(pt(6.))
+                .child(caption("Built-in"))
+                .child(strip)
+                .into_any_element(),
+            Row::new("Use extended theme palette")
+                .trailing(switch(
+                    SharedString::from(format!("{mode}-extended")),
+                    "Use extended theme palette",
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ])
+        .w_full()
+        .min_w_0(),
+    )
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    settings_window(
+        kagi_sidebar(),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [mode_section(false, cx.state), mode_section(true, cx.state)],
+        ),
+    )
+    .into_any_element()
+}

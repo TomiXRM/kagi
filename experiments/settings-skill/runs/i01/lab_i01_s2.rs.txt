@@ -1,0 +1,417 @@
+//! Interface settings gallery reconstruction (UI lab I01 / scenario S2).
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    caption, detail_page, group, icon_tile, ink, popup_value, pt, ring, search_field, section,
+    settings_window, sidebar, sidebar_gap, sidebar_item, switch, vertical_divider, Forced, Row,
+    Segmented, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i01-s2",
+    states: &["default", "focus-choice"],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rex_sidebar() -> AnyElement {
+    let item = |id, icon, tint, label| {
+        sidebar_item(
+            id,
+            icon_tile(icon, tint, 20.),
+            label,
+            None,
+            id == "interface",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Purple, 32.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Tint::Accent,
+            "Interface",
+        ),
+        item("themes", IconName::Palette, Tint::Accent, "Themes"),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Tint::Success,
+            "Terminal",
+        ),
+        item("shortcuts", IconName::Ellipsis, Tint::Neutral, "Shortcuts"),
+        item("integrations", IconName::Github, Tint::Tag, "Integrations"),
+        item(
+            "notifications",
+            IconName::Bell,
+            Tint::Danger,
+            "Notifications",
+        ),
+        item("remote", IconName::Globe, Tint::Remote, "Remote Hosts"),
+        sidebar_gap(),
+        item("developer", IconName::Settings2, Tint::Neutral, "Developer"),
+    ])
+    .into_any_element()
+}
+
+/// Preview variants used by the local choice-tile kit gap.
+#[derive(Clone, Copy)]
+enum ChoicePreview {
+    Auto,
+    Light,
+    Dark,
+    Glass,
+    Classic,
+}
+
+/// Kit gap: a reusable visual choice tile with preview, label, selection and state.
+fn choice_tile(
+    id: &'static str,
+    preview: ChoicePreview,
+    label: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let accent = Tint::Accent.color();
+    let preview_face = match preview {
+        ChoicePreview::Auto => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mini_window(true, true)),
+        ChoicePreview::Light => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mini_window(false, false)),
+        ChoicePreview::Dark => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mini_window(true, false)),
+        ChoicePreview::Glass => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().size(pt(40.)).rounded_full().bg(rgb(ink::control()))),
+        ChoicePreview::Classic => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .size(pt(40.))
+                    .rounded_full()
+                    .bg(rgb(ink::window()))
+                    .border_1()
+                    .border_color(rgb(ink::hairline())),
+            ),
+    };
+    let tile = div()
+        .id(id)
+        .w(pt(66.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(pt(5.))
+        .role(gpui::Role::RadioButton)
+        .aria_label(label)
+        .aria_selected(selected)
+        .child(
+            div()
+                .size(pt(60.))
+                .p(pt(3.))
+                .rounded(pt(12.))
+                .bg(rgb(accent))
+                .child(preview_face),
+        )
+        .child(
+            div()
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .when(!selected, |el| el.text_color(ink::secondary()))
+                .child(label),
+        );
+    ring(tile, selected || forced == Forced::Focus, 12.).into_any_element()
+}
+
+fn mini_window(dark: bool, split: bool) -> impl IntoElement {
+    let face = if dark { ink::window() } else { ink::card() };
+    div()
+        .w(pt(34.))
+        .h(pt(28.))
+        .p(pt(3.))
+        .flex()
+        .flex_col()
+        .gap(pt(2.))
+        .rounded(pt(6.))
+        .bg(rgb(face))
+        .child(
+            div()
+                .h(pt(4.))
+                .rounded(pt(2.))
+                .bg(rgb(Tint::Warning.color())),
+        )
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .gap(pt(2.))
+                .child(div().flex_1().rounded(pt(2.)).bg(rgb(ink::control())))
+                .when(split, |el| {
+                    el.child(div().flex_1().rounded(pt(2.)).bg(rgb(ink::control())))
+                }),
+        )
+}
+
+/// Kit gap: a five-tick slider preview, including its selected value.
+fn tick_slider(id: &'static str, value: usize, forced: Forced) -> AnyElement {
+    let track = div()
+        .id(id)
+        .w(pt(148.))
+        .h(pt(24.))
+        .flex()
+        .items_center()
+        .gap(pt(6.))
+        .role(gpui::Role::Slider)
+        .aria_label("Show tab icons")
+        .aria_value(value.to_string())
+        .child(
+            div()
+                .flex_1()
+                .h(pt(4.))
+                .rounded_full()
+                .bg(rgb(ink::control()))
+                .child(
+                    div()
+                        .w(pt(82.))
+                        .h_full()
+                        .rounded_full()
+                        .bg(rgb(Tint::Accent.color())),
+                ),
+        )
+        .child(
+            div()
+                .w(pt(12.))
+                .h(pt(20.))
+                .rounded_full()
+                .bg(rgb(ink::card()))
+                .border_1()
+                .border_color(rgb(ink::hairline())),
+        )
+        .child(
+            div()
+                .w(pt(10.))
+                .text_color(ink::secondary())
+                .child(value.to_string()),
+        );
+    let ticks = div()
+        .absolute()
+        .left(pt(2.))
+        .right(pt(31.))
+        .top(pt(19.))
+        .flex()
+        .justify_between()
+        .children((0..5).map(|_| {
+            div()
+                .size(pt(2.))
+                .rounded_full()
+                .bg(rgb(Tint::Neutral.color()))
+        }));
+    ring(
+        div()
+            .relative()
+            .flex()
+            .items_center()
+            .child(track)
+            .child(ticks),
+        forced == Forced::Focus,
+        7.,
+    )
+    .into_any_element()
+}
+
+fn appearance_choices(focus: Forced) -> AnyElement {
+    let scheme = div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(7.))
+        .child(caption("Color scheme"))
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .child(choice_tile(
+                    "auto",
+                    ChoicePreview::Auto,
+                    "Auto",
+                    true,
+                    Forced::Rest,
+                ))
+                .child(choice_tile(
+                    "light",
+                    ChoicePreview::Light,
+                    "Light",
+                    false,
+                    focus,
+                ))
+                .child(choice_tile(
+                    "dark",
+                    ChoicePreview::Dark,
+                    "Dark",
+                    false,
+                    Forced::Rest,
+                )),
+        );
+    let style = div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(7.))
+        .child(caption("Interface style"))
+        .child(
+            div()
+                .flex()
+                .justify_around()
+                .child(choice_tile(
+                    "glass",
+                    ChoicePreview::Glass,
+                    "Glass",
+                    false,
+                    Forced::Rest,
+                ))
+                .child(choice_tile(
+                    "classic",
+                    ChoicePreview::Classic,
+                    "Classic",
+                    true,
+                    Forced::Rest,
+                )),
+        );
+    div()
+        .flex()
+        .items_stretch()
+        .gap(pt(12.))
+        .p(pt(12.))
+        .child(scheme)
+        .child(vertical_divider())
+        .child(style)
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let choice_focus = if cx.state == "focus-choice" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    settings_window(
+        rex_sidebar(),
+        detail_page(
+            "interface-scroll",
+            "Interface",
+            [
+                section(
+                    "Appearance",
+                    None,
+                    None,
+                    group([
+                        appearance_choices(choice_focus),
+                        Row::new("Tint with theme")
+                            .trailing(switch(
+                                "tint-theme",
+                                "Tint with theme",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Tabs",
+                    None,
+                    None,
+                    group([
+                        Row::new("Tab style")
+                            .trailing(
+                                Segmented::new(
+                                    "tab-style",
+                                    ["Above", "Left Side", "Right Side"],
+                                    0,
+                                )
+                                .forced(0, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new("Fill available space")
+                            .trailing(switch(
+                                "fill-tabs",
+                                "Fill available space",
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Show tab icons")
+                            .trailing(tick_slider("show-tab-icons", 3, Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Use color for tab icons")
+                            .trailing(popup_value("tab-icon-color", "Always", Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Shell icon theme")
+                            .trailing(popup_value("shell-icons", "Default", Forced::Rest))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Panes",
+                    None,
+                    None,
+                    group([
+                        Row::new("Pane style")
+                            .trailing(
+                                Segmented::new("pane-style", ["Comfortable", "Compact"], 0)
+                                    .forced(0, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new("Show pane headers")
+                            .trailing(switch(
+                                "pane-headers",
+                                "Show pane headers",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

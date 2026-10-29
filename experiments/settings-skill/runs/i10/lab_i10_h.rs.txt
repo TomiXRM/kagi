@@ -1,0 +1,313 @@
+//! Gallery reconstruction of a System Settings–style Themes pane.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    capsule_button, caption, detail_page, group, icon_tile, metrics, ring, search_field, section,
+    section_action, settings_window, sidebar, sidebar_gap, sidebar_item, switch, vertical_divider,
+    Forced, Hue, Row, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-h",
+    states: &["default", "focus-new", "focus-import"],
+    size: (900., 760.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn settings_sidebar() -> AnyElement {
+    let item = |id, icon, tint, label| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(tint), 20.),
+            label,
+            None,
+            id == "themes",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        item("server", IconName::Bot, Hue::Purple, "Server"),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Gray,
+            "Interface",
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes"),
+        item("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        item("shortcuts", IconName::Settings2, Hue::Gray, "Shortcuts"),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+        ),
+        item("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        item("remote", IconName::Globe, Hue::Blue, "Remote Hosts"),
+        sidebar_gap(),
+        item("developer", IconName::Settings2, Hue::Gray, "Developer"),
+    ])
+    .into_any_element()
+}
+
+/// A page-local kit gap: theme choices need a visual preview, not text segments.
+fn theme_swatch(
+    id: &'static str,
+    name: &'static str,
+    background: Hue,
+    foreground: Hue,
+    accent: Hue,
+    selected: bool,
+) -> AnyElement {
+    let color_dot = |hue| {
+        div()
+            .size(kagi::ui::settings_kit::pt(12.))
+            .rounded_full()
+            .bg(rgb(Tint::Hue(hue).color()))
+    };
+    let preview = ring(
+        div()
+            .id(id)
+            .w(kagi::ui::settings_kit::pt(132.))
+            .h(kagi::ui::settings_kit::pt(84.))
+            .p(kagi::ui::settings_kit::pt(10.))
+            .flex()
+            .flex_col()
+            .justify_between()
+            .rounded(kagi::ui::settings_kit::pt(metrics::GROUP_RADIUS))
+            .bg(rgb(Tint::Hue(background).color()))
+            .role(Role::RadioButton)
+            .aria_label(name)
+            .aria_selected(selected)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_size(kagi::ui::settings_kit::pt(24.))
+                    .text_color(rgb(Tint::Hue(foreground).color()))
+                    .child("Aa")
+                    .child(
+                        div()
+                            .size(kagi::ui::settings_kit::pt(27.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(kagi::ui::settings_kit::pt(7.))
+                            .bg(rgb(Tint::Hue(accent).color()))
+                            .text_color(rgb(Tint::Hue(background).color()))
+                            .text_size(kagi::ui::settings_kit::pt(16.))
+                            .child("~/"),
+                    ),
+            )
+            .child(div().flex().gap(kagi::ui::settings_kit::pt(4.)).children([
+                color_dot(foreground),
+                color_dot(Hue::Red),
+                color_dot(Hue::Green),
+                color_dot(Hue::Orange),
+                color_dot(Hue::Blue),
+                color_dot(Hue::Purple),
+                color_dot(accent),
+            ])),
+        selected,
+        metrics::GROUP_RADIUS,
+    );
+
+    div()
+        .w(kagi::ui::settings_kit::pt(132.))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap(kagi::ui::settings_kit::pt(6.))
+        .items_center()
+        .child(preview)
+        .child(
+            div()
+                .text_size(kagi::ui::settings_kit::pt(11.5))
+                .child(name),
+        )
+        .into_any_element()
+}
+
+fn theme_choices(dark: bool) -> AnyElement {
+    let cards = if dark {
+        [
+            theme_swatch(
+                "merino-dark",
+                "Merino Dark",
+                Hue::Gray,
+                Hue::Blue,
+                Hue::Indigo,
+                true,
+            ),
+            theme_swatch(
+                "abyssal-trench",
+                "Abyssal Trench",
+                Hue::Blue,
+                Hue::Teal,
+                Hue::Green,
+                false,
+            ),
+            theme_swatch(
+                "basalt-shore",
+                "Basalt Shore",
+                Hue::Teal,
+                Hue::Gray,
+                Hue::Indigo,
+                false,
+            ),
+            theme_swatch(
+                "cathode-amber",
+                "Cathode Amber",
+                Hue::Orange,
+                Hue::Yellow,
+                Hue::Orange,
+                false,
+            ),
+        ]
+    } else {
+        [
+            theme_swatch(
+                "merino-light",
+                "Merino Light",
+                Hue::Gray,
+                Hue::Indigo,
+                Hue::Blue,
+                true,
+            ),
+            theme_swatch(
+                "alpine-milk",
+                "Alpine Milk",
+                Hue::Blue,
+                Hue::Gray,
+                Hue::Indigo,
+                false,
+            ),
+            theme_swatch(
+                "buttercream-diner",
+                "Buttercream Diner",
+                Hue::Yellow,
+                Hue::Orange,
+                Hue::Red,
+                false,
+            ),
+            theme_swatch(
+                "coastal-linen",
+                "Coastal Linen",
+                Hue::Teal,
+                Hue::Gray,
+                Hue::Blue,
+                false,
+            ),
+        ]
+    };
+
+    div()
+        .py(kagi::ui::settings_kit::pt(12.))
+        .flex()
+        .flex_col()
+        .gap(kagi::ui::settings_kit::pt(10.))
+        .child(
+            div()
+                .h(kagi::ui::settings_kit::pt(26.))
+                .flex()
+                .items_center()
+                .gap(kagi::ui::settings_kit::pt(12.))
+                .child(caption("Default"))
+                .child(vertical_divider())
+                .child(caption("Built-in")),
+        )
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .gap(kagi::ui::settings_kit::pt(8.))
+                .children(cards),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let new_state = if cx.state == "focus-new" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let import_state = if cx.state == "focus-import" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        settings_sidebar(),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [
+                section(
+                    "Light Mode",
+                    None,
+                    Some(
+                        section_action("new-light-theme", IconName::Plus, "New", new_state)
+                            .into_any_element(),
+                    ),
+                    group([
+                        theme_choices(false),
+                        Row::new("Use extended theme palette")
+                            .trailing(switch(
+                                "extended-light-palette",
+                                "Use extended light theme palette",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Dark Mode — Active",
+                    None,
+                    Some(
+                        section_action("new-dark-theme", IconName::Plus, "New", Forced::Rest)
+                            .into_any_element(),
+                    ),
+                    group([
+                        theme_choices(true),
+                        Row::new("Use extended theme palette")
+                            .trailing(switch(
+                                "extended-dark-palette",
+                                "Use extended dark theme palette",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Import Theme",
+                    None,
+                    None,
+                    group([Row::new("Import a Ghostty or iTerm theme file")
+                        .subtitle(
+                            "Themes are matched to an appearance based on their background color.",
+                        )
+                        .trailing(capsule_button("import-theme", "Import", import_state))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

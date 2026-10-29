@@ -1,0 +1,410 @@
+//! Gallery recreation of the macOS iCloud settings pane (I10/S5).
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Window};
+use gpui_component::{Icon, IconName, Sizable as _, Size};
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-s5",
+    states: &["default", "focus-card"],
+    size: (900., 980.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let card_state = if cx.state == "focus-card" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    settings_window(icloud_sidebar(), iCloud_detail(card_state)).into_any_element()
+}
+
+fn icloud_sidebar() -> AnyElement {
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "general",
+            icon_tile(IconName::Settings2, Tint::Hue(Hue::Gray), 20.),
+            "General",
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_item(
+            "appearance",
+            icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 20.),
+            "Appearance",
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_item(
+            "network",
+            icon_tile(IconName::Network, Tint::Hue(Hue::Blue), 20.),
+            "Network",
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        sidebar_item(
+            "icloud",
+            icon_tile(IconName::Globe, Tint::Hue(Hue::Teal), 20.),
+            "iCloud",
+            None,
+            true,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_item(
+            "accounts",
+            icon_tile(IconName::CircleUser, Tint::Hue(Hue::Orange), 20.),
+            "Accounts",
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_item(
+            "notifications",
+            icon_tile(IconName::Bell, Tint::Hue(Hue::Red), 20.),
+            "Notifications",
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+    ])
+    .into_any_element()
+}
+
+#[allow(non_snake_case)]
+fn iCloud_detail(card_state: Forced) -> AnyElement {
+    detail_page(
+        "icloud-scroll",
+        "iCloud",
+        [
+            account_header().into_any_element(),
+            group([storage_group().into_any_element()]).into_any_element(),
+            status_section(
+                "Saved to iCloud",
+                capsule_button("see-all", "See All", Forced::Rest).into_any_element(),
+                group([card_grid(
+                    [
+                        icloud_card(
+                            IconName::GalleryVerticalEnd,
+                            Tint::Hue(Hue::Pink),
+                            "Photos",
+                            "111 items",
+                            card_state,
+                        ),
+                        icloud_card(
+                            IconName::Folder,
+                            Tint::Hue(Hue::Teal),
+                            "Drive",
+                            "35.2 GB",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::Eye,
+                            Tint::Hue(Hue::Gray),
+                            "Passwords",
+                            "On",
+                            Forced::Rest,
+                        ),
+                    ],
+                    [
+                        icloud_card(
+                            IconName::BookOpen,
+                            Tint::Hue(Hue::Yellow),
+                            "Notes",
+                            "706 items",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::Inbox,
+                            Tint::Hue(Hue::Green),
+                            "Messages",
+                            "921.6 MB",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::Inbox,
+                            Tint::Hue(Hue::Blue),
+                            "Mail",
+                            "677.1 MB",
+                            Forced::Rest,
+                        ),
+                    ],
+                )
+                .into_any_element()]),
+            ),
+            section(
+                "iCloud+ Features",
+                None,
+                None,
+                group([card_grid(
+                    [
+                        icloud_card(
+                            IconName::HardDrive,
+                            Tint::Hue(Hue::Teal),
+                            "Manage Plan",
+                            "50 GB",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::User,
+                            Tint::Hue(Hue::Orange),
+                            "Family",
+                            "Start sharing",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::Calendar,
+                            Tint::Hue(Hue::Purple),
+                            "Apple Invitations",
+                            "Create event",
+                            Forced::Rest,
+                        ),
+                    ],
+                    [
+                        icloud_card(
+                            IconName::Globe,
+                            Tint::Hue(Hue::Blue),
+                            "Private Relay",
+                            "On",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::EyeOff,
+                            Tint::Hue(Hue::Blue),
+                            "Hide My Email",
+                            "14 addresses",
+                            Forced::Rest,
+                        ),
+                        icloud_card(
+                            IconName::Inbox,
+                            Tint::Hue(Hue::Blue),
+                            "Custom Email Domain",
+                            "Manage",
+                            Forced::Rest,
+                        ),
+                    ],
+                )
+                .into_any_element()]),
+            ),
+            group([
+                Row::new("Advanced Data Protection")
+                    .trailing(value_label("Off"))
+                    .navigation("advanced-data-protection", Forced::Rest)
+                    .into_any_element(),
+                Row::new("Access iCloud Data on the Web")
+                    .trailing(value_label("On"))
+                    .navigation("icloud-web-data", Forced::Rest)
+                    .into_any_element(),
+            ])
+            .into_any_element(),
+            div()
+                .w_full()
+                .flex()
+                .justify_end()
+                .child(capsule_button("help", "?", Forced::Rest))
+                .into_any_element(),
+        ],
+    )
+    .into_any_element()
+}
+
+/// Page-local display gap: the kit has no account identity header or round badge.
+fn account_header() -> gpui::Div {
+    div()
+        .w_full()
+        .px(pt(12.))
+        .pt(pt(8.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(pt(2.))
+                .child(
+                    div()
+                        .text_size(pt(26.))
+                        .font_weight(FontWeight::BOLD)
+                        .child("iCloud+"),
+                )
+                .child(
+                    div()
+                        .text_size(pt(18.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(ink::secondary())
+                        .child("Tomioka Daiki"),
+                ),
+        )
+        .child(
+            div()
+                .size(pt(44.))
+                .rounded_full()
+                .bg(rgb(Tint::Hue(Hue::Blue).color()))
+                .text_color(ink::accent_text())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(IconName::Globe).with_size(Size::Size(pt(24.)))),
+        )
+}
+
+/// Page-local group body: the kit has a full-width progress bar but no two-line
+/// storage summary layout. The progress itself remains the kit component.
+fn storage_group() -> gpui::Div {
+    div()
+        .w_full()
+        .py(pt(10.))
+        .flex()
+        .flex_col()
+        .gap(pt(10.))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(pt(12.))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Storage: 46.5 / 50 GB used"),
+                )
+                .child(capsule_button("manage-storage", "Manage…", Forced::Rest)),
+        )
+        .child(storage_progress(0.93, Tint::Hue(Hue::Green)))
+}
+
+/// Reusable full-width storage meter composed from the kit's progress bar.
+fn storage_progress(fraction: f32, tint: Tint) -> gpui::Div {
+    div().w_full().child(progress_bar(fraction, tint))
+}
+
+/// Page-local status-heading gap: `section` has a textual heading only.
+fn status_section(
+    title: &'static str,
+    accessory: AnyElement,
+    body: impl IntoElement,
+) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(pt(8.))
+        .child(
+            div()
+                .w_full()
+                .px(pt(metrics::GROUP_PADDING_X))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(pt(12.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(pt(8.))
+                        .child(
+                            div()
+                                .size(pt(10.))
+                                .rounded_full()
+                                .bg(rgb(Tint::Hue(Hue::Green).color())),
+                        )
+                        .child(div().font_weight(FontWeight::BOLD).child(title)),
+                )
+                .child(div().flex_shrink_0().child(accessory)),
+        )
+        .child(body)
+        .into_any_element()
+}
+
+/// A reusable 3×2 card grid. Each row gives its three cards equal columns.
+fn card_grid(first_row: [gpui::Div; 3], second_row: [gpui::Div; 3]) -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(pt(8.))
+        .child(card_row(first_row))
+        .child(card_row(second_row))
+}
+
+fn card_row(cards: [gpui::Div; 3]) -> gpui::Div {
+    div().w_full().flex().gap(pt(8.)).children(
+        cards
+            .into_iter()
+            .map(|card| div().flex_1().min_w_0().child(card)),
+    )
+}
+
+/// Page-local card control gap: no settings-kit card/grid exists yet.
+fn icloud_card(
+    icon: IconName,
+    tint: Tint,
+    title: &'static str,
+    subtitle: &'static str,
+    forced: Forced,
+) -> gpui::Div {
+    let card = div()
+        .h(pt(84.))
+        .w_full()
+        .p(pt(10.))
+        .flex()
+        .items_start()
+        .gap(pt(9.))
+        .rounded(pt(metrics::GROUP_RADIUS))
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .bg(rgb(ink::control()))
+        .child(icon_tile(icon, tint, 26.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(pt(3.))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .line_height(pt(15.))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(pt(metrics::SECONDARY + 0.5))
+                        .text_color(ink::secondary())
+                        .line_height(pt(14.))
+                        .child(subtitle),
+                ),
+        );
+    ring(card, forced == Forced::Focus, metrics::GROUP_RADIUS)
+        .when(forced == Forced::Hover, |el| {
+            el.bg(rgb(ink::control_hover()))
+        })
+        .when(forced == Forced::Pressed, |el| {
+            el.bg(rgb(ink::control_pressed()))
+        })
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+}
+
+fn value_label(value: &'static str) -> gpui::Div {
+    div().text_color(ink::secondary()).child(value)
+}

@@ -1,0 +1,33 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i05/s4/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s4/focus-alert-volume-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s4/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "focus-alert-volume"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 22,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 2,
+  ".rounded(": 6,
+  "Switch::new": 0,
+  "fn ": 9
+ },
+ "loc": 388
+}

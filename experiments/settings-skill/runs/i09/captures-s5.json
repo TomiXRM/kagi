@@ -1,0 +1,43 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i09/s5/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s5/focus-card-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s5/hover-manage-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s5/focus-navigation-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i09/s5/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "focus-card",
+  "hover-manage",
+  "focus-navigation"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 11,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 2,
+  ".rounded(": 0,
+  "Switch::new": 0,
+  "fn ": 9
+ },
+ "loc": 515
+}

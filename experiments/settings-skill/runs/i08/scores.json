@@ -1,0 +1,389 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S2": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Placement suggestions listed instead of moving the fixed layout (L10 held)."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S4": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Self-reported: section headings collapsed until the child widened its wrappers — the third occurrence across S4/S5; traced to the kit `section` title column (fixed as F4)."
+  ]
+ },
+ "S5": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S6": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S7": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S8": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Panes: Appearance, Graph, Smart Commit, Editor, Terminal, Network, General (language), Analyze — no grab-bag pane (L9 held); one-setting Editor/Network panes kept because S8 names them (L10 applied, self-reported).",
+   "Evaluator: Custom themes rows repeat their title in their button (\"Open theme folder\" / \"Open theme folder…\") — a writing defect the skill does not cover."
+  ]
+ }
+}

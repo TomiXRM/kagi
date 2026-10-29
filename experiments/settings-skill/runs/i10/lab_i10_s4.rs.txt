@@ -1,0 +1,372 @@
+//! Apple Sound composed from the settings kit; gallery-only, no persisted settings.
+use gpui::{
+    canvas, div, point, prelude::*, rgb, AnyElement, App, Div, FontWeight, PathBuilder, Role,
+    SharedString, Window,
+};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-s4",
+    states: &[
+        "default",
+        "focus-alert-slider",
+        "focus-mute",
+        "hover-play",
+        "volume-minimum",
+        "volume-middle",
+        "volume-maximum",
+    ],
+    size: (900., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn apple_sidebar() -> AnyElement {
+    let items = [
+        ("spotlight", IconName::Search, Hue::Blue, "Spotlight"),
+        ("accessibility", IconName::User, Hue::Blue, "Accessibility"),
+        ("displays", IconName::Sun, Hue::Blue, "Displays"),
+        (
+            "desktop",
+            IconName::PanelBottom,
+            Hue::Gray,
+            "Desktop & Dock",
+        ),
+        ("menu-bar", IconName::Menu, Hue::Gray, "Menu Bar"),
+        ("appearance", IconName::Palette, Hue::Indigo, "Appearance"),
+        (
+            "wallpaper",
+            IconName::GalleryVerticalEnd,
+            Hue::Teal,
+            "Wallpaper",
+        ),
+        ("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        ("sound", IconName::Play, Hue::Pink, "Sound"),
+        ("focus", IconName::Moon, Hue::Indigo, "Focus"),
+        (
+            "screen-time",
+            IconName::ChartPie,
+            Hue::Purple,
+            "Screen Time",
+        ),
+        ("lock-screen", IconName::EyeOff, Hue::Gray, "Lock Screen"),
+        ("privacy", IconName::Heart, Hue::Blue, "Privacy & Security"),
+        (
+            "touch-id",
+            IconName::CircleUser,
+            Hue::Gray,
+            "Touch ID & Password",
+        ),
+        ("users", IconName::User, Hue::Blue, "Users & Groups"),
+        ("accounts", IconName::Globe, Hue::Blue, "Internet Accounts"),
+        ("game-center", IconName::Star, Hue::Yellow, "Game Center"),
+        ("icloud", IconName::Network, Hue::Blue, "iCloud"),
+        ("wallet", IconName::Inbox, Hue::Orange, "Wallet & Apple Pay"),
+        ("keyboard", IconName::CaseSensitive, Hue::Gray, "Keyboard"),
+        ("trackpad", IconName::Frame, Hue::Gray, "Trackpad"),
+    ];
+    let mut children = vec![search_field("search", "Search Settings").into_any_element()];
+    for (index, (id, icon, hue, label)) in items.into_iter().enumerate() {
+        if matches!(index, 7 | 11 | 15 | 19) {
+            children.push(sidebar_gap());
+        }
+        children.push(
+            sidebar_item(
+                id,
+                icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+                label,
+                None,
+                id == "sound",
+                Forced::Rest,
+            )
+            .into_any_element(),
+        );
+    }
+    sidebar(children).into_any_element()
+}
+
+/// Kit gap: the current IconName set has no speaker symbols. The wrapper
+/// supplies theme-coloured speaker symbols; the kit owns all slider geometry.
+enum AudioEnds {
+    Speakers,
+    Captions(&'static str, &'static str),
+}
+
+fn audio_slider(
+    id: &'static str,
+    value: f32,
+    ticks: Option<usize>,
+    ends: AudioEnds,
+    forced: Forced,
+) -> AnyElement {
+    let slider = Slider::new(id, value)
+        .width(190.)
+        .ticks(ticks.unwrap_or(0))
+        .forced(forced);
+    match ends {
+        AudioEnds::Speakers => div()
+            .w_full()
+            .min_w_0()
+            .h(pt(metrics::CONTROL_HEIGHT))
+            .flex()
+            .items_start()
+            .gap(pt(8.))
+            .child(speaker_symbol(false))
+            .child(slider)
+            .child(speaker_symbol(true))
+            .into_any_element(),
+        AudioEnds::Captions(left, right) => div()
+            .w_full()
+            .min_w_0()
+            .child(slider.ends(SliderEnds::Captions(left.into(), right.into())))
+            .into_any_element(),
+    }
+}
+
+fn speaker_symbol(loud: bool) -> Div {
+    div().w(pt(16.)).h(pt(metrics::CONTROL_HEIGHT)).child(
+        canvas(
+            |_, _, _| (),
+            move |bounds, (), window, _| {
+                let p = |x, y| bounds.origin + point(pt(x), pt(y));
+                let mut body = PathBuilder::fill();
+                body.move_to(p(1., 6.));
+                for (x, y) in [
+                    (4., 6.),
+                    (8., 2.),
+                    (8., 16.),
+                    (4., 12.),
+                    (1., 12.),
+                    (1., 6.),
+                ] {
+                    body.line_to(p(x, y));
+                }
+                if let Ok(path) = body.build() {
+                    window.paint_path(path, ink::secondary());
+                }
+                if loud {
+                    let mut waves = PathBuilder::stroke(pt(1.));
+                    waves.move_to(p(10., 5.));
+                    waves.curve_to(p(10., 13.), p(14., 9.));
+                    waves.move_to(p(12., 2.));
+                    waves.curve_to(p(12., 16.), p(19., 9.));
+                    if let Ok(path) = waves.build() {
+                        window.paint_path(path, ink::secondary());
+                    }
+                }
+            },
+        )
+        .w_full()
+        .h_full(),
+    )
+}
+
+/// Kit gap: a device table, with a shared column layout for header and body.
+/// `selected` is the sole selection owner and uses the kit's selection role.
+fn device_table(devices: &[(&'static str, &'static str)], selected: usize) -> AnyElement {
+    let columns = |name: &'static str, kind: &'static str| {
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(pt(12.))
+            .child(div().flex_1().min_w_0().child(name))
+            .child(div().w(pt(150.)).flex_shrink_0().child(kind))
+    };
+    let header = div()
+        .h(pt(28.))
+        .px(pt(8.))
+        .flex()
+        .items_center()
+        .bg(rgb(ink::control()))
+        .text_size(pt(metrics::SECONDARY))
+        .text_color(ink::secondary())
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(columns("Name", "Type"));
+    div()
+        .id("devices")
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .pb(pt(6.))
+        .role(Role::List)
+        .aria_label("Output devices")
+        .child(header)
+        .children(devices.iter().enumerate().map(|(index, (name, kind))| {
+            div()
+                .id(SharedString::from(format!("device-{index}")))
+                .h(pt(28.))
+                .px(pt(8.))
+                .flex()
+                .items_center()
+                .role(Role::ListItem)
+                .aria_label(format!("{name}, {kind}"))
+                .aria_selected(index == selected)
+                .when(index == selected, |el| el.bg(ink::selected()))
+                .when(index != selected && index % 2 == 1, |el| {
+                    el.bg(rgb(ink::control()))
+                })
+                .child(columns(name, kind))
+        }))
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let forced = |state| {
+        if cx.state == state {
+            Forced::Focus
+        } else {
+            Forced::Rest
+        }
+    };
+    let values = match cx.state {
+        "volume-minimum" => [0.; 3],
+        "volume-middle" => [0.5; 3],
+        "volume-maximum" => [1.; 3],
+        _ => [0.95, 0.05, 0.5],
+    };
+    let effects = section(
+        "Sound Effects",
+        None,
+        None,
+        group([
+            Row::new("Alert sound")
+                .trailing(
+                    div()
+                        .h(pt(metrics::CONTROL_HEIGHT))
+                        .flex()
+                        .items_center()
+                        .gap(pt(8.))
+                        .child(popup_value("alert-sound", "Boop", Forced::Rest))
+                        .child(
+                            capsule_button(
+                                "play-alert",
+                                "▶",
+                                if cx.state == "hover-play" {
+                                    Forced::Hover
+                                } else {
+                                    Forced::Rest
+                                },
+                            )
+                            .aria_label("Play alert sound"),
+                        ),
+                )
+                .into_any_element(),
+            Row::new("Play sound effects through")
+                .trailing(popup_value(
+                    "effects-device",
+                    "MacBook Pro Speakers",
+                    Forced::Rest,
+                ))
+                .into_any_element(),
+            Row::new("Alert volume")
+                .trailing(audio_slider(
+                    "alert-volume",
+                    values[0],
+                    Some(7),
+                    AudioEnds::Speakers,
+                    forced("focus-alert-slider"),
+                ))
+                .into_any_element(),
+            Row::new("Play sound on startup")
+                .trailing(switch(
+                    "startup",
+                    "Play sound on startup",
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+            Row::new("Play user interface sound effects")
+                .trailing(switch(
+                    "ui-effects",
+                    "Play user interface sound effects",
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+            Row::new("Play feedback when volume is changed")
+                .trailing(switch(
+                    "feedback",
+                    "Play feedback when volume is changed",
+                    false,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ]),
+    );
+    let devices = [
+        ("DELL U2723QE", "DisplayPort"),
+        ("Shure MV7", "USB"),
+        ("MacBook Pro Speakers", "Built-in"),
+        ("AirPods Pro", "Bluetooth"),
+        ("AirMac Express", "AirPlay"),
+        ("tomixrm-m1", "AirPlay"),
+    ];
+    let output = section(
+        "Output & Input",
+        None,
+        None,
+        group([
+            div()
+                .w_full()
+                .min_w_0()
+                .py(pt(10.))
+                .child(Segmented::new("output-input", ["Output", "Input"], 0).full_width())
+                .into_any_element(),
+            device_table(&devices, 2),
+        ]),
+    );
+    let levels = group([
+        Row::new("Output volume")
+            .trailing(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(pt(4.))
+                    .child(audio_slider(
+                        "output-volume",
+                        values[1],
+                        None,
+                        AudioEnds::Speakers,
+                        Forced::Rest,
+                    ))
+                    .child(checkbox("mute", "Mute", true, forced("focus-mute"))),
+            )
+            .into_any_element(),
+        Row::new("Balance")
+            .trailing(audio_slider(
+                "balance",
+                values[2],
+                None,
+                AudioEnds::Captions("Left", "Right"),
+                Forced::Rest,
+            ))
+            .into_any_element(),
+    ])
+    .into_any_element();
+    let help = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .justify_end()
+        .child(capsule_button("help", "?", Forced::Rest).aria_label("Sound help"))
+        .into_any_element();
+    settings_window(
+        apple_sidebar(),
+        detail_page("sound-scroll", "Sound", [effects, output, levels, help]),
+    )
+    .into_any_element()
+}

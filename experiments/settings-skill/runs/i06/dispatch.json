@@ -1,0 +1,191 @@
+{
+ "S1": {
+  "model": "terra",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s1-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s1-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-5.6-terra",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.322314",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:00.111Z",
+   "completedAt": "2026-10-26T17:12:31.673Z",
+   "duration_s": 511.562,
+   "timeline_items": 83
+  }
+ },
+ "S2": {
+  "model": "sol",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s2-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s2-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-6.1-sol",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.396191",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:00.238Z",
+   "completedAt": "2026-10-26T17:09:17.594Z",
+   "duration_s": 317.356,
+   "timeline_items": 50
+  }
+ },
+ "S3": {
+  "model": "terra",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s3-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s3-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-5.6-terra",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.466916",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:00.521Z",
+   "completedAt": "2026-10-26T17:06:03.611Z",
+   "duration_s": 123.09,
+   "timeline_items": 57
+  }
+ },
+ "S4": {
+  "model": "sol",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s4-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s4-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-6.1-sol",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.570487",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:00.812Z",
+   "completedAt": "2026-10-26T17:11:23.838Z",
+   "duration_s": 443.026,
+   "timeline_items": 43
+  }
+ },
+ "S5": {
+  "model": "terra",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s5-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s5-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-5.6-terra",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.665715",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:01.125Z",
+   "completedAt": "2026-10-26T17:12:29.215Z",
+   "duration_s": 508.09,
+   "timeline_items": 95
+  }
+ },
+ "S6": {
+  "model": "sol",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s6-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s6-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-6.1-sol",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.746367",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:01.309Z",
+   "completedAt": "2026-10-26T17:09:35.982Z",
+   "duration_s": 334.673,
+   "timeline_items": 36
+  }
+ },
+ "S7": {
+  "model": "terra",
+  "taskId": "node:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s7-r2",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A9e01b5dd-5405-4dc1-a798-f5bdf718a757%3Adelegate-task%3Akagi-settings-skill-i06-s7-r2",
+  "providerInstanceId": "codex",
+  "resolvedModel": "gpt-5.6-terra",
+  "options": [
+   {
+    "id": "reasoningEffort",
+    "value": "high"
+   },
+   {
+    "id": "serviceTier",
+    "value": "default"
+   }
+  ],
+  "status": "running",
+  "dispatched_at": "2026-10-27T02:03:59.834426",
+  "note": "r2: first dispatch cancelled (occluded display in prompt)",
+  "final_status": "completed",
+  "runtime": {
+   "startedAt": "2026-10-26T17:04:01.625Z",
+   "completedAt": "2026-10-26T17:12:25.244Z",
+   "duration_s": 503.619,
+   "timeline_items": 105
+  }
+ }
+}

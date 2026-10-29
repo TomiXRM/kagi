@@ -1,0 +1,474 @@
+//! S8 — a settings information architecture built entirely from settings_kit.
+use gpui::{div, prelude::*, AnyElement, App, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Msg;
+use kagi::ui::settings_kit::{
+    capsule_button, detail_page, group, icon_tile, ink, popup_value, pt, ring, search_field,
+    section, settings_window, sidebar, sidebar_gap, sidebar_item, stepper, switch, Forced, Hue,
+    Row, Segmented, StepperPart, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i07-s8",
+    states: &[
+        "default",
+        "pane-general",
+        "pane-graph",
+        "pane-network-sync",
+        "pane-behaviour",
+        "pane-language",
+        "pane-smart-commit",
+        "pane-analyze",
+    ],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    General,
+    Graph,
+    NetworkSync,
+    Behaviour,
+    Language,
+    SmartCommit,
+    Analyze,
+}
+
+impl Pane {
+    fn from_state(state: &str) -> Self {
+        match state {
+            "pane-graph" => Self::Graph,
+            "pane-network-sync" => Self::NetworkSync,
+            "pane-behaviour" => Self::Behaviour,
+            "pane-language" => Self::Language,
+            "pane-smart-commit" => Self::SmartCommit,
+            "pane-analyze" => Self::Analyze,
+            _ => Self::General,
+        }
+    }
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let pane = Pane::from_state(cx.state);
+    settings_window(settings_sidebar(pane), pane_detail(pane)).into_any_element()
+}
+
+fn settings_sidebar(selected: Pane) -> AnyElement {
+    let item = |id, icon, hue, label, pane| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            selected == pane,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("settings-search", "Search Settings").into_any_element(),
+        item(
+            "general",
+            IconName::Settings2,
+            Hue::Gray,
+            "General",
+            Pane::General,
+        ),
+        item(
+            "graph",
+            IconName::ChartPie,
+            Hue::Orange,
+            "Graph",
+            Pane::Graph,
+        ),
+        item(
+            "network-sync",
+            IconName::Globe,
+            Hue::Blue,
+            "Network & Sync",
+            Pane::NetworkSync,
+        ),
+        item(
+            "behaviour",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Behaviour",
+            Pane::Behaviour,
+        ),
+        sidebar_gap(),
+        item(
+            "language",
+            IconName::ALargeSmall,
+            Hue::Indigo,
+            Msg::SettingsLanguage.t(),
+            Pane::Language,
+        ),
+        item(
+            "smart-commit",
+            IconName::Bot,
+            Hue::Purple,
+            Msg::SettingsSmartCommit.t(),
+            Pane::SmartCommit,
+        ),
+        item(
+            "analyze",
+            IconName::Inspector,
+            Hue::Teal,
+            Msg::SettingsAnalyze.t(),
+            Pane::Analyze,
+        ),
+    ])
+    .into_any_element()
+}
+
+fn pane_detail(pane: Pane) -> AnyElement {
+    match pane {
+        Pane::General => general_pane(),
+        Pane::Graph => graph_pane(),
+        Pane::NetworkSync => network_pane(),
+        Pane::Behaviour => behaviour_pane(),
+        Pane::Language => language_pane(),
+        Pane::SmartCommit => smart_commit_pane(),
+        Pane::Analyze => analyze_pane(),
+    }
+}
+
+fn general_pane() -> AnyElement {
+    detail_page(
+        "general-scroll",
+        "General",
+        [
+            section(
+                "Appearance",
+                Some("App-wide colour and theme choices".into()),
+                None,
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(pt(8.))
+                    .child(group([
+                        Row::new(Msg::SettingsTheme.t())
+                            .subtitle(Msg::SettingsThemeDesc.t())
+                            .trailing(popup_value("theme", "Apple Dark", Forced::Rest))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsAccent.t())
+                            .subtitle("Use the system colour or the theme's accent.")
+                            .trailing(Segmented::new(
+                                "accent",
+                                [Msg::SettingsAccentSystem.t(), Msg::SettingsAccentTheme.t()],
+                                1,
+                            ))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsCustomThemes.t())
+                            .subtitle("Load themes from JSON files.")
+                            .leading(icon_tile(IconName::Folder, Tint::Hue(Hue::Indigo), 26.))
+                            .into_any_element(),
+                        Row::new("Theme folder")
+                            .subtitle("~/Library/Application Support/Kagi/themes")
+                            .into_any_element(),
+                    ]))
+                    .child(theme_actions()),
+            ),
+            section(
+                "Interface",
+                Some("Display density and toolbar presentation".into()),
+                None,
+                group([
+                    Row::new(Msg::SettingsToolbarDisplay.t())
+                        .subtitle(Msg::SettingsToolbarDisplayDesc.t())
+                        .trailing(Segmented::new("toolbar", ["Icon and Text", "Icon Only"], 1))
+                        .into_any_element(),
+                    Row::new(Msg::SettingsZoom.t())
+                        .subtitle(Msg::SettingsZoomDesc.t())
+                        .trailing(stepper(
+                            "ui-zoom",
+                            "100%",
+                            true,
+                            true,
+                            Some((StepperPart::Increase, Forced::Rest)),
+                        ))
+                        .into_any_element(),
+                    Row::new(Msg::SettingsCompactThreshold.t())
+                        .subtitle(Msg::SettingsCompactThresholdDesc.t())
+                        .trailing(stepper(
+                            "compact-threshold",
+                            "70rem",
+                            true,
+                            true,
+                            Some((StepperPart::Increase, Forced::Rest)),
+                        ))
+                        .into_any_element(),
+                ]),
+            ),
+        ],
+    )
+    .into_any_element()
+}
+
+fn graph_pane() -> AnyElement {
+    detail_page(
+        "graph-scroll",
+        "Graph",
+        [section(
+            "Display",
+            Some("How commits and lanes appear in the graph".into()),
+            None,
+            group([
+                Row::new(Msg::SettingsCompact.t())
+                    .subtitle(Msg::SettingsCompactDesc.t())
+                    .trailing(switch(
+                        "compact-graph",
+                        Msg::SettingsCompact.t(),
+                        false,
+                        Forced::Rest,
+                        |_, _, _| {},
+                    ))
+                    .into_any_element(),
+                Row::new(Msg::SettingsLaneCompact.t())
+                    .subtitle(Msg::SettingsLaneCompactDesc.t())
+                    .trailing(switch(
+                        "avatar-nodes",
+                        Msg::SettingsLaneCompact.t(),
+                        true,
+                        Forced::Rest,
+                        |_, _, _| {},
+                    ))
+                    .into_any_element(),
+            ]),
+        )],
+    )
+    .into_any_element()
+}
+
+fn network_pane() -> AnyElement {
+    detail_page(
+        "network-scroll",
+        "Network & Sync",
+        [section(
+            "Fetching",
+            Some("Background remote-history updates".into()),
+            None,
+            group([Row::new(Msg::SettingsAutoFetch.t())
+                .subtitle(Msg::SettingsAutoFetchDesc.t())
+                .trailing(switch(
+                    "auto-fetch",
+                    Msg::SettingsAutoFetch.t(),
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element()]),
+        )],
+    )
+    .into_any_element()
+}
+
+fn behaviour_pane() -> AnyElement {
+    detail_page(
+        "behaviour-scroll",
+        "Behaviour",
+        [
+            section(
+                "Terminal & clipboard",
+                Some("Graph copying and terminal worktree safety".into()),
+                None,
+                group([
+                    Row::new(Msg::SettingsGraphCopy.t())
+                        .subtitle(Msg::SettingsGraphCopyDesc.t())
+                        .trailing(Segmented::new("graph-copy", ["Hash", "Branch"], 0))
+                        .into_any_element(),
+                    Row::new(Msg::SettingsTerminalAutoLock.t())
+                        .subtitle(Msg::SettingsTerminalAutoLockDesc.t())
+                        .trailing(switch(
+                            "terminal-auto-lock",
+                            Msg::SettingsTerminalAutoLock.t(),
+                            false,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element(),
+                ]),
+            ),
+            section(
+                "Documents",
+                Some("Initial view for Markdown files".into()),
+                None,
+                group([Row::new(Msg::SettingsMarkdownDefaultView.t())
+                    .subtitle(Msg::SettingsMarkdownDefaultViewDesc.t())
+                    .trailing(Segmented::new("markdown-opening", ["Preview", "Source"], 0))
+                    .into_any_element()]),
+            ),
+            section(
+                "Motion",
+                Some("Decorative animation preference".into()),
+                None,
+                group([Row::new(Msg::SettingsReduceMotion.t())
+                    .subtitle(Msg::SettingsReduceMotionDesc.t())
+                    .trailing(switch(
+                        "reduce-motion",
+                        Msg::SettingsReduceMotion.t(),
+                        false,
+                        Forced::Rest,
+                        |_, _, _| {},
+                    ))
+                    .into_any_element()]),
+            ),
+        ],
+    )
+    .into_any_element()
+}
+
+fn language_pane() -> AnyElement {
+    detail_page(
+        "language-scroll",
+        Msg::SettingsLanguage.t(),
+        [section(
+            Msg::SettingsLanguage.t(),
+            Some("Choose the language for the Kagi interface".into()),
+            None,
+            group([Row::new(Msg::SettingsInterfaceLang.t())
+                .subtitle(Msg::SettingsInterfaceLangDesc.t())
+                .trailing(Segmented::new(
+                    "interface-language",
+                    ["English", "日本語"],
+                    0,
+                ))
+                .into_any_element()]),
+        )],
+    )
+    .into_any_element()
+}
+
+fn smart_commit_pane() -> AnyElement {
+    detail_page(
+        "smart-commit-scroll",
+        Msg::SettingsSmartCommit.t(),
+        [section(
+            "Configuration",
+            Some("Generate draft commit messages locally".into()),
+            None,
+            group([
+                Row::new(Msg::SettingsSmartEnable.t())
+                    .subtitle(Msg::SettingsSmartEnableDesc.t())
+                    .trailing(switch(
+                        "smart-commit-enabled",
+                        Msg::SettingsSmartEnable.t(),
+                        true,
+                        Forced::Rest,
+                        |_, _, _| {},
+                    ))
+                    .into_any_element(),
+                Row::new(Msg::SettingsSmartProvider.t())
+                    .subtitle(Msg::SettingsSmartProviderDesc.t())
+                    .trailing(Segmented::new(
+                        "smart-provider",
+                        ["Ollama", "CLI providers"],
+                        0,
+                    ))
+                    .into_any_element(),
+                Row::new(Msg::SettingsSmartModel.t())
+                    .subtitle(Msg::SettingsSmartModelDesc.t())
+                    .trailing(popup_value("smart-model", "llama3.2", Forced::Rest))
+                    .into_any_element(),
+            ]),
+        )],
+    )
+    .into_any_element()
+}
+
+fn analyze_pane() -> AnyElement {
+    detail_page(
+        "analyze-scroll",
+        Msg::SettingsAnalyze.t(),
+        [section(
+            "Ignored paths",
+            Some("Patterns excluded from Analyze".into()),
+            None,
+            group([
+                Row::new(Msg::SettingsAnalyzeIgnore.t())
+                    .subtitle(Msg::SettingsAnalyzeIgnoreSummary.t())
+                    .into_any_element(),
+                analyze_ignore_editor(
+                    "analyze-ignore",
+                    "*.generated\nnode_modules/\n.DS_Store",
+                    Forced::Rest,
+                )
+                .into_any_element(),
+                Row::new("Changes")
+                    .subtitle(Msg::SettingsAnalyzeIgnoreUnsaved.t())
+                    .trailing(analyze_actions())
+                    .into_any_element(),
+            ]),
+        )],
+    )
+    .into_any_element()
+}
+
+fn theme_actions() -> impl IntoElement {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .flex_wrap()
+        .gap(pt(6.))
+        .child(capsule_button(
+            "open-theme-folder",
+            format!("{}…", Msg::SettingsCustomThemesOpen.t()),
+            Forced::Rest,
+        ))
+        .child(capsule_button(
+            "reload-themes",
+            Msg::SettingsCustomThemesReload.t(),
+            Forced::Rest,
+        ))
+        .child(capsule_button(
+            "theme-guide",
+            format!("{}…", Msg::SettingsCustomThemesGuide.t()),
+            Forced::Rest,
+        ))
+}
+
+fn analyze_actions() -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(pt(6.))
+        .child(capsule_button(
+            "analyze-reset",
+            format!("{}…", Msg::SettingsAnalyzeIgnoreReset.t()),
+            Forced::Rest,
+        ))
+        .child(capsule_button(
+            "analyze-save",
+            Msg::SettingsAnalyzeIgnoreSave.t(),
+            Forced::Rest,
+        ))
+}
+
+/// Page-local kit gap: the kit intentionally has no multiline text editor.
+fn analyze_ignore_editor(id: &'static str, value: &str, forced: Forced) -> impl IntoElement {
+    let editor = div()
+        .id(id)
+        .w_full()
+        .min_w_0()
+        .h(pt(82.))
+        .p(pt(10.))
+        .flex()
+        .flex_col()
+        .gap(pt(3.))
+        .rounded(pt(7.))
+        .bg(gpui::rgb(ink::control()))
+        .text_color(ink::secondary())
+        .text_size(pt(11.5))
+        .role(Role::TextInput)
+        .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
+        .children(value.lines().map(|line| div().child(line.to_owned())));
+    ring(editor, forced == Forced::Focus, 7.)
+}

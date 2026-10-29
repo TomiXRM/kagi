@@ -1,0 +1,225 @@
+//! I09/S6 — data-driven built-in theme cards in the Settings gallery.
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    caption, group, icon_tile, ink, pt, ring, search_field, section, section_action,
+    settings_window, sidebar, sidebar_gap, sidebar_item, switch, Forced, Hue, Row, Tint,
+};
+use kagi::ui::theme::{themes_by_name, Theme};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i09-s6",
+    states: &["default"],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn render(_: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    settings_window(themes_sidebar(), themes_detail()).into_any_element()
+}
+
+fn themes_sidebar() -> AnyElement {
+    let item = |id, icon, hue, label| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            id == "themes",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("theme-search", "Search Settings").into_any_element(),
+        item("general", IconName::Settings2, Hue::Gray, "General"),
+        item(
+            "appearance",
+            IconName::LayoutDashboard,
+            Hue::Indigo,
+            "Appearance",
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes"),
+        sidebar_gap(),
+        item("graph", IconName::Map, Hue::Orange, "Graph"),
+        item("editor", IconName::ALargeSmall, Hue::Blue, "Editor"),
+        item("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        sidebar_gap(),
+        item("network", IconName::Network, Hue::Blue, "Network & Sync"),
+        item("smart-commit", IconName::Bot, Hue::Purple, "Smart Commit"),
+    ])
+    .into_any_element()
+}
+
+fn themes_detail() -> AnyElement {
+    let section_for = |title: &'static str, dark: bool, action_id: &'static str| {
+        section(
+            title,
+            None,
+            Some(section_action(action_id, IconName::Plus, "New", Forced::Rest).into_any_element()),
+            group([
+                div()
+                    .h(pt(30.))
+                    .flex()
+                    .items_end()
+                    .child(caption("Built-in"))
+                    .into_any_element(),
+                theme_strip(dark),
+                Row::new("Use extended theme palette")
+                    .trailing(switch(
+                        if dark {
+                            "extended-dark-palette"
+                        } else {
+                            "extended-light-palette"
+                        },
+                        "Use extended theme palette",
+                        true,
+                        Forced::Rest,
+                        |_, _, _| {},
+                    ))
+                    .into_any_element(),
+            ]),
+        )
+    };
+
+    kagi::ui::settings_kit::detail_page(
+        "themes-scroll",
+        "Themes",
+        [
+            section_for("Light Mode", false, "new-light-theme"),
+            section_for("Dark Mode — Active", true, "new-dark-theme"),
+        ],
+    )
+    .into_any_element()
+}
+
+/// Horizontal strip rather than a squeezed grid: each built-in card keeps its
+/// preview geometry, and the id keeps the scroll target stable for a gallery host.
+fn theme_strip(dark: bool) -> AnyElement {
+    let cards = themes_by_name()
+        .into_iter()
+        .filter(|theme| theme.dark == dark)
+        .map(|theme| {
+            let selected = theme.slug == if dark { "apple-dark" } else { "apple-light" };
+            theme_card(&theme, selected, Forced::Rest)
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .id(if dark {
+            "dark-theme-card-strip"
+        } else {
+            "light-theme-card-strip"
+        })
+        .w_full()
+        .h(pt(150.))
+        .overflow_x_scroll()
+        .child(div().flex().gap(pt(10.)).pr(pt(12.)).children(cards))
+        .into_any_element()
+}
+
+/// Kit gap: a reusable theme-choice tile. Its preview deliberately reads only
+/// `Theme` palette fields, so it preserves the selected theme's identity under
+/// either host appearance. Standard settings rows and groups remain kit-owned.
+fn theme_card(theme: &Theme, selected: bool, forced: Forced) -> AnyElement {
+    let terminal = |color: (u8, u8, u8)| -> u32 {
+        ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
+    };
+    let ansi = [
+        theme.term_black,
+        theme.term_red,
+        theme.term_green,
+        theme.term_yellow,
+        theme.term_blue,
+        theme.term_magenta,
+        theme.term_cyan,
+        theme.term_white,
+    ];
+    let preview_background = match forced {
+        Forced::Hover => theme.surface,
+        Forced::Pressed => theme.selected,
+        _ => theme.bg_base,
+    };
+    let preview = div()
+        .w(pt(142.))
+        .h(pt(98.))
+        .p(pt(10.))
+        .flex()
+        .flex_col()
+        .justify_between()
+        .rounded(pt(12.))
+        .bg(rgb(preview_background))
+        .border_1()
+        .border_color(rgb(theme.surface))
+        .text_color(rgb(theme.text_main))
+        .when(forced == Forced::Disabled, |card| {
+            card.opacity(ink::disabled_opacity())
+        })
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().text_size(pt(34.)).child("Aa"))
+                .child(
+                    div()
+                        .px(pt(8.))
+                        .py(pt(4.))
+                        .rounded(pt(6.))
+                        .bg(rgb(terminal(theme.term_bg)))
+                        .text_color(rgb(terminal(theme.term_fg)))
+                        .child("~/"),
+                )
+                .child(
+                    div()
+                        .w(pt(9.))
+                        .h(pt(20.))
+                        .rounded(pt(2.))
+                        .bg(rgb(terminal(theme.term_cursor))),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(pt(3.))
+                .children(ansi.into_iter().map(|color| {
+                    div()
+                        .size(pt(12.))
+                        .rounded_full()
+                        .bg(rgb(terminal(color)))
+                        .into_any_element()
+                })),
+        );
+    let preview = ring(preview, selected || forced == Forced::Focus, 12.);
+
+    div()
+        .id(format!("theme-card-{}", theme.slug))
+        .w(pt(146.))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(pt(7.))
+        .role(gpui::Role::Button)
+        .aria_label(theme.display_name())
+        .child(preview)
+        .child(
+            div()
+                .w_full()
+                .truncate()
+                .text_color(if selected {
+                    ink::text()
+                } else {
+                    ink::secondary()
+                })
+                .when(selected, |name| name.font_weight(FontWeight::SEMIBOLD))
+                .child(theme.display_name().to_string()),
+        )
+        .into_any_element()
+}

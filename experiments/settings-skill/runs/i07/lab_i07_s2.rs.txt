@@ -1,0 +1,353 @@
+//! Gallery reconstruction of Rex's Interface settings pane.
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    detail_page, group, icon_tile, popup_value, pt, ring, search_field, section, settings_window,
+    sidebar, sidebar_gap, sidebar_item, switch, vertical_divider, Forced, Hue, Row, Segmented,
+    Slider, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i07-s2",
+    states: &["default", "focus-choice", "hover-popup"],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rex_sidebar() -> AnyElement {
+    let item = |id, icon, tint, label| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(tint), 20.),
+            label,
+            None,
+            id == "interface",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 32.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Indigo,
+            "Interface",
+        ),
+        item("themes", IconName::Palette, Hue::Purple, "Themes"),
+        sidebar_gap(),
+        item("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        item("shortcuts", IconName::Settings2, Hue::Gray, "Shortcuts"),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+        ),
+        item("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        item("remote-hosts", IconName::Globe, Hue::Blue, "Remote Hosts"),
+        sidebar_gap(),
+        item("developer", IconName::Cpu, Hue::Gray, "Developer"),
+    ])
+    .into_any_element()
+}
+
+#[derive(Clone, Copy)]
+enum ChoicePreview {
+    Auto,
+    Light,
+    Dark,
+    Glass,
+    Classic,
+}
+
+/// A page-local kit gap: settings_kit has no visual choice tile. The tile uses
+/// the kit's points, inks, accent ring, and category colour for every preview.
+fn choice_tile(
+    id: &'static str,
+    preview: ChoicePreview,
+    label: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let preview_window = match preview {
+        ChoicePreview::Auto => div()
+            .size(pt(38.))
+            .rounded(pt(7.))
+            .bg(rgb(kagi::ui::settings_kit::ink::card()))
+            .child(
+                div()
+                    .h(pt(8.))
+                    .rounded_t(pt(7.))
+                    .bg(kagi::ui::settings_kit::ink::accent()),
+            )
+            .into_any_element(),
+        ChoicePreview::Light => div()
+            .size(pt(38.))
+            .rounded(pt(7.))
+            .bg(rgb(kagi::ui::settings_kit::ink::card()))
+            .child(
+                div()
+                    .m(pt(6.))
+                    .h(pt(8.))
+                    .rounded(pt(3.))
+                    .bg(rgb(kagi::ui::settings_kit::ink::control())),
+            )
+            .into_any_element(),
+        ChoicePreview::Dark => div()
+            .size(pt(38.))
+            .rounded(pt(7.))
+            .bg(rgb(kagi::ui::settings_kit::ink::window()))
+            .border_1()
+            .border_color(rgb(kagi::ui::settings_kit::ink::hairline()))
+            .into_any_element(),
+        ChoicePreview::Glass => div()
+            .size(pt(38.))
+            .rounded_full()
+            .bg(rgb(kagi::ui::settings_kit::ink::control()))
+            .border_1()
+            .border_color(kagi::ui::settings_kit::ink::accent())
+            .into_any_element(),
+        ChoicePreview::Classic => div()
+            .size(pt(38.))
+            .rounded_full()
+            .bg(rgb(kagi::ui::settings_kit::ink::window()))
+            .border_1()
+            .border_color(rgb(kagi::ui::settings_kit::ink::hairline()))
+            .into_any_element(),
+    };
+    let tile = div()
+        .id(id)
+        .w(pt(72.))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(pt(5.))
+        .opacity(if forced == Forced::Disabled { 0.45 } else { 1. })
+        .when(forced == Forced::Focus, |el| el.shadow_md())
+        .child(
+            div()
+                .size(pt(62.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(10.))
+                .bg(rgb(Tint::Hue(Hue::Blue).color()))
+                .when(forced == Forced::Hover, |el| el.shadow_md())
+                .when(forced == Forced::Pressed, |el| el.opacity(0.82))
+                .child(preview_window),
+        )
+        .child(
+            div()
+                .text_size(pt(11.5))
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .when(!selected, |el| {
+                    el.text_color(kagi::ui::settings_kit::ink::secondary())
+                })
+                .child(label),
+        );
+    ring(tile, selected || forced == Forced::Focus, 10.).into_any_element()
+}
+
+fn appearance_choices(choice_state: Forced) -> AnyElement {
+    div()
+        .min_h(pt(104.))
+        .px(pt(8.))
+        .py(pt(10.))
+        .flex()
+        .items_center()
+        .gap(pt(12.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(pt(6.))
+                .child(
+                    div()
+                        .text_size(pt(12.))
+                        .text_color(kagi::ui::settings_kit::ink::secondary())
+                        .child("Color scheme"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(pt(6.))
+                        .child(choice_tile(
+                            "scheme-auto",
+                            ChoicePreview::Auto,
+                            "Auto",
+                            true,
+                            choice_state,
+                        ))
+                        .child(choice_tile(
+                            "scheme-light",
+                            ChoicePreview::Light,
+                            "Light",
+                            false,
+                            Forced::Rest,
+                        ))
+                        .child(choice_tile(
+                            "scheme-dark",
+                            ChoicePreview::Dark,
+                            "Dark",
+                            false,
+                            Forced::Rest,
+                        )),
+                ),
+        )
+        .child(vertical_divider())
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(pt(6.))
+                .child(
+                    div()
+                        .text_size(pt(12.))
+                        .text_color(kagi::ui::settings_kit::ink::secondary())
+                        .child("Interface style"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(pt(6.))
+                        .child(choice_tile(
+                            "style-glass",
+                            ChoicePreview::Glass,
+                            "Glass",
+                            false,
+                            Forced::Rest,
+                        ))
+                        .child(choice_tile(
+                            "style-classic",
+                            ChoicePreview::Classic,
+                            "Classic",
+                            true,
+                            Forced::Rest,
+                        )),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let choice_state = if cx.state == "focus-choice" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let popup_state = if cx.state == "hover-popup" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        rex_sidebar(),
+        detail_page(
+            "interface-scroll",
+            "Interface",
+            [
+                section(
+                    "Appearance",
+                    None,
+                    None,
+                    group([
+                        appearance_choices(choice_state),
+                        Row::new("Tint with theme")
+                            .trailing(switch(
+                                "tint-with-theme",
+                                "Tint with theme",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Tabs",
+                    None,
+                    None,
+                    group([
+                        Row::new("Tab style")
+                            .trailing(
+                                Segmented::new(
+                                    "tab-style",
+                                    ["Above", "Left Side", "Right Side"],
+                                    0,
+                                )
+                                .forced(0, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new("Fill available space")
+                            .trailing(switch(
+                                "fill-space",
+                                "Fill available space",
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Show tab icons")
+                            .trailing(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(pt(8.))
+                                    .child(Slider::new("tab-icons", 0.5).ticks(5).width(150.))
+                                    .child("3"),
+                            )
+                            .into_any_element(),
+                        Row::new("Use color for tab icons")
+                            .trailing(popup_value("tab-icon-color", "Always", popup_state))
+                            .into_any_element(),
+                        Row::new("Shell icon theme")
+                            .trailing(popup_value("shell-icon-theme", "Default", Forced::Rest))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Panes",
+                    None,
+                    None,
+                    group([
+                        Row::new("Pane style")
+                            .trailing(
+                                Segmented::new("pane-style", ["Comfortable", "Compact"], 0)
+                                    .forced(0, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new("Show pane headers")
+                            .trailing(switch(
+                                "pane-headers",
+                                "Show pane headers",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

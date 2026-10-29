@@ -1,0 +1,439 @@
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Role, Window};
+use gpui_component::{Icon, IconName, Sizable as _, Size};
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    capsule_button, detail_page, group, icon_tile, ink, pt, ring, search_field, section,
+    settings_window, sidebar, sidebar_gap, sidebar_item, Forced, Hue, Row, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i06-s5",
+    states: &[
+        "default",
+        "hover-manage",
+        "focus-help",
+        "hover-help",
+        "pressed-help",
+        "disabled-help",
+    ],
+    size: (920., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn sidebar_content() -> AnyElement {
+    let item = |id, icon, hue, label, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        item("general", IconName::Settings2, Hue::Gray, "General", false),
+        item(
+            "appearance",
+            IconName::Palette,
+            Hue::Indigo,
+            "Appearance",
+            false,
+        ),
+        item(
+            "accessibility",
+            IconName::CircleUser,
+            Hue::Blue,
+            "Accessibility",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            false,
+        ),
+        item("sound", IconName::Play, Hue::Pink, "Sound", false),
+        item(
+            "privacy",
+            IconName::Eye,
+            Hue::Gray,
+            "Privacy & Security",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "internet",
+            IconName::Globe,
+            Hue::Blue,
+            "Internet Accounts",
+            false,
+        ),
+        item("icloud", IconName::Globe, Hue::Blue, "iCloud", true),
+        item("storage", IconName::HardDrive, Hue::Teal, "Storage", false),
+    ])
+    .into_any_element()
+}
+
+/// Page-local composition for a three-column cloud-service summary card.
+/// The kit has no card-grid part; its tile remains the kit-owned symbol tile.
+fn cloud_card(
+    id: &'static str,
+    icon: IconName,
+    hue: Hue,
+    title: &'static str,
+    subtitle: &'static str,
+    forced: Forced,
+) -> AnyElement {
+    let card = div()
+        .id(id)
+        .flex_1()
+        .min_w_0()
+        .h(pt(92.))
+        .p(pt(12.))
+        .flex()
+        .items_start()
+        .gap(pt(10.))
+        .rounded(pt(9.))
+        .bg(rgb(ink::control()))
+        .when(forced == Forced::Hover, |el| {
+            el.bg(rgb(ink::control_hover()))
+        })
+        .when(forced == Forced::Pressed, |el| {
+            el.bg(rgb(ink::control_pressed()))
+        })
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(icon_tile(icon, Tint::Hue(hue), 30.))
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(pt(3.))
+                .child(
+                    div()
+                        .min_w_0()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .line_clamp(2)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_size(pt(11.5))
+                        .text_color(ink::secondary())
+                        .line_clamp(2)
+                        .child(subtitle),
+                ),
+        );
+    ring(card, forced == Forced::Focus, 9.).into_any_element()
+}
+
+/// Page-local full-width storage meter: the kit owns the actual progress bar.
+fn storage_meter(fraction: f32, tint: Tint) -> AnyElement {
+    div()
+        .w_full()
+        .pt_0()
+        .child(kagi::ui::settings_kit::progress_bar(fraction, tint))
+        .into_any_element()
+}
+
+/// Page-local Help button because the kit intentionally has no Help control.
+fn help_button(forced: Forced) -> AnyElement {
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::control(),
+    };
+    ring(
+        div()
+            .id("help")
+            .size(pt(28.))
+            .rounded_full()
+            .role(Role::Button)
+            .aria_label("Help")
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(fill))
+            .font_weight(FontWeight::BOLD)
+            .child("?")
+            .hover(|el| el.bg(rgb(ink::control_hover())))
+            .active(|el| el.bg(rgb(ink::control_pressed())))
+            .when(forced == Forced::Disabled, |el| {
+                el.opacity(ink::disabled_opacity())
+            }),
+        forced == Forced::Focus,
+        14.,
+    )
+    .into_any_element()
+}
+
+fn card_grid(cards: [AnyElement; 6]) -> AnyElement {
+    let [a, b, c, d, e, f] = cards;
+    div()
+        .flex()
+        .flex_col()
+        .gap(pt(10.))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .gap(pt(10.))
+                .child(a)
+                .child(b)
+                .child(c),
+        )
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .gap(pt(10.))
+                .child(d)
+                .child(e)
+                .child(f),
+        )
+        .into_any_element()
+}
+
+fn saved_section(cards: AnyElement) -> AnyElement {
+    div()
+        .flex_col()
+        .gap(pt(8.))
+        .child(
+            div()
+                .px(pt(12.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(pt(8.))
+                        .child(
+                            div()
+                                .size(pt(12.))
+                                .rounded_full()
+                                .bg(rgb(Tint::Success.color())),
+                        )
+                        .child(
+                            div()
+                                .id("saved-heading")
+                                .font_weight(FontWeight::BOLD)
+                                .role(Role::Heading)
+                                .child("Saved to iCloud"),
+                        ),
+                )
+                .child(capsule_button("see-all", "See All", Forced::Rest)),
+        )
+        .child(cards)
+        .into_any_element()
+}
+
+fn account_header() -> AnyElement {
+    div()
+        .p(pt(12.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(pt(2.))
+                .child(
+                    div()
+                        .id("icloud-account-heading")
+                        .text_size(pt(22.))
+                        .font_weight(FontWeight::BOLD)
+                        .role(Role::Heading)
+                        .child("iCloud+"),
+                )
+                .child(
+                    div()
+                        .text_size(pt(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(ink::secondary())
+                        .child("Tomioka Daiki"),
+                ),
+        )
+        .child(
+            div()
+                .size(pt(42.))
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(rgb(ink::control()))
+                .text_color(ink::accent())
+                .child(Icon::new(IconName::Globe).with_size(Size::Size(pt(23.)))),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let manage_state = if cx.state == "hover-manage" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+    let help_state = match cx.state {
+        "focus-help" => Forced::Focus,
+        "hover-help" => Forced::Hover,
+        "pressed-help" => Forced::Pressed,
+        "disabled-help" => Forced::Disabled,
+        _ => Forced::Rest,
+    };
+
+    let saved_cards = card_grid([
+        cloud_card(
+            "photos",
+            IconName::GalleryVerticalEnd,
+            Hue::Pink,
+            "Photos",
+            "111 items",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "drive",
+            IconName::Folder,
+            Hue::Teal,
+            "Drive",
+            "35.2 GB",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "passwords",
+            IconName::Eye,
+            Hue::Gray,
+            "Passwords",
+            "On",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "notes",
+            IconName::BookOpen,
+            Hue::Yellow,
+            "Notes",
+            "706 items",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "messages",
+            IconName::CircleUser,
+            Hue::Green,
+            "Messages",
+            "921.6 MB",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "mail",
+            IconName::Inbox,
+            Hue::Blue,
+            "Mail",
+            "677.1 MB",
+            Forced::Rest,
+        ),
+    ]);
+    let feature_cards = card_grid([
+        cloud_card(
+            "manage-plan",
+            IconName::HardDrive,
+            Hue::Teal,
+            "Manage Plan",
+            "50 GB",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "family",
+            IconName::User,
+            Hue::Purple,
+            "Family",
+            "Start sharing",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "invitations",
+            IconName::Calendar,
+            Hue::Blue,
+            "Apple Invitations",
+            "Create event",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "relay",
+            IconName::Globe,
+            Hue::Blue,
+            "Private Relay",
+            "On",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "hide-email",
+            IconName::EyeOff,
+            Hue::Gray,
+            "Hide My Email",
+            "14 addresses",
+            Forced::Rest,
+        ),
+        cloud_card(
+            "custom-domain",
+            IconName::Inbox,
+            Hue::Orange,
+            "Custom Email Domain",
+            "Manage",
+            Forced::Rest,
+        ),
+    ]);
+
+    settings_window(
+        sidebar_content(),
+        detail_page(
+            "icloud-scroll",
+            "iCloud",
+            [
+                account_header(),
+                group([
+                    Row::new("Storage: 46.5 / 50 GB used")
+                        .trailing(capsule_button("manage", "Manage…", manage_state))
+                        .into_any_element(),
+                    storage_meter(0.93, Tint::Success),
+                ])
+                .into_any_element(),
+                saved_section(saved_cards),
+                section("iCloud+ Features", None, None, feature_cards),
+                group([
+                    Row::new("Advanced Data Protection")
+                        .trailing(div().text_color(ink::secondary()).child("Off"))
+                        .navigation("advanced", Forced::Rest)
+                        .into_any_element(),
+                    Row::new("Access iCloud Data on the Web")
+                        .trailing(div().text_color(ink::secondary()).child("On"))
+                        .navigation("web-data", Forced::Rest)
+                        .into_any_element(),
+                ])
+                .into_any_element(),
+                div()
+                    .w_full()
+                    .flex()
+                    .justify_end()
+                    .child(help_button(help_state))
+                    .into_any_element(),
+            ],
+        ),
+    )
+    .into_any_element()
+}

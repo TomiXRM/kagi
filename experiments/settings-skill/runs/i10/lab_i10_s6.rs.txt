@@ -1,0 +1,261 @@
+//! S6: data-driven theme previews composed with the settings kit.
+use gpui::{
+    div, point, prelude::*, rgb, AnyElement, App, FontWeight, Role, ScrollHandle, SharedString,
+    Window,
+};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+use kagi::ui::theme::{themes_by_name, Theme};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-s6",
+    states: &[
+        "default",
+        "hover-card",
+        "focus-card",
+        "scroll-middle",
+        "scroll-end",
+    ],
+    size: (900., 692.),
+    render,
+}];
+
+const CARD_WIDTH: f32 = 144.;
+const CARD_GAP: f32 = 10.;
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+/// Kit gap: a visual theme choice, rather than a text segmented control.
+/// Preview pixels depend only on this theme; the outer selection ring is chrome.
+fn theme_card(theme: &Theme, selected: bool, forced: Forced) -> AnyElement {
+    let terminal_rgb =
+        |(r, g, b): (u8, u8, u8)| rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b));
+    let ansi = [
+        theme.term_black,
+        theme.term_red,
+        theme.term_green,
+        theme.term_yellow,
+        theme.term_blue,
+        theme.term_magenta,
+        theme.term_cyan,
+        theme.term_white,
+    ];
+    let preview = div()
+        .w_full()
+        .h(pt(88.))
+        .p(pt(10.))
+        .flex()
+        .flex_col()
+        .justify_between()
+        .rounded(pt(metrics::GROUP_RADIUS))
+        .bg(rgb(theme.bg_base))
+        .border(pt(1.))
+        .border_color(rgb(theme.text_muted))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(pt(25.))
+                        .text_color(rgb(theme.text_main))
+                        .child("Aa"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(pt(6.))
+                        .child(
+                            div()
+                                .px(pt(5.))
+                                .h(pt(26.))
+                                .flex()
+                                .items_center()
+                                .rounded(pt(5.))
+                                .bg(rgb(theme.accent))
+                                .text_color(terminal_rgb(theme.term_bg))
+                                .text_size(pt(16.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("~/"),
+                        )
+                        .child(
+                            div()
+                                .w(pt(10.))
+                                .h(pt(26.))
+                                .rounded(pt(3.))
+                                .bg(terminal_rgb(theme.term_cursor)),
+                        ),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .children(ansi.into_iter().map(|color| {
+                    div()
+                        .size(pt(11.))
+                        .flex_shrink_0()
+                        .rounded(pt(6.))
+                        .bg(terminal_rgb(color))
+                })),
+        );
+    let card = div()
+        .id(SharedString::from(format!("theme-{}", theme.slug)))
+        .w(pt(CARD_WIDTH))
+        .h(pt(146.))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap(pt(5.))
+        .role(Role::RadioButton)
+        .aria_label(SharedString::from(theme.display_name()))
+        .aria_selected(selected)
+        .when(forced == Forced::Hover, |el| {
+            el.bg(rgb(ink::control_hover()))
+        })
+        .when(forced == Forced::Pressed, |el| {
+            el.bg(rgb(ink::control_pressed()))
+        })
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(ring(
+            div().w_full().p(pt(2.)).child(preview),
+            selected,
+            metrics::GROUP_RADIUS + 4.,
+        ))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .text_center()
+                .text_size(pt(metrics::SECONDARY))
+                .line_height(pt(16.))
+                .text_color(if selected {
+                    ink::text()
+                } else {
+                    ink::secondary()
+                })
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .child(SharedString::from(theme.display_name())),
+        );
+    ring(card, forced == Forced::Focus, metrics::GROUP_RADIUS + 6.).into_any_element()
+}
+
+fn theme_section(dark: bool, cx: &GalleryContext) -> AnyElement {
+    let mode = if dark { "dark" } else { "light" };
+    let handle = ScrollHandle::new();
+    // One mapping for the strip's start, middle and end evidence states.
+    // GPUI clamps the requested offset to the real horizontal content extent.
+    let first_card = match cx.state {
+        "scroll-middle" => 3.,
+        "scroll-end" => themes_by_name().len() as f32,
+        _ => 0.,
+    };
+    handle.set_offset(point(-pt(first_card * (CARD_WIDTH + CARD_GAP)), pt(0.)));
+    let cards = themes_by_name()
+        .into_iter()
+        .filter(|theme| theme.dark == dark)
+        .map(|theme| {
+            let selected = theme.slug == if dark { "apple-dark" } else { "apple-light" };
+            let forced = if theme.slug == "catppuccin-latte" {
+                match cx.state {
+                    "hover-card" => Forced::Hover,
+                    "focus-card" => Forced::Focus,
+                    _ => Forced::Rest,
+                }
+            } else {
+                Forced::Rest
+            };
+            theme_card(&theme, selected, forced)
+        });
+    let previews = div()
+        .w_full()
+        .min_w_0()
+        .py(pt(12.))
+        .flex()
+        .flex_col()
+        .gap(pt(8.))
+        .child(caption("Built-in"))
+        .child(
+            div()
+                .id(SharedString::from(format!("{mode}-theme-strip")))
+                .w_full()
+                .min_w_0()
+                .overflow_x_scroll()
+                .track_scroll(&handle)
+                .flex()
+                .gap(pt(CARD_GAP))
+                .children(cards),
+        );
+    section(
+        if dark {
+            "Dark Mode — Active"
+        } else {
+            "Light Mode"
+        },
+        None,
+        Some(
+            section_action(
+                SharedString::from(format!("new-{mode}-theme")),
+                IconName::Plus,
+                "New",
+                Forced::Rest,
+            )
+            .into_any_element(),
+        ),
+        group([
+            previews.into_any_element(),
+            Row::new("Use extended theme palette")
+                .trailing(switch(
+                    SharedString::from(format!("{mode}-extended-palette")),
+                    "Use extended theme palette",
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ])
+        .w_full()
+        .min_w_0(),
+    )
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let panes = [
+        ("general", IconName::Settings2, Hue::Gray, "General"),
+        ("themes", IconName::Palette, Hue::Indigo, "Themes"),
+        ("graph", IconName::Github, Hue::Orange, "Graph"),
+        ("editor", IconName::File, Hue::Teal, "Editor"),
+        ("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        ("network", IconName::Network, Hue::Blue, "Network & Sync"),
+        ("smart-commit", IconName::Bot, Hue::Purple, "Smart Commit"),
+    ];
+    let navigation = std::iter::once(search_field("search", "Search Settings").into_any_element())
+        .chain(panes.into_iter().map(|(id, icon, hue, title)| {
+            sidebar_item(
+                id,
+                icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+                title,
+                None,
+                id == "themes",
+                Forced::Rest,
+            )
+            .into_any_element()
+        }));
+    settings_window(
+        sidebar(navigation),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [theme_section(false, cx), theme_section(true, cx)],
+        ),
+    )
+    .into_any_element()
+}

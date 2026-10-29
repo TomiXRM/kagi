@@ -1,0 +1,489 @@
+//! System Settings–style Interface pane, composed from the settings kit. The only kit gap is a
+//! labelled visual choice tile; all form and navigation controls are kit-owned.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Div, FontWeight, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Lang;
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-s2",
+    states: &[
+        "default",
+        "hover-choice",
+        "pressed-choice",
+        "focus-choice",
+        "disabled-choice",
+        "focus-switch",
+        "focus-slider",
+        "icons-min",
+        "icons-max",
+    ],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn text(cx: &GalleryContext, en: &'static str, ja: &'static str) -> &'static str {
+    if cx.lang == Lang::Ja {
+        ja
+    } else {
+        en
+    }
+}
+
+fn forced(cx: &GalleryContext, part: &str) -> Forced {
+    cx.state
+        .strip_suffix(part)
+        .and_then(|name| name.strip_suffix('-'))
+        .and_then(Forced::parse)
+        .unwrap_or(Forced::Rest)
+}
+
+#[derive(Clone, Copy)]
+enum Preview {
+    Auto,
+    Light,
+    Dark,
+    Glass,
+    Classic,
+}
+
+/// A miniature window illustration, not a second settings control.
+fn preview_window(preview: Preview) -> Div {
+    // Illustration colours derive from kit ink, with fixed lightness so a
+    // light preview remains light even while the surrounding app is dark.
+    let mut light = ink::secondary();
+    light.l = 0.94;
+    let mut dark = ink::secondary();
+    dark.l = 0.10;
+    let surface = match preview {
+        Preview::Light => light,
+        _ => dark,
+    };
+    let panel = || {
+        div()
+            .flex_1()
+            .h_full()
+            .rounded(pt(3.))
+            .border_1()
+            .border_color(ink::secondary().opacity(0.55))
+    };
+    div()
+        .w(pt(43.))
+        .h(pt(39.))
+        .rounded(pt(6.))
+        .overflow_hidden()
+        .bg(surface)
+        .border_1()
+        .border_color(ink::secondary())
+        .child(
+            div()
+                .h(pt(8.))
+                .px(pt(4.))
+                .flex()
+                .items_center()
+                .gap(pt(2.))
+                .children(
+                    [Hue::Red, Hue::Yellow, Hue::Green]
+                        .map(|hue| div().size(pt(3.)).rounded_full().bg(rgb(hue.rgb(false)))),
+                ),
+        )
+        .child(
+            div()
+                .relative()
+                .h(pt(29.))
+                .p(pt(3.))
+                .flex()
+                .flex_col()
+                .gap(pt(2.))
+                .child(panel())
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .gap(pt(2.))
+                        .child(panel())
+                        .child(panel()),
+                ),
+        )
+        .relative()
+        .when(matches!(preview, Preview::Auto), |el| {
+            el.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w_1_2()
+                    .bg(light.opacity(0.8)),
+            )
+        })
+}
+
+/// Kit gap: a reusable visual choice with a preview and its label underneath.
+/// Selection belongs to this tile; interaction never changes its value.
+fn choice_tile(
+    preview: Preview,
+    label: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::control(),
+    };
+    let illustration = div()
+        .w_full()
+        .h(pt(80.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(pt(metrics::GROUP_RADIUS))
+        .bg(rgb(fill))
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .child(match preview {
+            Preview::Auto | Preview::Light | Preview::Dark => preview_window(preview),
+            Preview::Glass | Preview::Classic => div()
+                .size(pt(40.))
+                .rounded_full()
+                .bg(rgb(if matches!(preview, Preview::Glass) {
+                    ink::control_hover()
+                } else {
+                    ink::window()
+                }))
+                .border_1()
+                .border_color(ink::secondary())
+                .when(matches!(preview, Preview::Glass), |el| el.shadow_md()),
+        });
+    div()
+        .id(label)
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(pt(5.))
+        .role(Role::RadioButton)
+        .aria_label(label)
+        .aria_selected(selected)
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(ring(
+            illustration,
+            selected || forced == Forced::Focus,
+            metrics::GROUP_RADIUS,
+        ))
+        .child(
+            div()
+                .text_size(pt(metrics::SECONDARY))
+                .text_color(if selected {
+                    ink::text()
+                } else {
+                    ink::secondary()
+                })
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .child(label),
+        )
+        .into_any_element()
+}
+
+fn settings_sidebar(cx: &GalleryContext) -> AnyElement {
+    let item = |id, icon, hue, en, ja| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            text(cx, en, ja),
+            None,
+            id == "interface",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("search", text(cx, "Search Settings", "設定を検索")).into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 32.),
+            text(cx, "Server", "サーバー"),
+            Some(text(cx, "Running", "実行中").into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Blue,
+            "Interface",
+            "インターフェイス",
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes", "テーマ"),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Terminal",
+            "ターミナル",
+        ),
+        item(
+            "shortcuts",
+            IconName::Asterisk,
+            Hue::Gray,
+            "Shortcuts",
+            "ショートカット",
+        ),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+            "連携",
+        ),
+        item(
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            "通知",
+        ),
+        item(
+            "remote",
+            IconName::Globe,
+            Hue::Blue,
+            "Remote Hosts",
+            "リモートホスト",
+        ),
+        sidebar_gap(),
+        item(
+            "developer",
+            IconName::Settings2,
+            Hue::Gray,
+            "Developer",
+            "開発者",
+        ),
+    ])
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let choice_state = forced(cx, "choice");
+    // Five ticks represent values 1 through 5. Minimum, middle and maximum
+    // captures use the same numeric value for both the kit slider and caption.
+    let icon_count = match cx.state {
+        "icons-min" => 1,
+        "icons-max" => 5,
+        _ => 3,
+    };
+    let icon_fraction = (icon_count - 1) as f32 / 4.;
+    let choices = div()
+        .w_full()
+        .min_w_0()
+        .py(pt(12.))
+        .flex()
+        .items_stretch()
+        .gap(pt(12.))
+        .child(
+            div()
+                .flex_grow(3.)
+                .flex_basis(pt(16.))
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(pt(8.))
+                .child(caption(text(cx, "Color scheme", "カラースキーム")))
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .gap(pt(8.))
+                        .id("scheme-choices")
+                        .role(Role::RadioGroup)
+                        .aria_label(text(cx, "Color scheme", "カラースキーム"))
+                        .child(choice_tile(
+                            Preview::Auto,
+                            text(cx, "Auto", "自動"),
+                            true,
+                            Forced::Rest,
+                        ))
+                        .child(choice_tile(
+                            Preview::Light,
+                            text(cx, "Light", "ライト"),
+                            false,
+                            choice_state,
+                        ))
+                        .child(choice_tile(
+                            Preview::Dark,
+                            text(cx, "Dark", "ダーク"),
+                            false,
+                            Forced::Rest,
+                        )),
+                ),
+        )
+        .child(vertical_divider())
+        .child(
+            div()
+                .flex_grow(2.)
+                .flex_basis(pt(8.))
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(pt(8.))
+                .child(caption(text(
+                    cx,
+                    "Interface style",
+                    "インターフェイススタイル",
+                )))
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .gap(pt(8.))
+                        .id("style-choices")
+                        .role(Role::RadioGroup)
+                        .aria_label(text(cx, "Interface style", "インターフェイススタイル"))
+                        .child(choice_tile(
+                            Preview::Glass,
+                            text(cx, "Glass", "ガラス"),
+                            false,
+                            Forced::Rest,
+                        ))
+                        .child(choice_tile(
+                            Preview::Classic,
+                            text(cx, "Classic", "クラシック"),
+                            true,
+                            Forced::Rest,
+                        )),
+                ),
+        );
+    settings_window(
+        settings_sidebar(cx),
+        detail_page(
+            "interface-scroll",
+            text(cx, "Interface", "インターフェイス"),
+            [
+                section(
+                    text(cx, "Appearance", "外観"),
+                    None,
+                    None,
+                    group([
+                        choices.into_any_element(),
+                        Row::new(text(cx, "Tint with theme", "テーマの色を適用"))
+                            .trailing(switch(
+                                "tint",
+                                text(cx, "Tint with theme", "テーマの色を適用"),
+                                true,
+                                forced(cx, "switch"),
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    text(cx, "Tabs", "タブ"),
+                    None,
+                    None,
+                    group([
+                        Row::new(text(cx, "Tab style", "タブのスタイル"))
+                            .trailing(Segmented::new(
+                                "tab-style",
+                                [
+                                    text(cx, "Above", "上部"),
+                                    text(cx, "Left Side", "左側"),
+                                    text(cx, "Right Side", "右側"),
+                                ],
+                                0,
+                            ))
+                            .into_any_element(),
+                        Row::new(text(cx, "Fill available space", "利用可能な幅に広げる"))
+                            .trailing(switch(
+                                "fill",
+                                text(cx, "Fill available space", "利用可能な幅に広げる"),
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new(text(cx, "Show tab icons", "タブアイコンを表示"))
+                            .trailing(
+                                div()
+                                    .h(pt(metrics::CONTROL_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .gap(pt(8.))
+                                    .child(
+                                        // The ticked kit slider includes 6 pt below
+                                        // its thumb. Balance that inset so the
+                                        // thumb and adjacent value share a centre.
+                                        div().h(pt(metrics::CONTROL_HEIGHT)).pt(pt(3.)).child(
+                                            Slider::new("tab-icons", icon_fraction)
+                                                .ticks(5)
+                                                .width(150.)
+                                                .forced(forced(cx, "slider")),
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w(pt(10.))
+                                            .text_color(ink::secondary())
+                                            .child(icon_count.to_string()),
+                                    ),
+                            )
+                            .into_any_element(),
+                        Row::new(text(cx, "Use color for tab icons", "タブアイコンの色"))
+                            .trailing(popup_value(
+                                "icon-color",
+                                text(cx, "Always", "常に使用"),
+                                Forced::Rest,
+                            ))
+                            .into_any_element(),
+                        Row::new(text(cx, "Shell icon theme", "シェルアイコンのテーマ"))
+                            .trailing(popup_value(
+                                "shell-theme",
+                                text(cx, "Default", "デフォルト"),
+                                Forced::Rest,
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    text(cx, "Panes", "ペイン"),
+                    None,
+                    None,
+                    group([
+                        Row::new(text(cx, "Pane style", "ペインのスタイル"))
+                            .trailing(Segmented::new(
+                                "pane-style",
+                                [
+                                    text(cx, "Comfortable", "ゆったり"),
+                                    text(cx, "Compact", "コンパクト"),
+                                ],
+                                0,
+                            ))
+                            .into_any_element(),
+                        Row::new(text(cx, "Show pane headers", "ペインヘッダーを表示"))
+                            .trailing(switch(
+                                "pane-headers",
+                                text(cx, "Show pane headers", "ペインヘッダーを表示"),
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

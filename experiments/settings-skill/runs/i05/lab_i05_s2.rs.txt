@@ -1,0 +1,369 @@
+//! Gallery reconstruction of Rex's Interface preferences pane.
+//!
+//! ```text
+//! cargo run --example lab_i05_s2 -- --list
+//! ```
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Role, Window};
+use gpui_component::{Icon, IconName, Sizable as _, Size};
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    caption, detail_page, group, icon_tile, ink, popup_value, pt, ring, search_field, section,
+    settings_window, sidebar, sidebar_gap, sidebar_item, switch, vertical_divider, Forced, Row,
+    Segmented, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i05-s2",
+    states: &["default", "focus-choice"],
+    size: (900., 820.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rex_sidebar() -> AnyElement {
+    let item = |id, icon, label| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Accent, 20.),
+            label,
+            None,
+            id == "interface",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Accent, 20.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item("interface", IconName::LayoutDashboard, "Interface"),
+        item("themes", IconName::Palette, "Themes"),
+        sidebar_gap(),
+        item("terminal", IconName::SquareTerminal, "Terminal"),
+        item("shortcuts", IconName::Menu, "Shortcuts"),
+        item("integrations", IconName::Github, "Integrations"),
+        item("notifications", IconName::Bell, "Notifications"),
+        item("remote-hosts", IconName::Globe, "Remote Hosts"),
+        sidebar_gap(),
+        item("developer", IconName::Settings2, "Developer"),
+    ])
+    .into_any_element()
+}
+
+#[derive(Clone, Copy)]
+enum ChoicePreview {
+    Auto,
+    Light,
+    Dark,
+    Glass,
+    Classic,
+}
+
+/// Page-local kit gap: Rex uses visual value previews instead of text segments.
+fn choice_tile(
+    id: &'static str,
+    preview: ChoicePreview,
+    label: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let preview_content = match preview {
+        ChoicePreview::Auto => div()
+            .size(pt(42.))
+            .rounded(pt(10.))
+            .bg(rgb(ink::card()))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Icon::new(IconName::CircleUser).with_size(Size::Size(pt(24.))))
+            .into_any_element(),
+        ChoicePreview::Light => div()
+            .size(pt(42.))
+            .rounded(pt(10.))
+            .bg(rgb(ink::card()))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Icon::new(IconName::Sun).with_size(Size::Size(pt(24.))))
+            .into_any_element(),
+        ChoicePreview::Dark => div()
+            .size(pt(42.))
+            .rounded(pt(10.))
+            .bg(rgb(ink::control()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Icon::new(IconName::Moon).with_size(Size::Size(pt(24.))))
+            .into_any_element(),
+        ChoicePreview::Glass => div()
+            .size(pt(42.))
+            .rounded(pt(21.))
+            .bg(rgb(ink::control()))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .into_any_element(),
+        ChoicePreview::Classic => div()
+            .size(pt(42.))
+            .rounded(pt(21.))
+            .bg(rgb(ink::window()))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .into_any_element(),
+    };
+    let selected_or_focused = selected || forced == Forced::Focus;
+    let tile = div()
+        .id(id)
+        .w(pt(76.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(pt(6.))
+        .role(Role::RadioButton)
+        .aria_label(label)
+        .aria_selected(selected)
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(ring(
+            div()
+                .size(pt(70.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(10.))
+                .bg(rgb(ink::control()))
+                .child(preview_content),
+            selected_or_focused,
+            10.,
+        ))
+        .child(
+            div()
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .when(!selected, |el| el.text_color(ink::secondary()))
+                .child(label),
+        );
+    tile.into_any_element()
+}
+
+/// Page-local kit gap: five discrete tick marks with the current numeric value.
+fn icon_slider(id: &'static str, value: usize, forced: Forced) -> AnyElement {
+    let tick = |index: usize| {
+        let on = index + 1 <= value;
+        div()
+            .size(pt(4.))
+            .rounded(pt(2.))
+            .bg(if on {
+                ink::accent()
+            } else {
+                rgb(ink::hairline()).into()
+            })
+            .into_any_element()
+    };
+    let thumb_color = if forced == Forced::Disabled {
+        ink::secondary()
+    } else {
+        ink::accent()
+    };
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(pt(10.))
+        .role(Role::Slider)
+        .aria_label("Show tab icons")
+        .aria_value(value.to_string())
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(ring(
+            div()
+                .w(pt(138.))
+                .h(pt(22.))
+                .px(pt(8.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .rounded(pt(8.))
+                .bg(rgb(ink::control()))
+                .children((0..5).map(tick))
+                .child(
+                    div()
+                        .absolute()
+                        .left(pt(48.))
+                        .size(pt(16.))
+                        .rounded(pt(8.))
+                        .bg(thumb_color),
+                ),
+            forced == Forced::Focus,
+            8.,
+        ))
+        .child(
+            div()
+                .w(pt(10.))
+                .flex()
+                .justify_end()
+                .child(value.to_string()),
+        )
+        .into_any_element()
+}
+
+fn appearance_choices(focus: Forced) -> AnyElement {
+    let cluster = |caption_text, choices: Vec<AnyElement>| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(pt(8.))
+            .child(caption(caption_text))
+            .child(div().flex().items_start().gap(pt(6.)).children(choices))
+            .into_any_element()
+    };
+    div()
+        .py(pt(12.))
+        .flex()
+        .items_stretch()
+        .justify_between()
+        .gap(pt(12.))
+        .child(cluster(
+            "Color scheme",
+            vec![
+                choice_tile(
+                    "scheme-auto",
+                    ChoicePreview::Auto,
+                    "Auto",
+                    true,
+                    Forced::Rest,
+                ),
+                choice_tile("scheme-light", ChoicePreview::Light, "Light", false, focus),
+                choice_tile(
+                    "scheme-dark",
+                    ChoicePreview::Dark,
+                    "Dark",
+                    false,
+                    Forced::Rest,
+                ),
+            ],
+        ))
+        .child(vertical_divider())
+        .child(cluster(
+            "Interface style",
+            vec![
+                choice_tile(
+                    "style-glass",
+                    ChoicePreview::Glass,
+                    "Glass",
+                    false,
+                    Forced::Rest,
+                ),
+                choice_tile(
+                    "style-classic",
+                    ChoicePreview::Classic,
+                    "Classic",
+                    true,
+                    Forced::Rest,
+                ),
+            ],
+        ))
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let choice_focus = if cx.state == "focus-choice" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    settings_window(
+        rex_sidebar(),
+        detail_page(
+            "interface-scroll",
+            "Interface",
+            [
+                section(
+                    "Appearance",
+                    None,
+                    None,
+                    group([
+                        appearance_choices(choice_focus),
+                        Row::new("Tint with theme")
+                            .trailing(switch(
+                                "tint-with-theme",
+                                "Tint with theme",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Tabs",
+                    None,
+                    None,
+                    group([
+                        Row::new("Tab style")
+                            .trailing(Segmented::new(
+                                "tab-style",
+                                ["Above", "Left Side", "Right Side"],
+                                0,
+                            ))
+                            .into_any_element(),
+                        Row::new("Fill available space")
+                            .trailing(switch(
+                                "fill-space",
+                                "Fill available space",
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Show tab icons")
+                            .trailing(icon_slider("tab-icons", 3, Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Use color for tab icons")
+                            .trailing(popup_value("tab-icon-color", "Always", Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Shell icon theme")
+                            .trailing(popup_value("shell-icon-theme", "Default", Forced::Rest))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Panes",
+                    None,
+                    None,
+                    group([
+                        Row::new("Pane style")
+                            .trailing(Segmented::new("pane-style", ["Comfortable", "Compact"], 0))
+                            .into_any_element(),
+                        Row::new("Show pane headers")
+                            .trailing(switch(
+                                "pane-headers",
+                                "Show pane headers",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

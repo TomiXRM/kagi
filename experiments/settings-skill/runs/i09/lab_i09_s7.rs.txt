@@ -1,0 +1,578 @@
+//! S7: a theme editor sheet composed from settings_kit, with local kit gaps.
+use gpui::{
+    div, point, prelude::*, rgb, AnyElement, App, BoxShadow, Div, FontWeight, Hsla, Role,
+    SharedString, Window,
+};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+use kagi::ui::theme::{self, Theme};
+use kagi_ui_core::theme_apple_dark::APPLE_DARK;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i09-s7",
+    states: &["default", "focus-name", "focus-swatch"],
+    size: (1000., 780.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn forced(cx: &GalleryContext, name: &str) -> Forced {
+    if cx.state == name {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    }
+}
+
+fn settings_sidebar() -> AnyElement {
+    let item = |id, icon, hue, label, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("settings-search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 32.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Gray,
+            "Interface",
+            false,
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes", true),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Terminal",
+            false,
+        ),
+        item(
+            "shortcuts",
+            IconName::Asterisk,
+            Hue::Gray,
+            "Shortcuts",
+            false,
+        ),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+            false,
+        ),
+        item(
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            false,
+        ),
+        item(
+            "remote-hosts",
+            IconName::Globe,
+            Hue::Blue,
+            "Remote Hosts",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "developer",
+            IconName::Settings2,
+            Hue::Gray,
+            "Developer",
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+/// Kit gap: visual theme choice, rather than an icon segmented control.
+fn theme_choice(t: &Theme, selected: bool, state: Forced) -> gpui::Stateful<Div> {
+    let terminal = div()
+        .w_full()
+        .min_w_0()
+        .h(pt(78.))
+        .p(pt(12.))
+        .flex()
+        .flex_col()
+        .justify_between()
+        .rounded(pt(metrics::CONTROL_RADIUS))
+        .bg(rgb(pack(t.term_bg)))
+        .text_color(rgb(pack(t.term_fg)))
+        .child(div().text_size(pt(24.)).child("Aa  ~/"))
+        .child(
+            div().flex().gap(pt(5.)).children(
+                [
+                    t.term_red,
+                    t.term_green,
+                    t.term_yellow,
+                    t.term_blue,
+                    t.term_magenta,
+                    t.term_cyan,
+                ]
+                .into_iter()
+                .map(|color| div().size(pt(11.)).rounded_full().bg(rgb(pack(color)))),
+            ),
+        );
+    ring(
+        div()
+            .id(SharedString::from(format!("theme-choice-{}", t.slug)))
+            .flex_1()
+            .min_w_0()
+            .p(pt(5.))
+            .flex()
+            .flex_col()
+            .gap(pt(8.))
+            .role(Role::Tab)
+            .aria_label(t.name.to_string())
+            .aria_selected(selected)
+            .child(terminal)
+            .child(div().text_center().child(t.name.to_string())),
+        selected || state == Forced::Focus,
+        metrics::GROUP_RADIUS,
+    )
+}
+
+fn themes_page() -> AnyElement {
+    let choices = ["apple-dark", "apple-light", "dracula"]
+        .into_iter()
+        .filter_map(theme::theme_by_slug)
+        .map(|t| theme_choice(&t, t.slug == "apple-dark", Forced::Rest));
+    settings_window(
+        settings_sidebar(),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [
+                section(
+                    "Built-in Themes",
+                    None,
+                    Some(
+                        section_action("new-theme", IconName::Plus, "New", Forced::Rest)
+                            .into_any_element(),
+                    ),
+                    group([
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .py(pt(12.))
+                            .flex()
+                            .gap(pt(10.))
+                            .children(choices)
+                            .into_any_element(),
+                        Row::new("Follow system appearance")
+                            .trailing(switch(
+                                "system-appearance",
+                                "Follow system appearance",
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Custom Themes",
+                    Some("Make your workspace feel like home.".into()),
+                    Some(
+                        section_action("new-custom-theme", IconName::Plus, "New", Forced::Rest)
+                            .into_any_element(),
+                    ),
+                    group([
+                        Row::new("Apple Dark Copy")
+                            .subtitle("Based on Apple Dark")
+                            .leading(icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 32.))
+                            .trailing(capsule_button("edit-theme", "Edit…", Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Import a theme")
+                            .trailing(capsule_button("import-theme", "Import…", Forced::Rest))
+                            .into_any_element(),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}
+
+fn pack((r, g, b): (u8, u8, u8)) -> u32 {
+    (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+}
+
+/// A single theme value owns both the rendered chip and its hex caption.
+#[derive(Clone, Copy)]
+struct ColorValue {
+    rgb: (u8, u8, u8),
+    alpha: Option<u8>,
+}
+
+impl ColorValue {
+    fn opaque(rgb: (u8, u8, u8)) -> Self {
+        Self { rgb, alpha: None }
+    }
+
+    fn hex(self) -> String {
+        let (r, g, b) = self.rgb;
+        match self.alpha {
+            Some(a) => format!("#{r:02X}{g:02X}{b:02X}{a:02X}"),
+            None => format!("#{r:02X}{g:02X}{b:02X}"),
+        }
+    }
+
+    fn fill(self) -> Hsla {
+        let mut color: Hsla = rgb(pack(self.rgb)).into();
+        color.a = f32::from(self.alpha.unwrap_or(255)) / 255.;
+        color
+    }
+}
+
+/// Kit gap: labeled color well with a computed, read-only hex value.
+fn swatch(value: ColorValue, label: &'static str, state: Forced) -> Div {
+    let chip = ring(
+        div()
+            .w_full()
+            .h(pt(metrics::CONTROL_HEIGHT))
+            .p(pt(1.))
+            .bg(rgb(ink::hairline()))
+            .child(
+                div()
+                    .size_full()
+                    .rounded(pt(metrics::CONTROL_RADIUS - 3.))
+                    .bg(rgb(pack(APPLE_DARK.term_bg)))
+                    .child(
+                        div()
+                            .size_full()
+                            .rounded(pt(metrics::CONTROL_RADIUS - 3.))
+                            .bg(value.fill()),
+                    ),
+            ),
+        state == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    );
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(6.))
+        .when(state == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(
+            div()
+                .text_size(pt(metrics::SECONDARY))
+                .text_color(ink::secondary())
+                .child(label),
+        )
+        .child(chip)
+        .child(
+            div()
+                .w_full()
+                .h(pt(metrics::CONTROL_HEIGHT))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(metrics::CONTROL_RADIUS))
+                .bg(rgb(ink::control()))
+                .border_1()
+                .border_color(rgb(ink::hairline()))
+                .font(gpui::font(theme::MONO_FONT))
+                .text_size(pt(10.5))
+                .child(value.hex()),
+        )
+}
+
+fn palette_group(
+    title: &'static str,
+    values: impl IntoIterator<Item = (&'static str, ColorValue)>,
+    state: Forced,
+) -> AnyElement {
+    section(
+        title,
+        None,
+        None,
+        group([div()
+            .w_full()
+            .min_w_0()
+            .py(pt(12.))
+            .flex()
+            .gap(pt(8.))
+            .children(values.into_iter().map(|(label, color)| {
+                swatch(
+                    color,
+                    label,
+                    if title == "Terminal" && label == "Background" {
+                        state
+                    } else {
+                        Forced::Rest
+                    },
+                )
+            }))
+            .into_any_element()])
+        .w_full()
+        .min_w_0(),
+    )
+}
+
+/// Kit gap: text-field look; no editing or focus claim in this gallery.
+fn name_field(value: &'static str, state: Forced) -> gpui::Stateful<Div> {
+    ring(
+        div()
+            .id("theme-name")
+            .w_full()
+            .min_w_0()
+            .h(pt(metrics::CONTROL_HEIGHT))
+            .px(pt(7.))
+            .flex()
+            .items_center()
+            .gap(pt(1.))
+            .bg(rgb(ink::control()))
+            .role(Role::TextInput)
+            .aria_label("New Theme Name")
+            .when(state == Forced::Focus, |el| {
+                el.child(div().w(pt(1.)).h(pt(15.)).bg(ink::accent()))
+            })
+            .child(div().flex_1().min_w_0().truncate().child(value)),
+        state == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    )
+}
+
+/// Kit gap: a noninteractive appearance badge, the height of kit controls.
+fn appearance_pill(label: &'static str) -> Div {
+    div()
+        .h(pt(metrics::CONTROL_HEIGHT))
+        .px(pt(10.))
+        .flex()
+        .items_center()
+        .rounded(pt(metrics::CONTROL_HEIGHT / 2.))
+        .bg(rgb(ink::control()))
+        .text_size(pt(metrics::SECONDARY))
+        .text_color(ink::secondary())
+        .child(label)
+}
+
+fn sheet_header(state: Forced) -> Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .p(pt(20.))
+        .pb(pt(18.))
+        .flex()
+        .items_end()
+        .gap(pt(14.))
+        .child(icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 32.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(pt(6.))
+                .child(caption("New Theme Name"))
+                .child(name_field("Apple Dark Copy", state)),
+        )
+        .child(appearance_pill("Dark Theme"))
+}
+
+fn sheet_colors(state: Forced) -> AnyElement {
+    let t = &APPLE_DARK;
+    let opaque = ColorValue::opaque;
+    // Kagi has no separate cursor-text or selected-text theme fields.
+    // Reuse terminal background and foreground, respectively, without inventing values.
+    let terminal = [
+        ("Background", opaque(t.term_bg)),
+        ("Text", opaque(t.term_fg)),
+        ("Cursor", opaque(t.term_cursor)),
+        ("Cursor Text", opaque(t.term_bg)),
+        (
+            "Selection",
+            ColorValue {
+                rgb: (t.term_selection.0, t.term_selection.1, t.term_selection.2),
+                alpha: Some(t.term_selection.3),
+            },
+        ),
+        ("Selected Text", opaque(t.term_fg)),
+    ];
+    let names = [
+        "Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White",
+    ];
+    let standard = [
+        t.term_black,
+        t.term_red,
+        t.term_green,
+        t.term_yellow,
+        t.term_blue,
+        t.term_magenta,
+        t.term_cyan,
+        t.term_white,
+    ];
+    let bright = [
+        t.term_bright_black,
+        t.term_bright_red,
+        t.term_bright_green,
+        t.term_bright_yellow,
+        t.term_bright_blue,
+        t.term_bright_magenta,
+        t.term_bright_cyan,
+        t.term_bright_white,
+    ];
+    section(
+        "Colors",
+        None,
+        Some(
+            div()
+                .h(pt(metrics::CONTROL_HEIGHT))
+                // Light kit groups reserve a 1 pt border inside their inset.
+                // Match that content edge without changing the kit geometry.
+                .pr(pt(if theme::theme().dark { 0. } else { 1. }))
+                .flex()
+                .items_center()
+                .gap(pt(8.))
+                .child("Preview")
+                .child(switch(
+                    "preview",
+                    "Preview",
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ),
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(pt(14.))
+            .child(palette_group("Terminal", terminal, state))
+            .child(palette_group(
+                "ANSI Standard",
+                names.into_iter().zip(standard.into_iter().map(opaque)),
+                Forced::Rest,
+            ))
+            .child(palette_group(
+                "ANSI Bright",
+                names.into_iter().zip(bright.into_iter().map(opaque)),
+                Forced::Rest,
+            )),
+    )
+}
+
+fn sheet_footer() -> Div {
+    div()
+        .w_full()
+        .px(pt(20.))
+        .py(pt(16.))
+        .border_t_1()
+        .border_color(rgb(ink::hairline()))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(capsule_button("revert", "Revert…", Forced::Rest))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(pt(8.))
+                .child(capsule_button("cancel", "Cancel", Forced::Rest))
+                .child(
+                    capsule_button("save-apply", "Save & Apply", Forced::Rest)
+                        .bg(ink::accent())
+                        .text_color(rgb(theme::primary_button_foreground(&theme::theme())))
+                        .font_weight(FontWeight::SEMIBOLD),
+                ),
+        )
+}
+
+/// Kit gap: modal surface, scrim, elevation and sheet layout.
+fn editor_sheet(name_state: Forced, swatch_state: Forced) -> Div {
+    div()
+        .w(pt(760.))
+        .max_w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .rounded(pt(20.))
+        .bg(rgb(ink::window()))
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .shadow(vec![BoxShadow {
+            inset: false,
+            color: ink::secondary().opacity(0.18),
+            offset: point(pt(0.), pt(10.)),
+            blur_radius: pt(36.),
+            spread_radius: pt(0.),
+        }])
+        .child(sheet_header(name_state))
+        .child(div().h(pt(1.)).bg(rgb(ink::hairline())))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .p(pt(20.))
+                .flex()
+                .flex_col()
+                .gap(pt(16.))
+                .child(sheet_colors(swatch_state))
+                .child(
+                    capsule_button("extended-palette", "Show extended palette", Forced::Rest)
+                        .w_full()
+                        .justify_center(),
+                ),
+        )
+        .child(sheet_footer())
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    div()
+        .size_full()
+        .relative()
+        .text_size(pt(metrics::BODY))
+        .text_color(ink::text())
+        .font(theme::ui_font())
+        .child(themes_page())
+        .child(div().absolute().inset_0().bg(ink::text().opacity(0.03)))
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(rgb(theme::theme().modal_overlay).opacity(0.58)),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .p(pt(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(editor_sheet(
+                    forced(cx, "focus-name"),
+                    forced(cx, "focus-swatch"),
+                )),
+        )
+        .into_any_element()
+}

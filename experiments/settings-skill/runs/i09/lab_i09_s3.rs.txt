@@ -1,0 +1,162 @@
+//! S3: Kagi General, composed from the settings kit with real EN/JA strings.
+//! Values are capture fixtures; none of the controls writes a setting.
+use gpui::{prelude::*, AnyElement, App, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Msg;
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i09-s3",
+    states: &["default"],
+    size: (900., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn kagi_sidebar() -> AnyElement {
+    let pane = |id: &'static str, icon, hue, label: Msg, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+            label.t(),
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        pane(
+            "general",
+            IconName::Settings2,
+            Hue::Gray,
+            Msg::SettingsGeneral,
+            true,
+        ),
+        pane(
+            "language",
+            IconName::Globe,
+            Hue::Blue,
+            Msg::SettingsLanguage,
+            false,
+        ),
+        pane(
+            "smart-commit",
+            IconName::Bot,
+            Hue::Purple,
+            Msg::SettingsSmartCommit,
+            false,
+        ),
+        pane(
+            "analyze",
+            IconName::ChartPie,
+            Hue::Teal,
+            Msg::SettingsAnalyze,
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+fn appearance() -> AnyElement {
+    section(
+        Msg::SettingsAppearance.t(),
+        None,
+        None,
+        group([
+            Row::new(Msg::SettingsTheme.t())
+                .subtitle(Msg::SettingsThemeDesc.t())
+                // The selected value stays Apple Dark in every capture theme.
+                .trailing(popup_value("theme", "Apple Dark", Forced::Rest))
+                .into_any_element(),
+            Row::new(Msg::SettingsAccent.t())
+                .subtitle(Msg::SettingsAccentDefault.t())
+                .trailing(Segmented::new(
+                    "accent",
+                    [Msg::SettingsAccentSystem.t(), Msg::SettingsAccentTheme.t()],
+                    1,
+                ))
+                .into_any_element(),
+            Row::new(Msg::SettingsToolbarDisplay.t())
+                .subtitle(Msg::SettingsToolbarDisplayDesc.t())
+                .trailing(Segmented::new(
+                    "toolbar",
+                    [Msg::ToolbarIconAndText.t(), Msg::ToolbarIconOnly.t()],
+                    1,
+                ))
+                .into_any_element(),
+            Row::new(Msg::SettingsZoom.t())
+                .subtitle(Msg::SettingsZoomDesc.t())
+                .trailing(stepper("zoom", "100%", true, true, None))
+                .into_any_element(),
+            Row::new(Msg::SettingsCompactThreshold.t())
+                .subtitle(Msg::SettingsCompactThresholdDesc.t())
+                .trailing(stepper("compact-threshold", "70rem", true, true, None))
+                .into_any_element(),
+        ]),
+    )
+}
+
+fn graph() -> AnyElement {
+    section(
+        Msg::SettingsGraph.t(),
+        None,
+        None,
+        group([
+            Row::new(Msg::SettingsCompact.t())
+                .subtitle(Msg::SettingsCompactDesc.t())
+                .trailing(switch(
+                    "compact-graph",
+                    Msg::SettingsCompact.t(),
+                    false,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+            Row::new(Msg::SettingsLaneCompact.t())
+                .subtitle(Msg::SettingsLaneCompactDesc.t())
+                .trailing(switch(
+                    "avatar-nodes",
+                    Msg::SettingsLaneCompact.t(),
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ]),
+    )
+}
+
+fn network() -> AnyElement {
+    section(
+        Msg::SettingsNetwork.t(),
+        None,
+        None,
+        group([Row::new(Msg::SettingsAutoFetch.t())
+            .subtitle(Msg::SettingsAutoFetchDesc.t())
+            .trailing(switch(
+                "auto-fetch",
+                Msg::SettingsAutoFetch.t(),
+                true,
+                Forced::Rest,
+                |_, _, _| {},
+            ))
+            .into_any_element()]),
+    )
+}
+
+fn render(_: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    settings_window(
+        kagi_sidebar(),
+        detail_page(
+            "general-scroll",
+            Msg::SettingsGeneral.t(),
+            [appearance(), graph(), network()],
+        ),
+    )
+    .into_any_element()
+}

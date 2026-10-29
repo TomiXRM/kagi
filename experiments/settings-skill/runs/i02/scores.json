@@ -1,0 +1,147 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "position_picker local and reported"
+   ],
+   [
+    "3 structure",
+    0.5,
+    false,
+    "code has all four blocks, but the 900×692 page cuts off the last group: no capture shows \"Show each process in tabs\" off"
+   ],
+   [
+    "4 picker reusable",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 named states",
+    1,
+    false,
+    "default / position-selected / position-focus distinct"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": [
+   "Evaluator: sidebar tiles mix Accent, Success, Danger and Neutral without status meaning (\"normalized to Kagi's accent/status scheme\") — L2 recurs after v1."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "choice_tile, ticked_slider local"
+   ],
+   [
+    "3 choice tile",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 segmented",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 slider + pop-ups",
+    1,
+    false,
+    "thumb on the track at 3/5 — L1 fixed"
+   ],
+   [
+    "6 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    "C1 finding reported and fixed"
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Sidebar tiles all Accent (L2 rule followed by this child)."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 render EN dark, JA light, JA 720",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 Msg strings",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 JA / 720 wrapping",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 sidebar",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ }
+}

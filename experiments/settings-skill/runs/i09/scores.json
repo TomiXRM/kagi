@@ -1,0 +1,390 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S2": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S3": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S4": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Speaker symbols still unavailable in the icon catalog (kit/catalog gap)."
+  ]
+ },
+ "S5": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Self-reported: section titles sit 1 px off the row inset in Apple Light (group border) — kit defect, fixed as F5."
+  ]
+ },
+ "S6": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S7": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Cursor Text / Selected Text reuse term_bg / term_fg (no dedicated theme fields) — data gap recorded."
+  ]
+ },
+ "S8": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: \"Reload Themes\" row still repeats its title in its button (second occurrence of the writing defect)."
+  ]
+ }
+}

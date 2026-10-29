@@ -1,0 +1,406 @@
+//! Gallery reconstruction of Rex's Interface settings pane (scenario I09/S2).
+
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    caption, detail_page, group, icon_tile, ink, popup_value, pt, ring, search_field, section,
+    settings_window, sidebar, sidebar_gap, sidebar_item, switch, vertical_divider, Forced, Hue,
+    Row, Segmented, Slider, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i09-s2",
+    states: &["default", "focus-choice", "focus-slider"],
+    size: (900., 860.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rex_sidebar() -> AnyElement {
+    let item = |id: &'static str, icon, tint, label: &'static str, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, tint, 20.),
+            label,
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 20.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Tint::Hue(Hue::Indigo),
+            "Interface",
+            true,
+        ),
+        item(
+            "themes",
+            IconName::Palette,
+            Tint::Hue(Hue::Blue),
+            "Themes",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Tint::Hue(Hue::Gray),
+            "Terminal",
+            false,
+        ),
+        item(
+            "integrations",
+            IconName::Github,
+            Tint::Hue(Hue::Orange),
+            "Integrations",
+            false,
+        ),
+        item(
+            "notifications",
+            IconName::Bell,
+            Tint::Hue(Hue::Red),
+            "Notifications",
+            false,
+        ),
+        item(
+            "remote-hosts",
+            IconName::Globe,
+            Tint::Hue(Hue::Blue),
+            "Remote Hosts",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "developer",
+            IconName::Settings2,
+            Tint::Hue(Hue::Gray),
+            "Developer",
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+#[derive(Clone, Copy)]
+enum ChoicePreview {
+    Auto,
+    Light,
+    Dark,
+    Glass,
+    Classic,
+}
+
+/// Page-local kit gap: a visual choice tile has a preview plus a text label,
+/// unlike a text-only segmented control. `selected` and `forced` are explicit
+/// so gallery interaction states never alter the selected value.
+fn choice_tile(
+    preview: ChoicePreview,
+    label: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let blue = Tint::Hue(Hue::Blue).color();
+    let dark = ink::control_pressed();
+    let light = ink::card();
+    let mini_window = |fill| {
+        div()
+            .w(pt(40.))
+            .h(pt(32.))
+            .rounded(pt(6.))
+            .bg(rgb(fill))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .child(
+                div()
+                    .h(pt(8.))
+                    .px(pt(4.))
+                    .flex()
+                    .items_center()
+                    .gap(pt(2.))
+                    .child(
+                        div()
+                            .size(pt(3.))
+                            .rounded_full()
+                            .bg(rgb(Tint::Hue(Hue::Red).color())),
+                    )
+                    .child(
+                        div()
+                            .size(pt(3.))
+                            .rounded_full()
+                            .bg(rgb(Tint::Hue(Hue::Yellow).color())),
+                    )
+                    .child(
+                        div()
+                            .size(pt(3.))
+                            .rounded_full()
+                            .bg(rgb(Tint::Hue(Hue::Green).color())),
+                    ),
+            )
+            .child(
+                div()
+                    .mx(pt(4.))
+                    .h(pt(6.))
+                    .rounded(pt(2.))
+                    .bg(rgb(ink::control())),
+            )
+    };
+    let preview_content = match preview {
+        ChoicePreview::Auto => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mini_window(light))
+            .child(div().ml(-pt(20.)).child(mini_window(dark))),
+        ChoicePreview::Light => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mini_window(light)),
+        ChoicePreview::Dark => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mini_window(dark)),
+        ChoicePreview::Glass => div().flex().items_center().justify_center().child(
+            div()
+                .size(pt(40.))
+                .rounded_full()
+                .bg(rgb(ink::control()))
+                .border_1()
+                .border_color(rgb(ink::hairline())),
+        ),
+        ChoicePreview::Classic => div().flex().items_center().justify_center().child(
+            div()
+                .size(pt(40.))
+                .rounded_full()
+                .bg(rgb(dark))
+                .border_1()
+                .border_color(rgb(ink::hairline())),
+        ),
+    };
+    let tile = div()
+        .w(pt(78.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(pt(6.))
+        .child(ring(
+            div()
+                .size(pt(72.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(12.))
+                .bg(rgb(blue))
+                .when(forced == Forced::Hover, |el| {
+                    el.bg(rgb(ink::control_hover()))
+                })
+                .when(forced == Forced::Pressed, |el| {
+                    el.bg(rgb(ink::control_pressed()))
+                })
+                .when(forced == Forced::Disabled, |el| {
+                    el.opacity(ink::disabled_opacity())
+                })
+                .child(preview_content),
+            selected || forced == Forced::Focus,
+            12.,
+        ))
+        .child(
+            div()
+                .text_color(if selected {
+                    ink::text()
+                } else {
+                    ink::secondary()
+                })
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .when(forced == Forced::Disabled, |el| {
+                    el.opacity(ink::disabled_opacity())
+                })
+                .child(label),
+        );
+    tile.into_any_element()
+}
+
+fn appearance_choices(choice_state: Forced) -> AnyElement {
+    div()
+        .w_full()
+        .min_w_0()
+        .p(pt(12.))
+        .flex()
+        .items_start()
+        .gap(pt(12.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(pt(8.))
+                .child(caption("Color scheme"))
+                .child(
+                    div()
+                        .flex()
+                        .gap(pt(8.))
+                        .child(choice_tile(ChoicePreview::Auto, "Auto", true, Forced::Rest))
+                        .child(choice_tile(
+                            ChoicePreview::Light,
+                            "Light",
+                            false,
+                            choice_state,
+                        ))
+                        .child(choice_tile(
+                            ChoicePreview::Dark,
+                            "Dark",
+                            false,
+                            Forced::Rest,
+                        )),
+                ),
+        )
+        .child(vertical_divider())
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(pt(8.))
+                .child(caption("Interface style"))
+                .child(
+                    div()
+                        .flex()
+                        .gap(pt(8.))
+                        .child(choice_tile(
+                            ChoicePreview::Glass,
+                            "Glass",
+                            false,
+                            Forced::Rest,
+                        ))
+                        .child(choice_tile(
+                            ChoicePreview::Classic,
+                            "Classic",
+                            true,
+                            Forced::Rest,
+                        )),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let choice_state = if cx.state == "focus-choice" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let slider_state = if cx.state == "focus-slider" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        rex_sidebar(),
+        detail_page(
+            "interface-scroll",
+            "Interface",
+            [
+                section(
+                    "Appearance",
+                    None,
+                    None,
+                    group([
+                        appearance_choices(choice_state),
+                        Row::new("Tint with theme")
+                            .trailing(switch(
+                                "tint-with-theme",
+                                "Tint with theme",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Tabs",
+                    None,
+                    None,
+                    group([
+                        Row::new("Tab style")
+                            .trailing(Segmented::new(
+                                "tab-style",
+                                ["Above", "Left Side", "Right Side"],
+                                0,
+                            ))
+                            .into_any_element(),
+                        Row::new("Fill available space")
+                            .trailing(switch(
+                                "fill-space",
+                                "Fill available space",
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Show tab icons")
+                            .trailing(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(pt(10.))
+                                    .child(
+                                        Slider::new("tab-icons", 0.5)
+                                            .ticks(5)
+                                            .width(150.)
+                                            .forced(slider_state),
+                                    )
+                                    .child("3"),
+                            )
+                            .into_any_element(),
+                        Row::new("Use color for tab icons")
+                            .trailing(popup_value("tab-icon-color", "Always", Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Shell icon theme")
+                            .trailing(popup_value("shell-icon-theme", "Default", Forced::Rest))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Panes",
+                    None,
+                    None,
+                    group([
+                        Row::new("Pane style")
+                            .trailing(Segmented::new("pane-style", ["Comfortable", "Compact"], 0))
+                            .into_any_element(),
+                        Row::new("Show pane headers")
+                            .trailing(switch(
+                                "pane-headers",
+                                "Show pane headers",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

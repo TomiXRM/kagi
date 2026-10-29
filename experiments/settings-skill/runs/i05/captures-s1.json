@@ -1,0 +1,58 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i05/s1/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/rest-picker-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/selected-top-left-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/focus-picker-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/pressed-picker-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/focus-switch-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/hover-nav-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i05/s1/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "rest-picker",
+  "selected-top-left",
+  "focus-picker",
+  "pressed-picker",
+  "focus-switch",
+  "hover-nav"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 4,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 0,
+  ".rounded(": 1,
+  "Switch::new": 0,
+  "fn ": 4
+ },
+ "loc": 242
+}

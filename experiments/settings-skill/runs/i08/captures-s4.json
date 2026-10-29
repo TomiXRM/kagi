@@ -1,0 +1,63 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i08/s4/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/focus-alert-volume-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/focus-mute-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/hover-play-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/focus-output-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/volume-min-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/volume-middle-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/volume-max-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i08/s4/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "focus-alert-volume",
+  "focus-mute",
+  "hover-play",
+  "focus-output",
+  "volume-min",
+  "volume-middle",
+  "volume-max"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 14,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 3,
+  ".rounded(": 1,
+  "Switch::new": 0,
+  "fn ": 10
+ },
+ "loc": 520
+}

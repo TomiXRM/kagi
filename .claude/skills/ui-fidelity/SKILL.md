@@ -120,8 +120,9 @@ Settings.
   - read with `git show <commit>:<path>`; regenerate captures by copying a
     `.rs.txt` to `examples/` on that commit and running it per
     `examples/settings_gallery.rs` (`KAGI_GALLERY_*`).
-- Captures: attached to the PR #1818 review; local copies may exist under
-  `target/ui-fidelity/canon/settings/`.
+- Captures: s8 Appearance Light/Dark and h theme chooser Light, attached to
+  [PR #1818 comment 6475160736](https://github.com/TomiXRM/kagi/pull/1818#issuecomment-6475160736);
+  local copies may exist under `target/ui-fidelity/canon/settings/`.
 
 Composition values taken from that code (pt = design points at 100%):
 

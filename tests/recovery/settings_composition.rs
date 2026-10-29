@@ -59,9 +59,24 @@ fn assert_sidebar_paint(
         hairline,
         "sidebar one-pixel hairline",
     );
-    // The top-left raster contour must cross the canonical 12pt circle, not
-    // merely claim a radius in a probe populated from its style constant.
-    let boundary = 12. - (12_f32.powi(2) - 11.75_f32.powi(2)).sqrt();
+    // The top-left raster contour must be concentric with the OS window
+    // corner (owner ruling, PR #1818, 2026-10-29): its circle's centre is the
+    // window corner's centre, so its radius is that centre minus the measured
+    // inset. macOS 26's continuous corner on this titled, toolbar-less window
+    // fits circles centred 15.0–15.6pt from each edge in the real window's
+    // alpha mask (Tier B); render_to_image omits the OS mask.
+    const OS_WINDOW_CORNER_CENTRE: f32 = 15.5;
+    near(
+        panel.left(),
+        panel.top(),
+        "sidebar inset equal on both corner axes",
+    );
+    let radius = OS_WINDOW_CORNER_CENTRE - f32::from(panel.left());
+    assert!(
+        radius > 2.,
+        "sidebar inset leaves a concentric radius: {radius}"
+    );
+    let boundary = radius - (radius.powi(2) - (radius - 0.25).powi(2)).sqrt();
     let contrast = |pixel: [u8; 4]| {
         let numerator: f32 = (0..3)
             .map(|i| {
@@ -79,7 +94,11 @@ fn assert_sidebar_paint(
             panel.left() + px(boundary + delta),
             panel.top() + px(0.25),
         ));
-        assert_eq!(contrast(pixel) >= 0.5, inside, "12pt sidebar contour");
+        assert_eq!(
+            contrast(pixel) >= 0.5,
+            inside,
+            "sidebar contour concentric with the window corner"
+        );
     }
     // Hue::rgb values and top-lit gradient come from the pinned canonical kit.
     for (id, light, dark_rgb) in [

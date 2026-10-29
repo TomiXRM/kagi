@@ -28,6 +28,17 @@ pub(crate) mod metrics {
     pub const BODY: f32 = 13.;
     pub const SECONDARY: f32 = 11.5;
     pub const TITLE: f32 = 15.;
+    /// Centre of the corner macOS 26 draws on the Settings window (titled,
+    /// transparent titlebar, no toolbar), in unscaled points from each edge.
+    /// The OS corner is continuous, not circular; circles fitted to its
+    /// alpha-mask contour centre at 15.0–15.6 pt. The OS draws it, so UI zoom
+    /// never scales it.
+    pub const WINDOW_CORNER_CENTRE: f32 = 15.5;
+    /// Gap between the window edge and the floating sidebar panel, unscaled
+    /// like the window corner it nests in.
+    pub const SIDEBAR_INSET: f32 = 8.;
+    /// Concentric with the window corner: both arcs share one centre.
+    pub const SIDEBAR_RADIUS: f32 = WINDOW_CORNER_CENTRE - SIDEBAR_INSET;
 }
 
 pub(crate) fn detail_min_width() -> Pixels {

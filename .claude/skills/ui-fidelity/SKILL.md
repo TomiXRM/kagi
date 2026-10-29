@@ -42,7 +42,7 @@ property, canonical value from code, actual value measured, ○/×:
 
 | Group | Rows (at least) |
 |---|---|
-| Window | logical width × height **and the size policy**: fixed, or grows/shrinks with content — measure it on at least the shortest and the tallest pane (does switching panes resize the window?); what scrolls when content is taller; whether host chrome (title band, toolbar) is drawn by Kagi; where the traffic lights sit relative to the sidebar |
+| Window | logical width × height **and the size policy**: fixed, or grows/shrinks with content — measure it on at least the shortest and the tallest pane (does switching panes resize the window?); what scrolls when content is taller; whether host chrome (title band, toolbar) is drawn by Kagi; where the traffic lights sit relative to the sidebar; a panel nested in a window corner is **concentric** with it — fit circles to both arcs in a real-window capture (OS alpha mask included, `screencapture -o -l`) and report both centres |
 | Sidebar | x/y/width/height of the panel; top inset; row height and row pitch; selection fill role; item order |
 | Detail | title band height and the title's text; scroll content insets; gap between sections |
 | Per pane | sequence of sections; for each section, which rows sit in which group card; which kit part draws each trailing control; the **exact visible text** of every title, label and button (EN and JA) compared with the canonical's strings — a shortened or reworded label is a ×, even if it fits. A canonical gallery may hard-code English **placeholder** literals (text not taken from `Msg`); those fix the English wording only, never the other locale: a JA screen showing an English placeholder is a × |
@@ -129,7 +129,7 @@ Composition values taken from that code (pt = design points at 100%):
 |---|---|
 | Window | 900 × 760, **fixed**: switching panes never resizes the window, and content taller than the detail scrolls inside it. Bounded by the visible screen. No Kagi-drawn title band: the window is the sidebar + detail. |
 | Traffic lights | inside the sidebar's top inset |
-| Sidebar panel | `sidebar()`: margin 8, top padding 40, horizontal padding 8, gap 2, width 212, radius 12, 1 px hairline border, `ink::sidebar()` fill; full window height minus margins |
+| Sidebar panel | `sidebar()`: top padding 40, horizontal padding 8, gap 2, width 212, 1 px hairline border, `ink::sidebar()` fill; full window height minus margins. **Margin 8 and radius 7.5, unscaled by UI zoom: concentric with the window's macOS 26 corner, whose fitted circles centre 15.0–15.6 pt from each edge** (owner ruling, PR #1818, 2026-10-29; replaces the gallery's radius 12, whose centre sat at 20 pt, 4.5 pt off on each axis) |
 | Sidebar row | `sidebar_item()`: min height 32, padding 8 × 4, 20 pt tile, label gap 9; selected fill `ink::selected()` (= `segment_selected_bg`, neutral), semibold label |
 | Sidebar tiles | category `Hue` per pane: Appearance Indigo, Graph Orange, Editor Teal, Smart Commit Purple, Terminal Gray, Network & Sync Blue, General Gray, Analyze Teal |
 | Detail title | `detail_page()`: band 52 high, padding x 14, 15 pt bold, text = pane name, shown once |

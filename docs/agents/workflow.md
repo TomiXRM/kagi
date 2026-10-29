@@ -1,88 +1,250 @@
-# Agent workflow: PRs and multi-agent work
+# エージェントの作業手順: PR と複数エージェントでの作業
 
-Linked from `AGENTS.md`. These rules come from what went wrong while several
-agents worked on Kagi in parallel (2026-10-01); where an incident shaped a rule,
-the rule names it.
+`AGENTS.md` から参照される。ここのルールは、複数のエージェントが並行して Kagi を
+開発したときの失敗（2026-10-01）から作られている。特定の事故が元になった
+ルールには、その事故を書いてある。
 
-## Working on a PR: push, review, merge
+## 最初のコミットから Ready for review まで
 
-- **Never rewrite a pushed branch.** No force push, no rebase of a pushed branch:
-  take the PR's current base (`origin/main`, or the parent branch of a stacked PR)
-  in with a merge. After every push, confirm the remote head equals the local one:
-  `test "$(git ls-remote --exit-code --heads origin refs/heads/<branch> | cut -f1)" = "$(git rev-parse HEAD)"`.
-  A non-fast-forward push is rejected, and "pushed" without that check has been
-  wrong; a plain `ls-remote origin <branch>` exits 0 with no output for a typo and
-  can match a tag of the same name.
-- **Conflicts**: `CHANGELOG.md`, ADRs and `docs/decisions.md` keep both sides.
-  **Code conflicts are resolved by reading each hunk**, never by a mechanical
-  "keep both": two PRs adding fields to one struct concatenate into a broken brace
-  structure (#900). If `rerere` learned a bad resolution, redo the merge with
-  `git -c rerere.enabled=false merge`. Git can also merge cleanly and still drop an
-  attribute line (`#[cfg(target_os = "macos")]` before a `mod` in
-  `tests/gui_e2e_runner.rs`, #901) — check the runner after a merge.
-- **Gate before push**: build, `cargo test --workspace`, the touched Tier A
-  scenarios and `uv run --project ci check-all` pass first. Chain them so a failure
-  stops the push (`set -e`, or capture the output and test it) — never with `;`.
-- **HIG review** (owner ruling, #1764): a PR that changes what the user sees
-  carries an independent Apple HIG review of its real-window screenshots
-  (`.claude/skills/hig-review/SKILL.md`), posted on the PR in Japanese with the
-  HIG sentences quoted; a new or moved control also had its design review on the
-  issue before code. An open HIG P1/P2 blocks the merge, with or without Codex.
-- **Codex review**: read every Codex line comment before a PR is merged, and reply
-  to each one (in Japanese, per "Code Review Rules" in `AGENTS.md`). Fix every P0 and P1, and any P2
-  that can lead to a wrong write, data loss or a misleading action. A theoretical case (a race
-  with another process replacing the repository, a millisecond window) is closed
-  with a reply that gives the reason, and the limit is written into the ADR. Aim
-  for one review round per PR; Codex keeps finding the next corner otherwise.
-- **User-authorized substitute review**: when GitHub Codex cannot run, an
-  explicitly authorized, fresh independent Codex/Sol (GPT Sol 6.1 SubAgent) reviewer may review the
-  exact head through herdr. Publish its model, agent identity, reviewed SHA,
-  read set, findings and Japanese responses on the PR. State that the GitHub
-  bot did not run; static review is not runtime verification. The reviewed-head,
-  green-CI and unanswered-comment merge gates still apply.
-- **Merge** only the head commit Codex (or the user-authorized substitute reviewer:
-  a Sol 6.1 / Opus SubAgent or herdr reviewer pane) reviewed, with CI green and no
-  unanswered review comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
-  PR reads `MERGED`.
-- **Stacked PRs** set their base to the parent branch and say "change the base to
-  main after #N merges" at the top of the body.
-- `Closes #N` only when the PR meets every acceptance criterion of #N; otherwise
-  `Refs #N` and list what remains. Split a leftover into its own issue.
+### 着手前に決めること
 
-## Multi-agent work over herdr
+コードを書く前に、PR 本文（または作業メモ。Draft PR を立てたら本文に移す）に次の
+3 つを書く: 比較する原本（正）、合否の条件、最初に比較する時点。原本同士が食い違う
+ときは、オーナーに確認するまで着手しない。最初に比較できる成果物ができたら、合否に
+かかわらずその時点で比較し、結果を PR 本文に書く。不一致があれば、直すかオーナーに
+確認するまで後続の作業を止める。
 
-When a PM session drives implementation agents in herdr panes:
+### 適用範囲
 
-- **Mail is the only task transport.** PM assignments, amendments, decisions and
-  agent replies use herdr mail, not `agent prompt`, `pane send-text` or simulated
-  terminal Enter. Read the installed mail command help and verify support in the
-  selected server before dispatch. If unavailable, the PM reports the missing
-  capability to the user outside herdr and pauses dispatch; an agent that cannot
-  send mail stops the affected action and waits, without a terminal-prompt fallback.
-  Do not silently fall back or restart/upgrade a shared server.
-- **Every assignment names its contract.** Include a stable task name, sender and
-  reply destination, session/workspace, owned worktree/branch, Issue/PR and exact
-  head when applicable, scope, acceptance criteria and prohibited actions.
-  Resolve addresses from live IDs; do not infer them from pane order.
-- **Replies must also use mail.** A recipient sends `[ack]` before starting, then
-  replies in the same task/thread with `[done]`, `[status]`, `[ask]` or `[info]`.
-  Include the task name, and the exact head when applicable (base or PR head), in both receipt and final report.
-  `[done]` names the actual changes or reviewed files, findings/responses,
-  observed checks and evidence links; an implementation report includes remote
-  head verification and UI Tier B links where required. Explicitly distinguish
-  unrun checks and static review from runtime proof. `[ask]` names the blocker
-  or decision and pauses the affected action until the PM replies by mail.
-- **Delivery is not execution.** Retain the mail ID/thread and require the
-  recipient's `[ack]`; queued/sent does not prove work started. Inspect the
-  thread after ambiguous delivery before retrying, avoiding duplicate work.
-- **One agent, one worktree, one branch.** Never edit another agent's worktree or
-  push to a branch another agent owns without saying so first. A PM that merges
-  `main` into an agent's PR branch tells that agent before it pushes again.
-- **Verify the premise before assigning.** Before writing "reuse the existing X",
-  search for X — issue bodies go stale. An agent that finds the premise wrong says
-  so instead of building around it.
-- **Messages are scoped to the workspace.** An assignment (mail) about another
-  repository or a non-matching issue number is a misroute: report it by mail, do
-  not act on it.
-- Watch usage limits in `herdr agent list` (`limit`); an agent near its limit gets
-  small, finishable tasks.
+| 変更 | PR の形 | クロスレビュー |
+|---|---|---|
+| 誤字・整形・ツールによる機械的なリネームだけで、挙動、アプリのユーザーに見える文言、公開・保存形式、受け入れ条件、エージェントの必須手順のどれも変えないもの。手で書いたリファクタは含まない | 通常の PR | 不要 |
+| 30 行以下で、下の行の条件に当たらないもの（小さな機能、バグ修正、手で書いたリファクタを含む） | Draft PR | 最終確認のみ |
+| 30 行を超えるもの。または行数によらず、依存の更新、書き込み処理、受け入れ条件、エージェントの必須手順を変えるもの | Draft PR | 2 回とも |
+
+- 上の行から順に当てはめ、最初に当たった行に従う。迷ったら重いほうの行に従う。
+- 行数は、テスト（`tests/` と `#[cfg(test)]` のモジュール）と生成ファイル（`Cargo.lock`
+  などの lockfile を含む）を除いた、PR のベースとの差分の追加行と削除行の合計で数える。
+- 受け入れ条件を変えるとは、Issue の受け入れ条件か、既存のテストの期待値を変えること。
+  新しいテストを足すだけなら当たらない。テストだけの変更でも、既存の期待値を変えるなら
+  最後の行に当たる。
+- 書き込み処理は、不変条件 4 の書き込み（`plan_*` / `preflight_*` など、その判定経路を
+  含む）と、`settings.json` などユーザーのデータを保存する処理。
+- エージェントの必須手順には、`AGENTS.md`、`docs/agents/`、`.claude/skills/`、CI の
+  gate（`ci/`）を含む。公開・保存形式には、`[kagi]` のテスト契約行を含む。
+- 作業中に重い行に移ったら行を選び直す。1 回目を受ける時点をすでに過ぎていたら、
+  後続の作業の前に、その時点の head で 1 回目を受ける。行が変わらなくても、1 回目の
+  あとで目的・正・合否の条件を変えたら、PR 本文を直し、後続の作業の前にその時点の
+  head で 1 回目を受け直す（1 回目を省ける行では不要）。
+- 小さな変更で省けるのは 1 回目のクロスレビューだけ（オーナー決定）。30 行と 400 行
+  （コミット）は作成者が提案した暫定値で、オーナーは数値に意思なし（2026-10-29）。
+- push 前の確認、Codex レビュー、見た目を変える場合の HIG レビュー、Skill 使用記録は、
+  どの行でも必須。
+
+### Draft PR とレビュー観点
+
+Draft PR が必要な変更では、コードを書き始めたら、最初のコミット（ビルドとテストが通る
+もの）で push して Draft PR を立てる。本文は `.github/PULL_REQUEST_TEMPLATE.md` に従い、
+通常の PR でも同じものを使う。作成方法によってテンプレートが入るとは限らない（`gh` で
+本文を直接渡す、コミットから自動生成するなど）ので、PR を作ったときと本文を差し替えたときは
+本文を開き、テンプレートの全節が同じ順序で入っていることを確認する。足りなければテンプレートから
+写して埋める。初版から「目的」「正」
+「What changed」を具体的に書き、まだない証拠は空欄にせず「未取得」と書く（Verified の
+コマンドの行は、テンプレートどおり「未実行」）。本文は常に
+最新に保ち、チェックポイント間で何が変わったかはコメントに記録する。各節に書くこと:
+
+- **目的**: 何を、誰のために解決するか。解決したと何で判断するか（合否の条件）。
+- **正（比較対象）**: 結果を比べる原本。リンク・コミット・パス、または Issue の受け入れ
+  条件。要約や、原本を案内する文書ではなく、原本そのものを指す（オーナーの指示なら、
+  そのメッセージのリンクか ID）。最初に比較する時点と、その結果（未取得 / ○ / ×、比較の
+  リンク）も書く。
+- **対象外**: 今回は変更しない範囲と理由。なければ「なし」と書く。差分が持ち込んだ不具合と、
+  目的・合否の条件・不変条件に反する不具合を、対象外という理由だけでレビューから除外しない。
+- **What changed**（方針）: 採った設計と、採らなかった案（それぞれ 1 行）。
+- **Docs**: 更新した文書と節。なければ「なし」と理由を書く。検証の seam を変えた場合の
+  verify skill 更新については、テンプレートの指示に従う。
+- **Verified**（証拠）: 何をどの head で実行・確認したか、リンク付きで。コマンド名や
+  シナリオ名を書く。「テストが通った」は証拠にならない。
+- **Not verified — needs a human**（未確認）: まだ誰も確認していないこと（OS の
+  フォーカス、他プラットフォーム、ズーム倍率など）。
+- **自信のない点**: 作成者が間違っていそうだと思う箇所。なければ「なし」と書く。
+- **レビュアーへの質問**: 判断が必要な論点と、判断に使える根拠。なければ「なし」と書く。
+
+クロスレビューが必要な変更は、最終確認で未解決の P0〜P2 がなくなるまで、Draft なら
+Ready for review にせず、通常の PR ならマージしない。
+
+### コミット
+
+- 1 コミット 1 意図。件名にその意図を書き、本文には理由と確認方法を書く。
+- 各コミットで、触れた範囲のビルドとテストが通る（`git bisect` が使える状態にする）。
+  以下の分け方より、こちらを優先する。
+- 次は別のコミットに分ける: 機械的な移動・リネーム・整形と挙動の変更、依存や
+  lockfile の更新とコードの変更、生成ファイルとその元のファイル。ただし、片方だけでは
+  ビルドやテストが通らない組み合わせは同じコミットにし、PR にその理由を書く。
+- 挙動の修正と、その修正がないと失敗する回帰テストは同じコミットに入れる。
+- 差分だけを見てコミットの主張を確認できない場合、またはテストと生成ファイルを除いて
+  （数え方は「適用範囲」と同じ）400 行を超える場合は分割する。各コミットでビルドと
+  テストが通る分け方がなければ、PR にその理由を書く。
+- push 済みの履歴は書き換えないので、分け方は push 前に決める。後からの修正は新しい
+  コミットとし、件名には「レビュー対応」ではなく、何を直したかを書く。
+
+### クロスレビュー
+
+- **方向性の確認（1 回目）。** 最初に正と比較できる成果物ができた時点で受ける。見た目を変える UI なら
+  正と同じ論理倍率で並べた実ウィンドウの構成比較の画像（`.claude/skills/ui-fidelity/SKILL.md`
+  の G1）、Git 操作なら plan の型（変えない場合は使う既存の型）と、修正前のコードで統合
+  テストが失敗した結果（ログか未コミットの差分。コミットは修正と同じにする）、リファクタ
+  なら最初の移動単位について移動した箇所の一覧（移動前と移動後の対応と、移動以外に
+  書き換えた箇所。正は着手時の base のコード、合否は移動以外の書き換えが一覧の箇所だけで
+  あること）、依存の更新なら変わる上流 API と影響を受ける呼び出し箇所の一覧、それ以外は
+  合否の条件の各項目と、その時点での正との比較結果（失敗するテスト、対照表など）。
+  複数に当たる変更は、当たるものすべての成果物を出す。問うのは「正と比べて、目的に
+  向かっているか」の一点。
+- **最終確認（2 回目）。** Ready for review にする前（通常の PR ではマージ前）に、確定した
+  head に対して受ける。
+- **依頼する人。** 作成者が、使える仕組み（サブエージェント、別スレッド、herdr など）で
+  新しいエージェントを起動して依頼する。
+- **レビュアー。** 変更を書いていない新しいエージェント。作成者と別系統のモデルが
+  望ましい。使えなければ理由を書いて同系統の新しいエージェントにする。作成者自身の
+  セッションと、その会話を引き継ぐフォーク（サブエージェントのフォーク、スレッドの複製）は
+  不可。新しいエージェントを起動できなければオーナーに依頼し、レビューを完了扱いにしない。
+- **渡すもの（2 段階）。** 最初は「目的」「正」、指定した head の差分（貼るか、base と head の
+  SHA と差分を出すコマンド）、証拠だけを、PR へのリンクではなく依頼文で渡す（PR 本文には
+  方針も書かれているため）。依頼文には、確認項目を出すまで PR 本文とコメントを読まない
+  ことを書く。レビュアーは、合否の条件か正のどこかに対応する確認項目を先に出す。その
+  あとで「対象外」「What changed」「Docs」「Not verified」「自信のない点」
+  「レビュアーへの質問」を渡す。このとき、差分が持ち込んだ不具合と、目的・合否の条件・
+  不変条件に反する不具合は、対象外という理由だけで除外しないことも依頼文に書く。1 回の起動で済ませる場合は、
+  これらをファイルに置き、確認項目を出してから読むよう依頼文に書く。作成者の見方で
+  レビューの範囲が狭まるのを防ぐため。順序を守ったかはレビュアーの申告でしか確かめ
+  られないので、出力の形で残す。
+- **出力。** PR に日本語で投稿する。レビュアーのモデルとエージェント、レビューした
+  コミットの SHA、確認項目ごとの判定（○ / × / 未確認）とその根拠（`path:line` か証拠の
+  リンク）、P0〜P3 の指摘、確認しなかったことを含める。第 1 段階で出した確認項目は削らずに
+  先頭に残し、第 2 段階で足した項目にはそう書く。× は誤りを見つけたもの、未確認は
+  証拠が足りないものに使う。根拠のない ○ と、確認項目のない「指摘なし」はレビューとして
+  扱わない。
+- **完了条件。** P0〜P2 はすべて直すか、理由を付けて返信する。理由付きの返信は、
+  レビュアーかオーナーが認めて初めて解決になる。最終確認のあと、マージまでの間に差分の
+  ある push をしたとき（最終確認の指摘への対応を含む）は、変更箇所とそれが壊しうる箇所を
+  再レビューする。1 回目と最終確認の間の push は、最終確認で見るので再レビューは不要
+  （目的・正・合否の条件を変えたときは「適用範囲」に従って 1 回目を受け直す）。新しい
+  エージェントに頼むときは、元の依頼文（第 2 段階で渡したものを含む）、指摘、返信を渡す。Ready for review（または
+  マージ）にする head は、最後にレビューを受けた SHA と一致させる。
+- クロスレビューは、Codex レビュー、HIG レビュー、実行時の検証のどれの代わりにも
+  ならない。静的なレビューは、アプリが正しく動く証拠ではない。
+
+### Skill 使用記録
+
+作業で使った Skill ごとに、記録を 1 件 PR のコメントに残す（PR がなければ作業報告に
+書く）。「使った」は、Skill を呼び出した場合と、SKILL.md の手順に従って作業した場合を
+指す。フックが読み込んだだけのものは含まない。Skill を使わなかった場合は作業報告に
+「使用 Skill なし」と書く。見出しと項目名は固定し、後から機械的に集計できるようにする:
+
+```
+### Skill 使用記録: <名前>
+- Skill: <Skill ファイルのパス> @ <使い始めた時点で `git log -1 --format=%h -- <パス>` が返すコミット。リポジトリ外の Skill はファイルの sha256>
+- セッション: <会話を開けるリンクまたは ID（T3 のスレッド、Claude Code / Codex のセッション ID など）>
+- 守った手順: <…>
+- 飛ばした手順: <…と理由。なければ「なし」>
+- 曖昧・誤り: <曖昧だった、または誤っていた指示と、その行。なければ「なし」>
+- 防げなかった失敗: <この作業で起きた、Skill が防ぐべきだった失敗。なければ「なし」>
+- 改善: <「曖昧・誤り」か「防げなかった失敗」があるときの、Skill を直す PR か Issue のリンク、または直さない理由。なければ「なし」>
+```
+
+- 会話ログそのものはリポジトリに入れない。セッション欄から辿れるようにする。
+- 「曖昧・誤り」か「防げなかった失敗」を書いた作成者が、同じ作業の中で Skill を直す PR を
+  出すか Issue を立て、「改善」欄からリンクする。直さないなら、その理由を書く。
+- 最終確認のレビュアーは、記録の有無と中身（特に「飛ばした手順」と「改善」）も確認する。
+  飛ばした手順が合否の条件の確認に必要なら P2 とし、実施するか、オーナーの免除を得るまで
+  解決にしない。クロスレビューのない変更では、作成者が Ready for review（またはマージ）の
+  前に確認する。
+- Skill を直すのは、「曖昧・誤り」か「防げなかった失敗」に具体的な記録があるときだけ。
+  変更からその記録にリンクする。
+- ルールを足す前に、削れる・まとめられる記述を探す。800 行を超える Skill ファイルは、
+  同じ量を削らない限り増やさない。
+- Skill の適用条件・必須手順・出力・完了条件を変えたら、使い始める前に、新しい
+  エージェントに通常の例と境界の例の 2 件で実際に使わせる。事前に決めた必須要件を
+  両方で満たすまで、変更後の Skill を使わない。必須要件と 2 件の結果は、Skill を直す PR の
+  本文に書く。
+- 記録形式は Kagi 独自のもの。DeepSeek Harness（`f3803c9` 時点）のセッションログは
+  Skill の呼び出しを通常のツール呼び出しとしか記録せず、手順・曖昧さ・失敗を表す
+  欄がないため採用していない（調査: 2026-10-29）。
+
+## PR での作業: push、レビュー、マージ
+
+- **push 済みのブランチは書き換えない。** force push も、push 済みブランチの rebase も
+  しない。PR の現在のベース（`origin/main`、または積み重ねた PR なら親ブランチ）は
+  merge で取り込む。push のたびに、リモートの head がローカルと一致することを確認する:
+  `test "$(git ls-remote --exit-code --heads origin refs/heads/<branch> | cut -f1)" = "$(git rev-parse HEAD)"`。
+  fast-forward でない push は拒否される。この確認なしの「push した」は誤っていたことが
+  ある。単なる `ls-remote origin <branch>` は、名前を打ち間違えても出力なしで終了コード 0
+  を返し、同名のタグにも一致しうる。
+- **競合**: `CHANGELOG.md`、ADR、`docs/decisions.md` は両方を残す。**コードの競合は
+  hunk ごとに読んで解消し、機械的に「両方残す」解消はしない。** 同じ struct にフィールドを
+  足した 2 つの PR が連結され、波括弧の構造が壊れたことがある（#900）。`rerere` が誤った解消を
+  覚えた場合は `git -c rerere.enabled=false merge` でやり直す。Git がきれいにマージ
+  しても属性行が落ちることがある（`tests/gui_e2e_runner.rs` で `mod` の前の
+  `#[cfg(target_os = "macos")]` が消えた、#901）。マージ後は runner を確認する。
+- **push 前の確認**: ビルド、`cargo test --workspace`、触れた Tier A シナリオ、
+  `uv run --project ci check-all` を先に通す。失敗したら push が止まるようにつなげる
+  （`set -e`、または出力を取って判定する）。`;` でつながない。
+- **HIG レビュー**（オーナー決定、#1764）: ユーザーに見えるものを変える PR は、実ウィンドウの
+  スクリーンショットに対する独立した Apple HIG レビュー
+  （`.claude/skills/hig-review/SKILL.md`）を受け、HIG の文を引用して日本語で PR に投稿する。
+  新しい、または移動したコントロールは、コードの前に Issue で設計レビューも受けている
+  こと。HIG の P1/P2 が残っている間は、Codex の有無にかかわらずマージしない。
+- **Codex レビュー**: マージ前に Codex の行コメントをすべて読み、それぞれに返信する
+  （日本語で。`AGENTS.md` の「Code Review Rules」に従う）。P0 と P1 はすべて直し、
+  誤った書き込み・データ損失・誤解を招く操作につながりうる P2 も直す。理論上の
+  ケース（別プロセスがリポジトリを置き換える競合、ミリ秒単位の隙）は理由を書いた
+  返信で閉じ、その限界を ADR に書く。PR ごとにレビューは 1 往復を目指す。そうしないと
+  Codex は次の隅を見つけ続ける。
+- **ユーザーが認めた代替レビュー**: GitHub の Codex が動かないとき、明示的に認められた
+  新しい独立した Codex/Sol（GPT Sol 6.1 SubAgent）のレビュアーが、herdr 経由で正確な
+  head（SHA）をレビューしてよい。そのモデル、エージェント、レビューした SHA、読んだ範囲、
+  指摘と日本語の返信を PR に公開する。GitHub の bot が動かなかったことを明記する。
+  静的なレビューは実行時の検証ではない。レビュー済み head、CI 成功、未返信コメント
+  なしというマージ条件はそのまま適用される。
+- **マージ**は、Codex（またはユーザーが認めた代替レビュアー: Sol 6.1 / Opus の SubAgent
+  か herdr のレビュアーペイン）がレビューした head コミットだけを、CI 成功かつ未返信の
+  レビューコメントがない状態で行う: `gh pr merge N --merge --match-head-commit <sha>`。
+  その後、PR が `MERGED` になったことを確認する。
+- **積み重ねた PR** はベースを親ブランチにし、本文の先頭に「#N のマージ後にベースを
+  main に変更する」と書く。
+- `Closes #N` は、PR が #N の受け入れ条件をすべて満たすときだけ使う。そうでなければ
+  `Refs #N` とし、残りを列挙する。残りは別の Issue に分ける。
+
+## herdr での複数エージェント作業
+
+PM セッションが herdr のペインで実装エージェントを動かすとき:
+
+- **作業の受け渡しはメールだけで行う。** PM の依頼、修正、決定、エージェントの返信は
+  herdr のメールで行い、`agent prompt`、`pane send-text`、擬似的な端末の Enter は使わない。
+  依頼の前に、インストールされているメールコマンドのヘルプを読み、選んだサーバーで
+  使えることを確認する。使えなければ、PM は herdr の外でユーザーに機能の欠如を報告し、
+  依頼を止める。メールを送れないエージェントは該当する操作を止めて待ち、端末入力で
+  代用しない。黙って代替手段に切り替えたり、共有サーバーを再起動・更新したりしない。
+- **すべての依頼に契約を書く。** 固定のタスク名、送信者と返信先、セッション/ワーク
+  スペース、担当の worktree/ブランチ、Issue/PR と該当する場合は正確な head、範囲、
+  受け入れ条件、禁止事項を含める。宛先はペインの順番から推測せず、実際の ID から引く。
+- **返信もメールで行う。** 受け取った側は開始前に `[ack]` を送り、同じタスク/スレッドで
+  `[done]`、`[status]`、`[ask]`、`[info]` を返す。受領と最終報告の両方に、タスク名と、
+  該当する場合は正確な head（ベースまたは PR の head）を含める。`[done]` には実際の
+  変更またはレビューしたファイル、指摘と返信、確認したチェック、証拠のリンクを書く。
+  実装報告にはリモート head の確認と、必要な場合は UI の Tier B のリンクを含める。
+  実行していないチェックや静的レビューを、実行時の証拠と明確に区別する。`[ask]` は
+  障害または必要な決定を書き、PM がメールで返信するまで該当する操作を止める。
+- **届いたことは実行されたことではない。** メールの ID/スレッドを保持し、受け取った側の
+  `[ack]` を求める。キューに入った・送信されたことは、作業が始まった証拠ではない。
+  配達があいまいなときは、再送の前にスレッドを確認し、作業の重複を避ける。
+- **1 エージェント、1 worktree、1 ブランチ。** 先に断らずに、他のエージェントの
+  worktree を編集したり、他のエージェントのブランチに push したりしない。エージェントの
+  PR ブランチに `main` をマージした PM は、そのエージェントが次に push する前に伝える。
+- **依頼の前提を確かめる。** 「既存の X を再利用する」と書く前に、X を検索する。Issue の
+  本文は古くなる。前提が誤っていると気づいたエージェントは、それを回避して作るのでは
+  なく、そう伝える。
+- **メッセージはワークスペースに限定される。** 別のリポジトリや、一致しない Issue 番号に
+  ついての依頼（メール）は誤配である。メールで報告し、実行しない。
+- `herdr agent list` の使用量（`limit`）を見る。上限が近いエージェントには、小さく
+  終わらせられるタスクを渡す。

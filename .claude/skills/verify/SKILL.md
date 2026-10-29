@@ -78,6 +78,14 @@ not the chrome-free browser host, and writes PNGs plus actual renderer bounds to
 `target/ui-fidelity/settings/`. The native window is fixed900×760pt, reduced only
 to fit the display's visible frame; switching panes never resizes it, and taller
 content scrolls inside the detail. It draws no extra host title band.
+Category-gradient paint uses canonical literal hue endpoints and the pinned
+native renderer's physical-pixel/dither/compositing model, not a fixed RGB
+midpoint tolerance. The pinned Metal shader adds RGB±2/255 and alpha±3/255
+triangular dither before SourceAlpha blend; solid-color checks retain their
+existing tolerance. A one-off test-only diagnostic established this with
+nonselected Gray tiles and independent literal gradient/base/highlight references
+in one native PNG+JSON state. Its scaffold/scenario is not part of the final
+runner; preserve diagnostic failures separately from acquired renderer evidence.
 OS-drawn traffic lights are absent from Metal images; the scenario separately
 records their actual AppKit rectangles in content
 coordinates. Compare those with the measured sidebar panel/top inset; do not

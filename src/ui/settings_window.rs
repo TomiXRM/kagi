@@ -119,7 +119,10 @@ fn window_options(cx: &App) -> WindowOptions {
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(Msg::SettingsTitle.t().into()),
             appears_transparent: true,
-            traffic_light_position: Some(point(px(9.), px(16.))),
+            // The sidebar panel's inner edges sit at 9 pt (inset 8 + 1 pt
+            // border). Leave the close button the same 7 pt from both, so it
+            // sits on the panel corner's bisector instead of touching its border.
+            traffic_light_position: Some(point(px(16.), px(16.))),
         }),
         app_owns_titlebar_drag: true,
         is_resizable: false,

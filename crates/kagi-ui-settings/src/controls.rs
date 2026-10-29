@@ -502,6 +502,7 @@ impl SettingsView {
             .as_ref()
             .is_none_or(|(group, slot, _)| *self.groups.get(group).unwrap_or(&0) == *slot);
         let click_intent = intent.clone();
+        let pointer_id = (role == Role::Tab).then(|| id.clone());
         let focus = handle.clone();
         let key_focus = handle.clone();
         let reveal_focus = handle.clone();
@@ -638,6 +639,16 @@ impl SettingsView {
                     revealed.set(Some(marker));
                 }
             })
+            .when_some(pointer_id, |el, id| {
+                // GPUI focuses a tracked element on mouse down, before click:
+                // mark it here so the press itself never paints a ring.
+                el.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, _| {
+                        this.sidebar_pointer_focus = Some(id.clone());
+                    }),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 if enabled {
                     window.focus(&focus, cx);
@@ -650,6 +661,9 @@ impl SettingsView {
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if !key_focus.is_focused(window) {
                     return;
+                }
+                if !event.keystroke.modifiers.platform {
+                    this.sidebar_pointer_focus = None;
                 }
                 match event.keystroke.key.as_str() {
                     "space" | "enter" => {

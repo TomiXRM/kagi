@@ -20,9 +20,12 @@ impl SettingsView {
                 "sidebar".into(),
                 Pane::ALL.iter().position(|p| *p == self.pane).unwrap_or(0),
             );
+            // Focus left the sidebar: a later keyboard return shows its ring.
+            self.sidebar_pointer_focus = None;
         }
         let focused = ids.iter().position(|id| {
             window.is_window_active()
+                && self.sidebar_pointer_focus.as_ref() != Some(id)
                 && self
                     .focus
                     .get(id)

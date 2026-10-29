@@ -455,6 +455,18 @@ pub fn assert_composition(
             "OS traffic light stays above first row"
         );
     }
+    // The close button sits on the panel corner's bisector: equal gaps to the
+    // panel's top and leading edges (owner report, PR #1818: it touched the
+    // leading border at an 8 pt top gap).
+    let close = traffic_lights
+        .iter()
+        .min_by(|a, b| a[0].total_cmp(&b[0]))
+        .unwrap();
+    near(
+        px(close[0] as f32) - panel.left(),
+        px(close[1] as f32) - panel.top(),
+        "close button equidistant from sidebar panel top and leading edges",
+    );
 
     let scroll = probe(&probes, "settings-detail-scroll").bounds;
     near(

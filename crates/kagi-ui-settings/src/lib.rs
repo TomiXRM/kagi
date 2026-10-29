@@ -68,6 +68,9 @@ pub struct SettingsView {
     groups: BTreeMap<String, usize>,
     scroll: ScrollHandle,
     sidebar_scroll: ScrollHandle,
+    // Sidebar row last focused by a pointer click. Like macOS sidebars, it
+    // draws no focus ring until keyboard input moves or acts on it.
+    sidebar_pointer_focus: Option<String>,
     theme_scroll: [ScrollHandle; 2],
     // Last presentation request, not another source of selected-theme state.
     theme_reveal: Option<ThemePresentation>,
@@ -106,6 +109,7 @@ impl SettingsView {
             groups: BTreeMap::new(),
             scroll: ScrollHandle::new(),
             sidebar_scroll: ScrollHandle::new(),
+            sidebar_pointer_focus: None,
             theme_scroll: std::array::from_fn(|_| ScrollHandle::new()),
             theme_reveal: None,
             theme_viewport: std::array::from_fn(|_| Rc::default()),

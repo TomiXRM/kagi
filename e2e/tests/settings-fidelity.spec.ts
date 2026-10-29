@@ -172,7 +172,7 @@ test("production groups follow canonical appearance-specific borders and in-flow
 for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"]] as const) {
   test(`sidebar overflow preserves original roles at 715px 200%: ${language}`, async ({ page }, info) => {
     test.setTimeout(120_000);
-    await page.setViewportSize({ width: 715, height: 640 });
+    await page.setViewportSize({ width: 715, height: 600 });
     await boot(page);
     await host(page, "language", language);
     await host(page, "appearance", appearance);
@@ -198,9 +198,10 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
     contains(viewport, await probe(page, "settings-pane-appearance"));
     const general = await probe(page, "settings-pane-general");
     expect(general.y + general.height).toBeGreaterThan(viewport.y + viewport.height);
-    await info.attach("sidebar-640h-200.png", { body: await page.screenshot(), contentType: "image/png" });
-    // The canonical traffic-light inset now makes 200% overflow real even at
-    // 640h. Retain the stronger wheel/keyboard reachability leg at 500h.
+    await info.attach("sidebar-600h-200.png", { body: await page.screenshot(), contentType: "image/png" });
+    // The traffic-light inset makes 200% overflow real at 600h; the panel's
+    // window inset no longer zooms (concentric with the OS corner), so 640h
+    // fits. Retain the stronger wheel/keyboard reachability leg at 500h.
     await page.setViewportSize({ width: 715, height: 500 }); await frames(page);
     viewport = await probe(page, "settings-sidebar");
     const before = await observed(page);
@@ -212,7 +213,11 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
       expect(item.name.length).toBeGreaterThan(0);
       expectSnappedLength(item.height, 64);
       contains(viewport, item);
-      contains(viewport, await probe(page, `${item.id}-focus-ring`));
+      // A pointer click focuses the row without a ring, as in macOS sidebars;
+      // keyboard navigation from it shows the ring.
+      const ring = (await observed(page)).controls.find(control => control.id === `${item.id}-focus-ring`);
+      if (index === 0) expect(ring, "no focus ring after a pointer click").toBeUndefined();
+      else contains(viewport, await probe(page, `${item.id}-focus-ring`));
       expect((await observed(page)).pane).toBe("appearance");
       expect((await observed(page)).requests).toBe(before.requests);
       if (index < panes.length - 1) {

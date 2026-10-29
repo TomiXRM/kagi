@@ -128,7 +128,7 @@ Composition values taken from that code (pt = design points at 100%):
 | Property | Canonical |
 |---|---|
 | Window | 900 × 760, **fixed**: switching panes never resizes the window, and content taller than the detail scrolls inside it. Bounded by the visible screen. No Kagi-drawn title band: the window is the sidebar + detail. |
-| Traffic lights | inside the sidebar's top inset |
+| Traffic lights | inside the sidebar's top inset; the close button sits 7 pt from both the panel's inner top and inner leading edges (AppKit origin 16, 16), i.e. on the panel corner's bisector, never touching its border (owner report, PR #1818, 2026-10-29) |
 | Sidebar panel | `sidebar()`: top padding 40, horizontal padding 8, gap 2, width 212, 1 px hairline border, `ink::sidebar()` fill; full window height minus margins. **Margin 8 and radius 7.5, unscaled by UI zoom: concentric with the window's macOS 26 corner, whose fitted circles centre 15.0–15.6 pt from each edge** (owner ruling, PR #1818, 2026-10-29; replaces the gallery's radius 12, whose centre sat at 20 pt, 4.5 pt off on each axis) |
 | Sidebar row | `sidebar_item()`: min height 32, padding 8 × 4, 20 pt tile, label gap 9; selected fill `ink::selected()` (= `segment_selected_bg`, neutral), semibold label |
 | Sidebar tiles | category `Hue` per pane: Appearance Indigo, Graph Orange, Editor Teal, Smart Commit Purple, Terminal Gray, Network & Sync Blue, General Gray, Analyze Teal |

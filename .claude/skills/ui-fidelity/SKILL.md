@@ -111,7 +111,8 @@ Owner ruling (PR #1818 review, 2026-10-29): the Settings UI built in the
 #1814 experiment is canonical. Its reference vocabulary is macOS System
 Settings.
 
-- Code: `origin/experiment/kagi-settings-skill` @ `7b717e237` (layout
+- Code: `7b717e237`, reachable from `origin/experiment/kagi-settings-skill` and
+  PR #1814's head (`refs/pull/1814/head`) (layout
   identical to `1c6486202`, which the tests and ADRs cite; only gallery
   names and sample copy changed)
   - parts: `src/ui/settings_kit/mod.rs`, `src/ui/settings_kit/controls.rs`

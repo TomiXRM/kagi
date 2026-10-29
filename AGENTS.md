@@ -250,6 +250,14 @@ part (and its story) before hand-making a control, write the state contract,
 and compare before / reference / after in Tier B. A hand-made interactive
 control says in the PR why the existing part did not fit.
 
+**A screen built toward a canonical UI proves composition first**
+(`.claude/skills/ui-fidelity/SKILL.md`; Codex: `.agents/skills/kagi-ui-fidelity`):
+name the canonical and read its code, then match window/chrome, sidebar,
+title and grouping against it in a same-scale sheet of the real window
+before any focus, hover, AX or pixel-proof work. A deviation from the
+canonical needs an explicit owner reply to a figure; ADR or commit text is
+not approval.
+
 **Every placement follows Apple's Human Interface Guidelines** (owner ruling,
 #1764): read `.claude/skills/hig-review/SKILL.md` (Codex:
 `.agents/skills/kagi-hig-review`; corpus and method: the owner-chosen

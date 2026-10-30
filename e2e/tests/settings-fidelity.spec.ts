@@ -1,8 +1,16 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, luminance, expectSnappedLength, themeDisplayOrder, type Probe } from "./settings-helpers";
 import canonicalText from "../../tests/recovery/settings_text.json";
 
 test.use({ deviceScaleFactor: 1 });
+
+async function settleScrollbarsBeforeHover(page: Page) {
+  // Pinned scrollbar.rs fades from 2s to 3s after scrolling. Settle outside
+  // the target so a real tooltip still appears only inside the observed delay.
+  await page.mouse.move(2, 2);
+  await page.waitForTimeout(3100);
+  await frames(page);
+}
 
 function expectRowDensity(row: Probe, helpText: Probe, trigger: Probe, zoom: number) {
   const contentEnd = Math.max(helpText.y + helpText.height, trigger.y + trigger.height);
@@ -300,12 +308,18 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(true);
     const trigger = await probe(page, "sc-provider-select");
     const menu = await probe(page, "settings-popup-menu");
-    // A below-trigger popup can overlap the trigger's centre at JA/167%.
-    // Click its actual exposed top band, not the menu's padding.
-    const point = { x: trigger.x + trigger.width / 2, y: (trigger.y + Math.min(trigger.y + trigger.height, menu.y)) / 2 };
+    // Wrapped descriptions can make the menu open above or below the trigger.
+    // Reclick an actually exposed band, never the menu's overlapping padding.
+    const topBandEnd = Math.min(trigger.y + trigger.height, menu.y);
+    const bottomBandStart = Math.max(trigger.y, menu.y + menu.height);
+    const band = topBandEnd > trigger.y
+      ? [trigger.y, topBandEnd]
+      : [bottomBandStart, trigger.y + trigger.height];
+    expect(band[1]).toBeGreaterThan(band[0]);
+    const point = { x: trigger.x + trigger.width / 2, y: (band[0] + band[1]) / 2 };
     expect(point.y).toBeGreaterThan(trigger.y);
     expect(point.y).toBeLessThan(trigger.y + trigger.height);
-    expect(point.y).toBeLessThan(menu.y);
+    expect(point.y < menu.y || point.y > menu.y + menu.height).toBe(true);
     await info.attach("popup-reclick-hit.json", { body: JSON.stringify({ trigger, menu, point }), contentType: "application/json" });
     await page.mouse.click(point.x, point.y); await frames(page);
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
@@ -721,14 +735,16 @@ for (const language of ["en", "ja"]) for (const appearance of ["apple-light", "a
         expectSnappedLength(trigger.height, 28 * zoom);
       }
       else expect(leaf.height).toBeGreaterThan(Math.floor(24 * zoom));
+      await settleScrollbarsBeforeHover(page);
       await page.mouse.move(trigger.x + trigger.width / 2, trigger.y + trigger.height / 2);
       await page.waitForTimeout(150); await frames(page);
       const beforeHoverDelay = await page.screenshot();
       await page.waitForTimeout(1100); await frames(page);
       const afterHoverDelay = await page.screenshot();
-      expect(afterHoverDelay.equals(beforeHoverDelay), "no duplicate value tooltip after hover delay").toBe(true);
+      await info.attach(`${model === "gemma4:latest" ? "ordinary" : "long"}-value-before.png`, { body: beforeHoverDelay, contentType: "image/png" });
       await info.attach(`${model === "gemma4:latest" ? "ordinary" : "long"}-value.png`, { body: afterHoverDelay, contentType: "image/png" });
       await info.attach(`${model === "gemma4:latest" ? "ordinary" : "long"}-value.json`, { body: JSON.stringify({ leaf, trigger, row, group, helpText }), contentType: "application/json" });
+      expect(afterHoverDelay.equals(beforeHoverDelay), "no duplicate value tooltip after hover delay").toBe(true);
     }
     // Full theme names keep the fixed132x84 preview; the actual caption and
     // card grow together, including selected semibold and unbroken identifiers.
@@ -776,11 +792,14 @@ for (const language of ["en", "ja"]) for (const appearance of ["apple-light", "a
     expect(help.value.length).toBeGreaterThan(10);
     const helpText = await probe(page, "settings-provider-help-text");
     expect(helpText.value).toBe(help.value);
+    await settleScrollbarsBeforeHover(page);
     await page.mouse.move(help.x + help.width / 2, help.y + help.height / 2);
     await page.waitForTimeout(150); await frames(page);
     const quietHelp = await page.screenshot();
     await page.waitForTimeout(1100); await frames(page);
-    expect((await page.screenshot()).equals(quietHelp), "no duplicate description tooltip").toBe(true);
+    const delayedHelp = await page.screenshot();
     await info.attach("visible-help.png", { body: quietHelp, contentType: "image/png" });
+    await info.attach("visible-help-after.png", { body: delayedHelp, contentType: "image/png" });
+    expect(delayedHelp.equals(quietHelp), "no duplicate description tooltip").toBe(true);
   });
 }

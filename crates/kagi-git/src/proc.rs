@@ -208,9 +208,30 @@ pub fn run_child(
     timeout: Duration,
     stdin: Option<&[u8]>,
 ) -> std::io::Result<ProcRun> {
+    run_child_input(cmd, timeout, stdin.map(|bytes| bytes.to_vec()), None)
+}
+
+/// Feed a large input file directly to a child without buffering it in Kagi.
+/// The same process ownership, deadline and output checks as [`run_child`] apply.
+pub fn run_child_with_stdin_file(
+    cmd: &mut std::process::Command,
+    timeout: Duration,
+    file: std::fs::File,
+) -> std::io::Result<ProcRun> {
+    run_child_input(cmd, timeout, None, Some(file))
+}
+
+fn run_child_input(
+    cmd: &mut std::process::Command,
+    timeout: Duration,
+    stdin: Option<Vec<u8>>,
+    file: Option<std::fs::File>,
+) -> std::io::Result<ProcRun> {
     use std::io::Write;
 
-    cmd.stdin(if stdin.is_some() {
+    cmd.stdin(if let Some(file) = file {
+        Stdio::from(file)
+    } else if stdin.is_some() {
         Stdio::piped()
     } else {
         Stdio::null()
@@ -257,7 +278,7 @@ pub fn run_child(
     let (tx, rx) = std::sync::mpsc::channel();
     let mut threads = Vec::new();
     if let (Some(data), Some(mut pipe)) = (stdin, child_stdin) {
-        let (data, tx) = (data.to_vec(), tx.clone());
+        let tx = tx.clone();
         threads.push(std::thread::spawn(move || {
             let error = pipe.write_all(&data).err();
             drop(pipe); // → the child sees EOF on stdin.

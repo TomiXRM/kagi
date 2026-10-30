@@ -104,11 +104,16 @@ pub fn plan_conflict_abort(
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
-    let (orig, blockers) = match preflight_conflict_abort(repo, session) {
+    let (orig, mut blockers) = match preflight_conflict_abort(repo, session) {
         Ok(orig) => (orig, Vec::new()),
         Err(GitError::Blocked(note)) => (None, vec![*note]),
         Err(error) => return Err(error),
     };
+    if blockers.is_empty() {
+        if let Some(note) = conflict_abort_lfs_blocker(repo, orig.as_deref())? {
+            blockers.push(note);
+        }
+    }
     let predicted_head = match &orig {
         Some(sha) => format!("restored to {}", short_sha(sha)),
         None => current.head.clone(),
@@ -214,6 +219,25 @@ pub(crate) fn preflight_conflict_abort(
     Ok(Some(oid.to_string()))
 }
 
+fn conflict_abort_lfs_blocker(
+    repo: &Repository,
+    target: Option<&str>,
+) -> Result<Option<PlanNote>, GitError> {
+    if let Some(note) = crate::lfs::current_lfs_blocker(repo)? {
+        return Ok(Some(note));
+    }
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    let object = repo
+        .revparse_single(target)
+        .map_err(|e| GitError::Other(format!("cannot inspect abort target: {e}")))?;
+    let tree = object
+        .peel_to_tree()
+        .map_err(|e| GitError::Other(format!("cannot inspect abort tree: {e}")))?;
+    crate::lfs::tree_lfs_blocker(repo, &tree)
+}
+
 /// Execute an `abort`: clean the operation state, restore HEAD's working tree to
 /// the recorded pre-operation HEAD, and preserve the resolution buffer.
 ///
@@ -317,6 +341,9 @@ pub(crate) fn execute_conflict_abort_preserved(
         return Err(GitError::Other("abort destination changed".into()));
     }
     let orig_sha = preflight_conflict_abort(repo, session)?;
+    if let Some(note) = conflict_abort_lfs_blocker(repo, orig_sha.as_deref())? {
+        return Err(GitError::Blocked(Box::new(note)));
+    }
 
     // 3. Restore the working tree + index to the recorded starting tree,
     //    then move the branch ref back.
@@ -548,6 +575,9 @@ pub(crate) fn execute_stash_conflict_abort_preserved(
     let tree = head_commit
         .tree()
         .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
+    if let Some(note) = conflict_abort_lfs_blocker(repo, Some(&head_commit.id().to_string()))? {
+        return Err(GitError::Blocked(Box::new(note)));
+    }
 
     // 3. Conflicted paths only (pathspec-bounded restore).
     let paths = stash_abort_paths(session.files.iter().map(|file| file.path.as_path()));

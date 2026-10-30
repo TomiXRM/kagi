@@ -3593,13 +3593,13 @@ pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
         git(repo, &["init", "-q", "-b", "main"]);
         std::fs::write(
             repo.join(".gitattributes"),
-            "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+            "*.bin filter=unknown diff=unknown merge=unknown -text\n",
         )
         .unwrap();
-        std::fs::write(repo.join("asset.bin"), "version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 42\n").unwrap();
+        std::fs::write(repo.join("asset.bin"), "filtered base\n").unwrap();
         git(repo, &["add", "."]);
-        git(repo, &["commit", "-qm", "pointer fixture"]);
-        std::fs::write(repo.join("asset.bin"), "not an LFS pointer\n").unwrap();
+        git(repo, &["commit", "-qm", "filtered fixture"]);
+        std::fs::write(repo.join("asset.bin"), "filtered change\n").unwrap();
         let (app, window) = mount(cx, repo);
         let index = std::fs::read(repo.join(".git/index")).unwrap();
         let fingerprint = repo_fingerprint(repo);
@@ -3608,17 +3608,9 @@ pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
         });
         wait_idle(cx, &app);
         paint(cx, window);
-        let expected = match language {
-            Lang::En => "external filter (lfs)",
-            Lang::Ja => "外部 filter (lfs)",
-        };
         cx.read(|cx| {
             let state = app.read(cx);
-            let FooterStatus::Failed(footer) = &state.status_footer else {
-                panic!("filtered Stage must show failure footer")
-            };
-            assert!(footer.contains(expected), "{footer}");
-            assert!(footer.contains("asset.bin") && footer.contains("git"));
+            assert!(matches!(&state.status_footer, FooterStatus::Idle(_)));
             let toast = state
                 .toast_stack
                 .as_ref()
@@ -3628,7 +3620,13 @@ pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
                 .last()
                 .unwrap();
             assert_eq!(toast.kind, ToastKind::Error);
-            assert!(toast.message.contains(expected), "{}", toast.message);
+            let detail_link = match language {
+                Lang::En => "Operation Log",
+                Lang::Ja => "操作ログ",
+            };
+            assert!(toast.message.contains(detail_link), "{}", toast.message);
+            assert!(!toast.message.contains("asset.bin"));
+            assert!(!toast.message.contains("external filter"));
             assert!(e2e::app_notice_message(state).is_none());
         });
         assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
@@ -3636,7 +3634,7 @@ pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
         let entries = records(repo, "stage", 100, true);
         assert_eq!(entries.len(), 1);
         assert!(
-            matches!(&entries[0].outcome, OpOutcome::Refused { blockers } if blockers[0].contains("external filter (lfs)"))
+            matches!(&entries[0].outcome, OpOutcome::Refused { blockers } if blockers[0].contains("external filter (unknown)"))
         );
         unmount(cx, app, window);
     }

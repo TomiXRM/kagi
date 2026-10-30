@@ -124,9 +124,16 @@ fn build_working_tree_status(
     repo: &Repository,
     statuses: git2::Statuses<'_>,
 ) -> Result<WorkingTreeStatus, GitError> {
+    if statuses.is_empty() {
+        return Ok(WorkingTreeStatus::default());
+    }
     let mut result = WorkingTreeStatus::default();
     let workdir = repo.workdir().map(|p| p.to_path_buf());
     let sparse_excluded = sparse_excluded_paths(repo);
+    let lfs_filters = crate::special_repo::FilterCheck::new(repo)?;
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("cannot read index: {e}")))?;
 
     for entry in statuses.iter() {
         let s = entry.status();
@@ -223,6 +230,17 @@ fn build_working_tree_status(
             let Some(path) = entry_path(&entry) else {
                 continue;
             };
+            if s.contains(git2::Status::WT_MODIFIED)
+                && !s.intersects(
+                    git2::Status::WT_DELETED
+                        | git2::Status::WT_RENAMED
+                        | git2::Status::WT_TYPECHANGE,
+                )
+                && lfs_filters.is_lfs(&path)?
+                && crate::lfs::worktree_matches_index(repo, &index, &path)?
+            {
+                continue;
+            }
             result.unstaged.push(FileStatus { path, change: kind });
         }
 

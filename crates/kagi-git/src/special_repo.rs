@@ -13,7 +13,46 @@ pub(crate) struct FilterCheck {
     flags: AttrCheckFlags,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StageFilter {
+    None,
+    Lfs,
+}
+
 impl FilterCheck {
+    pub(crate) fn stage_filter(&self, path: &Path) -> Result<StageFilter, GitError> {
+        let value = self
+            .repo
+            .get_attr_bytes(path, "filter", self.flags)
+            .map_err(git_error)?;
+        if matches!(AttrValue::always_bytes(value), AttrValue::Bytes(b"lfs")) {
+            return Ok(StageFilter::Lfs);
+        }
+        self.require_supported(path)?;
+        Ok(StageFilter::None)
+    }
+
+    pub(crate) fn is_lfs(&self, path: &Path) -> Result<bool, GitError> {
+        let value = self
+            .repo
+            .get_attr_bytes(path, "filter", self.flags)
+            .map_err(git_error)?;
+        Ok(matches!(
+            AttrValue::always_bytes(value),
+            AttrValue::Bytes(b"lfs")
+        ))
+    }
+
+    pub(crate) fn is_lockable(&self, path: &Path) -> Result<bool, GitError> {
+        let value = self
+            .repo
+            .get_attr_bytes(path, "lockable", self.flags)
+            .map_err(git_error)?;
+        Ok(!matches!(
+            AttrValue::always_bytes(value),
+            AttrValue::False | AttrValue::Unspecified
+        ))
+    }
     pub(crate) fn new(repo: &Repository) -> Result<Self, GitError> {
         Ok(Self {
             repo: Repository::open(repo.path()).map_err(|e| {
@@ -26,9 +65,15 @@ impl FilterCheck {
         })
     }
 
+    pub(crate) fn for_index(repo: &Repository) -> Result<Self, GitError> {
+        let mut check = Self::new(repo)?;
+        check.flags = AttrCheckFlags::INDEX_ONLY;
+        Ok(check)
+    }
+
     /// Read committed .gitattributes without checking out the tree or changing
     /// the real index. Info/global attributes retain libgit2's usual precedence.
-    fn for_tree(repo: &Repository, tree: &Tree<'_>) -> Result<Self, GitError> {
+    pub(crate) fn for_tree(repo: &Repository, tree: &Tree<'_>) -> Result<Self, GitError> {
         let mut check = Self::new(repo)?;
         let mut index = git2::Index::new().map_err(git_error)?;
         index.read_tree(tree).map_err(git_error)?;

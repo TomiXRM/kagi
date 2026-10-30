@@ -394,6 +394,13 @@ pub(crate) fn execute_pull(
     let upstream_oid = repo
         .refname_to_id(&identity.upstream_ref)
         .map_err(|error| GitError::Other(error.to_string()))?;
+    let upstream_tree = repo
+        .find_commit(upstream_oid)
+        .and_then(|commit| commit.tree())
+        .map_err(|error| GitError::Other(format!("cannot inspect fetched LFS target: {error}")))?;
+    if let Some(blocker) = crate::lfs::tree_lfs_blocker(repo, &upstream_tree)? {
+        return Err(GitError::Blocked(Box::new(blocker)));
+    }
 
     let head_oid = head_ref
         .target()
@@ -821,6 +828,9 @@ pub(crate) fn execute_pull_branch_ff(
         let upstream_tree = upstream_commit
             .tree()
             .map_err(|error| GitError::Other(error.to_string()))?;
+        if let Some(blocker) = crate::lfs::tree_lfs_blocker(repo, &upstream_tree)? {
+            return Err(GitError::Blocked(Box::new(blocker)));
+        }
         // As in ordinary Pull, preserve staged content outside the incoming
         // delta. Record the attempted target for the backend's partial observer.
         *checkout_target = Some(CommitId(upstream_oid.to_string()));

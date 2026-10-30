@@ -219,6 +219,9 @@ impl Backend {
             evidence.stop = Some(stash::StashStopReason::Untrusted);
             return Err(e);
         }
+        if let Some(blocker) = crate::lfs::worktree_write_blocker(&self.repo, op)? {
+            return Err(GitError::Blocked(Box::new(blocker)));
+        }
         if !plan.blockers.is_empty() {
             evidence.plan_blocked = true;
             evidence.stop = Some(stash::StashStopReason::PlanBlocked);

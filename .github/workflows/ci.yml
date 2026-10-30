@@ -171,6 +171,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.0
       - uses: Swatinem/rust-cache@v2
+      - name: Install Git LFS for backend integration tests
+        run: git lfs version || brew install git-lfs
       - name: cargo test --workspace
         run: cargo test --workspace
 
@@ -257,7 +259,7 @@ jobs:
             libfontconfig-dev libfreetype-dev \
             libasound2-dev \
             libvulkan-dev \
-            libzstd-dev
+            libzstd-dev git-lfs
       - name: Build actual Linux binary for installer
         if: needs.changes.outputs.installer == 'true'
         run: cargo build --release -p kagi

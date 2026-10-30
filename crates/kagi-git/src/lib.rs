@@ -63,6 +63,7 @@ pub mod github_search;
 mod github_status_batch;
 pub mod github_threads;
 pub mod hotspot;
+mod lfs;
 mod log;
 pub mod message_gen;
 pub mod revision;

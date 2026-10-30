@@ -364,6 +364,12 @@ pub(crate) fn execute_switch_to_latest(
     // 2. Re-resolve the (now-updated) remote tip.
     let remote_commit = resolve_branch_commit(repo, remote_branch)?;
     let remote_oid = remote_commit.id();
+    let remote_tree = remote_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("cannot inspect fetched LFS target: {e}")))?;
+    if let Some(blocker) = crate::lfs::tree_lfs_blocker(repo, &remote_tree)? {
+        return Err(GitError::Blocked(Box::new(blocker)));
+    }
     let local_exists = repo.find_branch(branch_name, BranchType::Local).is_ok();
 
     if !local_exists {
@@ -423,6 +429,12 @@ pub(crate) fn execute_switch_to_latest(
         let local_commit = repo
             .find_commit(local_oid)
             .map_err(|e| GitError::Other(format!("find commit failed: {}", e.message())))?;
+        let local_tree = local_commit
+            .tree()
+            .map_err(|e| GitError::Other(format!("cannot inspect local LFS target: {e}")))?;
+        if let Some(blocker) = crate::lfs::tree_lfs_blocker(repo, &local_tree)? {
+            return Err(GitError::Blocked(Box::new(blocker)));
+        }
         checkout_branch_tree(repo, branch_name, local_commit.as_object())?;
     }
 

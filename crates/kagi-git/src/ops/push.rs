@@ -677,18 +677,36 @@ fn execute_approved_push(
     };
     check_operand("remote", remote)?;
     check_operand("branch", branch)?;
-    let out = if approved.set_upstream {
-        run_git(repo_path, &["push", "-u", "--", remote, branch])
-    } else {
-        run_git(repo_path, &["push", "--", remote, branch])
-    }
-    .map_err(|error| crate::cli::context("push failed", error))?;
+    crate::lfs::upload_for_push(repo, repo_path, remote, local_oid)?;
+    let refspec = format!("{local_oid}:refs/heads/{branch}");
+    let out = run_git(repo_path, &["push", "--", remote, &refspec])
+        .map_err(|error| crate::cli::context("push failed", error))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(
             "push failed (exit {}): {}",
             out.status,
             out.stderr.trim()
         )));
+    }
+    if approved.set_upstream {
+        let current = repo
+            .refname_to_id(&format!("refs/heads/{branch}"))
+            .map_err(|e| GitError::Other(format!("cannot verify pushed branch: {e}")))?;
+        if current != local_oid {
+            return Err(identity_changed());
+        }
+        let upstream = format!("{remote}/{branch}");
+        let configured = run_git(
+            repo_path,
+            &["branch", "--set-upstream-to", &upstream, branch],
+        )
+        .map_err(|e| crate::cli::context("push succeeded but upstream setup failed", e))?;
+        if configured.status != 0 {
+            return Err(GitError::Other(format!(
+                "push succeeded but upstream setup failed: {}",
+                configured.stderr.trim()
+            )));
+        }
     }
     Ok(PushOutcome {
         pushed,

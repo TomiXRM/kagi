@@ -107,38 +107,60 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
-    if worktree_entry_present(&abs_path)? {
-        crate::special_repo::FilterCheck::new(repo)?.require_supported(path)?;
-        // libgit2 stages symlinks as mode 120000 with raw read_link bytes,
-        // without following the target (even when it is missing).
-        index
-            .add_path(path)
-            .map_err(|e| GitError::Other(format!("index.add_path failed: {}", e.message())))?;
-    } else {
-        // "Absent from the working tree" is not the same as "deleted". A
-        // sparse-checkout excluded path is absent because Git removed it, and
-        // staging it here would record a deletion the user never made — and
-        // could not even see, since the file is invisible to them. Git refuses
-        // this same operation ("paths ... exist outside of your sparse-checkout
-        // definition, so will not be updated in the index"); so do we (#675).
-        if is_sparse_excluded(&index, path) {
-            return Err(GitError::Blocked(Box::new(PlanNote::Common(
-                CommonNote::SparseExcludedPath {
-                    path: path.display().to_string(),
-                },
-            ))));
+    let result = (|| {
+        if worktree_entry_present(&abs_path)? {
+            let kind = crate::special_repo::FilterCheck::new(repo)?.stage_filter(path)?;
+            match kind {
+                crate::special_repo::StageFilter::Lfs => {
+                    crate::lfs::stage_pointer(repo, &mut index, path)?;
+                }
+                crate::special_repo::StageFilter::None => {
+                    // libgit2 stages symlinks as mode 120000 with raw read_link bytes.
+                    index.add_path(path).map_err(|e| {
+                        GitError::Other(format!("index.add_path failed: {}", e.message()))
+                    })?;
+                }
+            }
+            let fresh = crate::special_repo::FilterCheck::new(repo)?;
+            if fresh.stage_filter(path)? != kind
+                || (kind == crate::special_repo::StageFilter::Lfs && fresh.is_lockable(path)?)
+            {
+                return Err(GitError::Other(
+                    "file attributes changed during Stage".into(),
+                ));
+            }
+        } else {
+            // "Absent from the working tree" is not the same as "deleted". A
+            // sparse-checkout excluded path is absent because Git removed it, and
+            // staging it here would record a deletion the user never made — and
+            // could not even see, since the file is invisible to them. Git refuses
+            // this same operation ("paths ... exist outside of your sparse-checkout
+            // definition, so will not be updated in the index"); so do we (#675).
+            if is_sparse_excluded(&index, path) {
+                return Err(GitError::Blocked(Box::new(PlanNote::Common(
+                    CommonNote::SparseExcludedPath {
+                        path: path.display().to_string(),
+                    },
+                ))));
+            }
+            // File was deleted — stage the deletion.
+            index.remove_path(path).map_err(|e| {
+                GitError::Other(format!("index.remove_path failed: {}", e.message()))
+            })?;
         }
-        // File was deleted — stage the deletion.
+
         index
-            .remove_path(path)
-            .map_err(|e| GitError::Other(format!("index.remove_path failed: {}", e.message())))?;
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+
+        Ok(())
+    })();
+    if result.is_err() {
+        index.read(true).map_err(|e| {
+            GitError::Other(format!("cannot reload index after aborted Stage: {e}"))
+        })?;
     }
-
-    index
-        .write()
-        .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-
-    Ok(())
+    result
 }
 
 // ────────────────────────────────────────────────────────────
@@ -463,28 +485,38 @@ pub(crate) fn stage_files(
     let filters = crate::special_repo::FilterCheck::new(repo)?;
     // Validate the whole add-set before libgit2 creates any blob or index edit.
     // Removing an absent tracked path never imports filtered worktree content.
+    let mut kinds = Vec::with_capacity(paths.len());
     for (path, present) in paths.iter().zip(&present) {
         if *present {
-            filters.require_supported(path)?;
+            kinds.push(filters.stage_filter(path)?);
         } else if is_sparse_excluded(&index, path) {
             return Err(GitError::Blocked(Box::new(PlanNote::Common(
                 CommonNote::SparseExcludedPath {
                     path: path.display().to_string(),
                 },
             ))));
+        } else {
+            kinds.push(crate::special_repo::StageFilter::None);
         }
     }
 
     let result = (|| {
-        for (path, present) in paths.iter().zip(present) {
-            if present {
-                index.add_path(path).map_err(|e| {
-                    GitError::Other(format!(
-                        "index.add_path({}) failed: {}",
-                        path.display(),
-                        e.message()
-                    ))
-                })?;
+        for ((path, present), kind) in paths.iter().zip(&present).zip(&kinds) {
+            if *present {
+                match kind {
+                    crate::special_repo::StageFilter::Lfs => {
+                        crate::lfs::stage_pointer(repo, &mut index, path)?
+                    }
+                    crate::special_repo::StageFilter::None => {
+                        index.add_path(path).map_err(|e| {
+                            GitError::Other(format!(
+                                "index.add_path({}) failed: {}",
+                                path.display(),
+                                e.message()
+                            ))
+                        })?
+                    }
+                }
             } else {
                 index.remove_path(path).map_err(|e| {
                     GitError::Other(format!(
@@ -493,6 +525,19 @@ pub(crate) fn stage_files(
                         e.message()
                     ))
                 })?;
+            }
+        }
+
+        let fresh = crate::special_repo::FilterCheck::new(repo)?;
+        for ((path, present), kind) in paths.iter().zip(&present).zip(&kinds) {
+            if *present
+                && (fresh.stage_filter(path)? != *kind
+                    || (*kind == crate::special_repo::StageFilter::Lfs
+                        && fresh.is_lockable(path)?))
+            {
+                return Err(GitError::Other(
+                    "file attributes changed during Stage".into(),
+                ));
             }
         }
 

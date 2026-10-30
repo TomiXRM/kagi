@@ -78,6 +78,10 @@ repo が大きくなった瞬間に無言で発現することになる。速度
 
 ## Amendment — 2026-10-11: unsupported external filters (#1136)
 
+Whole-file LFS Stage and pre-Push LFS transfer are superseded by ADR-0229.
+The refusals for unknown filters, LFS hunk Stage, and worktree materialization
+remain in effect for its first release.
+
 - libgit2 remains the read/plan backend. Kagi never invokes repository-supplied
   clean/smudge commands or git-lfs, even when a driver is configured.
 - Before single/bulk Stage imports an existing worktree entry with `add_path`,

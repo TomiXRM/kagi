@@ -13,6 +13,9 @@ this skill and state `skill 更新済み` in the PR body (see Maintenance).
 Choose the smallest evidence lane that proves the change. Tier A is deterministic
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
+共通寸法・はみ出し修復は source-ready 保存 → G1 → 通常状態の実 native smoke（100% / 167% 等）
+→ 高コストな関連全条件行列・全体 gate の順。最終 coverage は減らさない（`docs/agents/workflow.md`）。
+見た目に影響しない小さな docs-only 作業へ native 検証や binary・倍率記録を課さない。
 
 The production Settings boundary is also exercised in the browser: build with
 `CARGO_BUILD_JOBS=4 bash scripts/build-web.sh`, then run
@@ -4086,13 +4089,30 @@ all three isolation flags. `USER` namespaces the per-user socket name, while
 user's persisted session, settings, trust, or oplog. `KAGI_NO_ACTIVATE=1` avoids
 stealing the foreground application.
 
+#### 通常 binary と倍率の来歴
+
+Tier B は通常 build の `kagi` を使う。例: `cargo build -p kagi --bin kagi --message-format=json`。
+build ログと `kagi` binary の compiler-artifact の `features=[]` を保存し、GUI runner と区別する。
+source SHA、未コミット差分（あれば patch と SHA-256）、Cargo.lock の SHA-256、コピーした binary の
+パスと SHA-256 を記録する。build 後、他の Cargo コマンドより先に下記のコピーを作り、以後は変更しない。
+分離 fixture の `settings.json` は文字列値で `"ui_scale_base":"v2"` と要求する `"ui_zoom"` を seed する。
+`ui_zoom` は permille の文字列で、100% は `"1000"`、167% は `"1670"`。
+値に `%` を含めない（例: `{"ui_scale_base":"v2","ui_zoom":"1670"}`）。
+seed と起動後の設定に加え、`kagi.stderr` の `[kagi] zoom:` 行で実効倍率を照合して保存する。
+観測していない値を後から測定済みにせず、記録不足は補足の取得時刻・出典とともに残す。
+移行自体が対象なら旧 seed を別条件として残す。移行された倍率を要求倍率の成功と呼ばず、
+失敗した seed・ログ・画像を保持して新しい分離条件で再検証する。
+
 ```bash
 swiftc scripts/pidclick.swift -o /tmp/pidclick
 swiftc scripts/pidcursor.swift -o /tmp/pidcursor
 VERIFY_USER="kagi-verify-$RANDOM"
 VERIFY_LOG_DIR="$(mktemp -d)"
+VERIFY_BINARY="$VERIFY_LOG_DIR/kagi"
+cp ./target/debug/kagi "$VERIFY_BINARY"
+chmod a-w "$VERIFY_BINARY"
 USER="$VERIFY_USER" KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 \
-  KAGI_LOG_DIR="$VERIFY_LOG_DIR" ./target/debug/kagi /tmp/kagi-vfx-a/repo \
+  KAGI_LOG_DIR="$VERIFY_LOG_DIR" "$VERIFY_BINARY" /tmp/kagi-vfx-a/repo \
   2>"$VERIFY_LOG_DIR/kagi.stderr" &
 PID=$!
 /tmp/pidclick windows --pid "$PID"
@@ -4152,8 +4172,6 @@ do not claim ordinary stale execution from a dismissed confirmation. Held native
 and public Backend consumers prove the prewrite refusal boundary. Verify the
 actual final tree/message/authorship and retained Result after fresh approval,
 not merely a successful button click or the absence of an error.
-
-
 
 Three launch pitfalls, all seen in practice. Launch Kagi from an unsandboxed shell:
 started from a sandboxed agent shell the process runs and logs normally, but

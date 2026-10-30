@@ -145,6 +145,9 @@ space rather than imposing a fixed row-height ceiling on natural JA/zoom stacks;
 retain actual help TextLayout alongside the same-state PNG+JSON.
 Genuinely long models wrap within text → trigger → row → group. Delayed-hover PNGs compare
 the same state before/after the tooltip deadline; visible descriptions stay.
+hover の比較前にポインタを対象外へ置き、固定revisionのscrollbarの消退を待つ
+（2秒idle→3秒で消退完了）。その後のhover待ち時間と画像一致は維持し、
+不一致でも前後PNG・同状態JSONが残るようassertionより先に保存する。
 The browser adapter's `available-providers` command supplies a deterministic
 availability snapshot only; preference changes still use the real popup input.
 Actual exposed trigger bounds determine the second-click target when the popup

@@ -221,6 +221,11 @@ Do not import unused experiment controls just to reproduce its module surface.
 | Provider/model popup | `popups.rs`, pinned `PopupMenu` | Canonical `popup_value`: unfilled rest trigger and 18-point filled chevron box. Real named radio menu roots, checked/disabled state and eligible keyboard navigation. Actual shaped value width, bounded wrapping for long values; 24/28-point minima for ordinary names. Long/open catalogs are menus, not growing segmented rails. |
 | Theme choice | `theme_cards.rs` | Canonical 132×84-point previews with palette-driven content, accent badge/cursor/eight ANSI swatches, full caption wrapping within the fixed card width, without a name tooltip substitute. Paired Apple/Catppuccin/Nagi/One families lead both appearances in matching visual/keyboard order; others retain stable source order. Two peer Light/Dark sections each contain one group card around their independent strip; `Theme.dark` classification and one global selection. Accent has its own titled section. |
 
+Settings の補足説明は、各行へ渡された完全な EN/JA Description を既存の説明欄に常設する
+（オーナー決定、2026-10-30）。長文は行・group 内で折り返し、必要な条件や例外を
+Summary、横一列の hover、AX だけへ退避しない。通常の文字サイズ・control 寸法は維持し、
+本当に複数行になる説明だけ自然に行高を増やす。
+
 Preserve every applicable role state, not only its rest screenshot:
 
 - **Rest, hover, pressed:** use the role's ink and geometry; hover must not

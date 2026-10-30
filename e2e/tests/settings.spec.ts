@@ -256,29 +256,21 @@ async function captionInk(page: Page, caption: Probe) {
     };
     let left = canvas.width;
     let right = -1;
+    let bottom = -1;
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         if (isInk(x, y)) {
           left = Math.min(left, x);
           right = Math.max(right, x);
+          bottom = Math.max(bottom, y);
         }
       }
     }
-    let suffixUpper = 0;
-    let suffixLower = 0;
-    for (let y = 0; y < canvas.height; y++) {
-      for (let x = Math.max(0, right - 8); x <= right; x++) {
-        if (isInk(x, y)) {
-          if (y < canvas.height / 2) suffixUpper++;
-          else suffixLower++;
-        }
-      }
-    }
-    return { width: Math.max(0, right - left + 1), suffixUpper, suffixLower };
+    return { width: Math.max(0, right - left + 1), bottom };
   }, png.toString("base64"));
 }
 
-test("short theme captions paint names and long names paint constrained ellipses", async ({ page }) => {
+test("theme captions paint complete short and wrapped long names", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 740 });
   await boot(page);
   const longName = "A deliberately long valid custom theme — 日本語の完全なテーマ名 for caption overflow";
@@ -301,15 +293,15 @@ test("short theme captions paint names and long names paint constrained ellipses
       expect(card.name).toBe(longName);
       const leaf = await probe(page, `settings-theme-caption-text-${slug}`);
       // value comes from the painted StyledText's actual TextLayout, not its input.
-      expect(leaf.value).toMatch(/.+…$/);
-      expect(card.name).not.toBe(leaf.value);
+      expect(leaf.value).toBe(longName);
+      expect(leaf.height).toBeGreaterThan((await probe(page, "settings-theme-caption-text-apple-light")).height);
       expect(leaf.x).toBeGreaterThanOrEqual(caption.x);
       expect(leaf.x + leaf.width).toBeLessThanOrEqual(caption.x + caption.width + 1);
+      expect(leaf.y + leaf.height).toBeLessThanOrEqual(caption.y + caption.height + 1);
+      expect(caption.y + caption.height).toBeLessThanOrEqual(card.y + card.height);
       const ink = await captionInk(page, caption);
       expect(ink.width).toBeGreaterThan(35);
-      // The actual ellipsis suffix paints baseline dots, not a clipped tall letter.
-      expect(ink.suffixUpper).toBe(0);
-      expect(ink.suffixLower).toBeGreaterThanOrEqual(3);
+      expect(ink.bottom).toBeGreaterThan(leaf.paint!.fontSize * 2);
     }
   }
 });
@@ -598,7 +590,16 @@ for (const [language, appearance, zoom] of [
     await host(page, "close");
     await host(page, "reopen");
     const initial = await observed(page);
-    const catalog = [false, true].flatMap(dark => initial.themeCatalog.filter(theme => theme.dark === dark));
+    // Owner-requested common families lead both strips; standalone themes retain
+    // the host catalog's relative order after them.
+    const pairs = [
+      ["apple-light", "catppuccin-latte", "nagi-light", "one-light"],
+      ["apple-dark", "catppuccin", "nagi-dark", "one-dark"],
+    ];
+    const catalog = [false, true].flatMap((dark, mode) => [
+      ...pairs[mode].map(slug => initial.themeCatalog.find(theme => theme.slug === slug)!),
+      ...initial.themeCatalog.filter(theme => theme.dark === dark && !pairs[mode].includes(theme.slug)),
+    ]);
     const actualCards = initial.controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"));
     expect(actualCards.map(card => card.id).sort()).toEqual(catalog.map(theme => `settings-theme-${theme.slug}`).sort());
     expect(new Set(catalog.map(theme => theme.slug)).size).toBe(initial.themeCount);

@@ -132,10 +132,10 @@ pending approval without writing or installing a repository-window scrim.
 
 Settings is an open-density form: important details are secondary text under
 the corresponding control, with the existing page scroll owner and no nested
-help scroller. Full tooltips remain available, and switch accessibility
-descriptions include the same localized detail. Analyze and custom-theme
-help follow the same visible-detail policy. This supersedes the tooltip-only
-detail presentation without changing live preference apply or storage.
+help scroller. Switch accessibility descriptions include the same localized
+detail. Analyze and custom-theme help follow the same visible-detail policy.
+The #1821 amendment below removes redundant hover descriptions without changing
+live preference apply or storage.
 
 
 ## Amendment — 2026-10-14: Settings screen containment (#1549)
@@ -207,8 +207,8 @@ offset. Selected-theme reveal runs on opening, returning to Appearance, changed
 selection/catalog/zoom and viewport resize, not ordinary redraws, focus loss or
 manual browsing. First and last cards keep local ring clearance. Horizontal
 gestures and the scrollbar browse the targeted strip without moving the other;
-vertical wheel input still scrolls the containing form. Full names, constrained
-caption ellipses, palette swatches and low-contrast explanations remain.
+vertical wheel input still scrolls the containing form. Full names, wrapping
+captions, palette swatches and low-contrast explanations remain.
 Theme loading/error and unavailable filesystem actions remain native-adapter
 states, not new carousel states; the normal catalog contains built-ins.
 There is no new destructive, approval, IME or persistence behavior.
@@ -252,4 +252,29 @@ Metal images do not contain the OS-drawn lights. Composition evidence lives in
 `target/ui-fidelity/settings/`, including the measured table and same-scale
 canonical/native sheets. Bounds relations are asserted on the native owner,
 not on copied implementation constants.
+
+
+## Amendment — 2026-10-29: readable Settings choices (#1821–#1823)
+
+Settings displays full names and values in the existing grouped form. Popup
+width comes from shaping the actual BODY font, not character-count estimates
+or a fixed 240-point cap. Values and menu options that exceed their available
+width wrap; visual and hit areas grow from the existing 24/28-point minima.
+Theme captions and sidebar labels likewise wrap rather than ellipsize.
+Keep the canonical window, preview size, group ownership and keyboard routes.
+Growing row labels retain an automatic, content-derived flex basis. A zero
+basis can measure help at a glyph-wide constraint and reserve an excessive row
+height even after final text shaping uses the correct width. Catalog changes
+must leave short values in ordinary content-sized rows.
+
+Remove duplicate name/description hover tooltips from rows, sidebar entries,
+theme cards, Analyze help and popup values/options. Existing visible help and
+accessibility descriptions remain; the distinct low-contrast warning on an
+unreadable preview retains its explanation.
+
+Within both appearance strips, paired built-in families lead in the same order:
+Apple, Catppuccin, Nagi, One. Standalone and user themes follow in their existing
+relative catalog order. This is presentation order only: registry indices, the
+Catppuccin Mocha default, saved slugs and palettes remain unchanged. Monokai's
+display name drops the Warm Hybrid suffix; provenance and palette stay intact.
 

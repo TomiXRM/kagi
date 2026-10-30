@@ -278,6 +278,27 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     await host(page, "appearance", appearance);
     await host(page, "zoom", String(zoom));
     await pane(page, "smart_commit");
+    const fullText = async (id: string, expected: string, ownerId: string) => {
+      await reveal(page, id);
+      const leaf = await probe(page, `${id}-text`);
+      const owner = await probe(page, ownerId);
+      // measured_text reads the painted StyledText layout, not its AX name.
+      expect(leaf.value).toBe(expected);
+      expect(leaf.x).toBeGreaterThanOrEqual(owner.x);
+      expect(leaf.x + leaf.width).toBeLessThanOrEqual(owner.x + owner.width + 1);
+      expect(leaf.y).toBeGreaterThanOrEqual(owner.y);
+      expect(leaf.y + leaf.height).toBeLessThanOrEqual(owner.y + owner.height + 1);
+      const points = [[leaf.x + leaf.width - 1, leaf.y + 1]];
+      for (let y = Math.ceil(Math.max(leaf.y, leaf.y + leaf.height - 20 * zoom)); y < leaf.y + leaf.height; y++) {
+        for (let x = Math.ceil(leaf.x); x < leaf.x + leaf.width; x++) points.push([x, y]);
+      }
+      const paint = await paintedPixels(page, points);
+      expect(paint.colors.slice(1).some(color => color.reduce((sum, value, channel) =>
+        sum + Math.abs(value - paint.colors[0][channel]), 0) > 45),
+      "the final text line must paint inside its owner").toBe(true);
+      await info.attach(`${id}-full-text.png`, { body: paint.png, contentType: "image/png" });
+      return leaf;
+    };
     const beforeProvider = (await observed(page)).requests;
     await click(page, "sc-provider-select");
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(true);
@@ -315,9 +336,32 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter"); await frames(page);
     expect((await observed(page)).smartProvider).toBe("ollama");
+    // Both reported short strings use the same production value renderer.
+    // Claude Code is unavailable in this fixture's provider catalog, so also
+    // exercise its exact text as a selectable value without changing eligibility.
+    for (const label of ["Claude Code", "gemma4:latest"]) {
+      await host(page, "models", JSON.stringify([label]));
+      await click(page, "sc-model-select");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter"); await frames(page);
+      await fullText("sc-model-select", label, "sc-model-select");
+      expectSnappedLength((await probe(page, "sc-model-select-visual")).height, 24 * zoom);
+      expectSnappedLength((await probe(page, "sc-model-select")).height, 28 * zoom);
+      const modelRow = await probe(page, "settings-model-row");
+      const modelControl = await probe(page, "sc-model-select");
+      const help = await probe(page, "settings-model-help");
+      const contentBottom = Math.max(help.y + help.height, modelControl.y + modelControl.height);
+      expect(modelRow.y + modelRow.height - contentBottom,
+        "short rows must hug content even when their control wraps below the label")
+        .toBeLessThanOrEqual(help.height);
+      await click(page, "sc-model-select");
+      await fullText(`sc-model-${label}`, label, `sc-model-${label}`);
+      await page.keyboard.press("Escape"); await frames(page);
+      expect((await probe(page, "sc-model-select")).focused).toBe(true);
+    }
     for (const count of [0, 1, 20]) {
       const models = Array.from({ length: count }, (_, index) =>
-        `モデル-${index}-long-local-model-name-01234567890123456789`);
+        `モデル-${index}-${"long-local-model-name-0123456789-".repeat(5)}`);
       await host(page, "models", JSON.stringify(models));
       const before = await observed(page);
       const opener = await probe(page, "sc-model-select");
@@ -355,8 +399,8 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
         expect(control.y + control.height).toBeLessThanOrEqual(group.y + group.height - border);
       }
       expect(trigger.y + trigger.height).toBeLessThanOrEqual(modelRow.y + modelRow.height);
-      expect(triggerText.name).toBe(models.at(-1));
-      expect(triggerText.value).toMatch(/(?:…|\.\.\.)$/);
+      await fullText("sc-model-select", models.at(-1)!, "sc-model-select");
+      expect(triggerText.height).toBeGreaterThan(Math.ceil(20 * zoom));
       expect(Math.abs(triggerText.x - trigger.x - 8 * zoom)).toBeLessThanOrEqual(0.5);
       const chevron = await probe(page, "sc-model-select-chevron");
       expectSnappedLength(chevron.width, 18 * zoom);
@@ -381,31 +425,18 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
         expect(item.name).toBe(model);
         expect(item.disabled).toBe(false);
         if (index === 0 || index === models.length - 1) {
-          const leaf = await probe(page, `${item.id}-text`);
-          expect(leaf.name).toBe(model);
-          expect(leaf.value).toMatch(/(?:…|\.\.\.)$/);
-          expect(leaf.x).toBe(item.x);
-          expect(leaf.width).toBe(item.width);
-          expect(leaf.height).toBeLessThanOrEqual(Math.ceil(20 * zoom));
-          const points = [[leaf.x + leaf.width - 1, leaf.y + 1]];
-          for (let y = Math.ceil(leaf.y); y < leaf.y + leaf.height; y++) {
-            for (let x = Math.ceil(leaf.x + leaf.width - 16 * zoom); x < leaf.x + leaf.width; x++) points.push([x, y]);
-          }
-          const paint = await paintedPixels(page, points);
-          expect(paint.colors.slice(1).some(color => color.reduce((sum, value, channel) =>
-            sum + Math.abs(value - paint.colors[0][channel]), 0) > 45),
-          "ellipsis has actual ink at the usable trailing edge").toBe(true);
-          await info.attach(`models-${count}-${index}.png`, { body: paint.png, contentType: "image/png" });
-          await info.attach(`models-${count}-${index}.json`, { body: JSON.stringify({ item, leaf }), contentType: "application/json" });
+          const leaf = await fullText(item.id, model, item.id);
+          expect(leaf.height).toBeGreaterThan(Math.ceil(20 * zoom));
+          const menu = await probe(page, "settings-popup-menu");
+          expect(item.x).toBeGreaterThanOrEqual(menu.x);
+          expect(item.x + item.width).toBeLessThanOrEqual(menu.x + menu.width);
+          expect(menu.x).toBeGreaterThanOrEqual(0);
+          expect(menu.x + menu.width).toBeLessThanOrEqual(715);
+          await info.attach(`models-${count}-${index}.json`, { body: JSON.stringify({ item, leaf, menu }), contentType: "application/json" });
           if (count === 20 && index === count - 1) {
-            await page.mouse.move(2, 2); await frames(page);
-            const point = { x: item.x + item.width / 2, y: item.y + item.height / 2 };
-            await page.mouse.move(point.x, point.y);
-            // Actual GPUI hover delay; the resulting full-name tooltip image
-            // is visually reviewed, not inferred from the item's AX label.
+            await page.mouse.move(item.x + item.width / 2, item.y + item.height / 2);
             await page.waitForTimeout(1000); await frames(page);
-            await info.attach("model-full-name-tooltip.png", { body: await page.screenshot(), contentType: "image/png" });
-            await info.attach("model-tooltip-target.json", { body: JSON.stringify({ item, point, expectedFullName: model }), contentType: "application/json" });
+            await info.attach("model-hover-no-name-tooltip.png", { body: await page.screenshot(), contentType: "image/png" });
           }
         }
       }
@@ -429,7 +460,10 @@ test("catalog replacements preserve live theme focus and repair removed choices"
   const id = `settings-theme-${slug}`;
   await host(page, "custom-theme-name", name);
   await click(page, "settings-theme-apple-light");
-  const catalog = (await observed(page)).themeCatalog.filter(theme => !theme.dark);
+  const state = await observed(page);
+  const catalog = state.themeCatalog.filter(theme => !theme.dark).sort((a, b) =>
+    state.controls.find(control => control.id === `settings-theme-${a.slug}`)!.x -
+    state.controls.find(control => control.id === `settings-theme-${b.slug}`)!.x);
   await page.keyboard.press("Home"); await frames(page);
   for (let index = 0; index < catalog.findIndex(theme => theme.slug === slug); index++) {
     await page.keyboard.press("ArrowRight"); await frames(page);

@@ -8,8 +8,9 @@ use kagi_ui_core::tooltip::HoverTooltip as _;
 
 impl SettingsView {
     pub(crate) fn theme_cards(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        // Stable partition: keyboard order is the same as visual order.
-        let themes: Vec<_> = [false, true]
+        // Align paired families across both strips without changing registry indices.
+        // Stable sorting leaves standalone and user themes in their catalog order.
+        let mut themes: Vec<_> = [false, true]
             .into_iter()
             .flat_map(|dark| {
                 self.snapshot
@@ -19,6 +20,16 @@ impl SettingsView {
                     .cloned()
             })
             .collect();
+        themes.sort_by_key(|palette| {
+            let family = match palette.slug.as_ref() {
+                "apple-light" | "apple-dark" => 0,
+                "catppuccin-latte" | "catppuccin" => 1,
+                "nagi-light" | "nagi-dark" => 2,
+                "one-light" | "one-dark" => 3,
+                _ => 4,
+            };
+            (palette.dark, family)
+        });
         let ids: Vec<_> = themes
             .iter()
             .map(|theme| format!("settings-theme-{}", theme.slug))
@@ -311,7 +322,6 @@ impl SettingsView {
                     .child(
                         div()
                             .relative()
-                            // Stretch the styled leaf so ellipsis is genuinely painted.
                             .flex()
                             .flex_col()
                             .w_full()
@@ -324,7 +334,6 @@ impl SettingsView {
                                 ink::secondary()
                             })
                             .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
-                            .truncate()
                             .children(caption_probe)
                             .child(caption_text)
                             .children(caption_text_probe),
@@ -334,10 +343,7 @@ impl SettingsView {
                         .w(pt(metrics::THEME_CARD_WIDTH) + px(metrics::FOCUS_REVEAL_MARGIN * 2.))
                         .flex_shrink_0()
                         .p(px(metrics::FOCUS_REVEAL_MARGIN))
-                        .child(card.hover_tooltip(
-                            SharedString::from(format!("settings-theme-name-{}", palette.slug)),
-                            name,
-                        )),
+                        .child(card),
                 );
             }
             let viewport = self.theme_viewport[mode].clone();

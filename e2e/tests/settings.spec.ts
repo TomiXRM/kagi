@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { observed, frames, host, boot, probe, reveal, click, pane, paintedPixels, luminance, panes, themeStrip, expectSnappedLength, type Probe } from "./settings-helpers";
+import { observed, frames, host, boot, probe, reveal, click, pane, paintedPixels, luminance, panes, themeStrip, themeDisplayOrder, expectSnappedLength, type Probe } from "./settings-helpers";
 
 async function replaceDraft(page: Page, text: string) {
   await click(page, "settings-analyze-input");
@@ -278,7 +278,7 @@ async function captionInk(page: Page, caption: Probe) {
   }, png.toString("base64"));
 }
 
-test("short theme captions paint names and long names paint constrained ellipses", async ({ page }) => {
+test("short and long theme captions paint complete names within their cards", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 740 });
   await boot(page);
   const longName = "A deliberately long valid custom theme — 日本語の完全なテーマ名 for caption overflow";
@@ -301,15 +301,14 @@ test("short theme captions paint names and long names paint constrained ellipses
       expect(card.name).toBe(longName);
       const leaf = await probe(page, `settings-theme-caption-text-${slug}`);
       // value comes from the painted StyledText's actual TextLayout, not its input.
-      expect(leaf.value).toMatch(/.+…$/);
-      expect(card.name).not.toBe(leaf.value);
+      expect(leaf.value).toBe(longName);
+      expect(leaf.height).toBeGreaterThan(24);
       expect(leaf.x).toBeGreaterThanOrEqual(caption.x);
       expect(leaf.x + leaf.width).toBeLessThanOrEqual(caption.x + caption.width + 1);
       const ink = await captionInk(page, caption);
       expect(ink.width).toBeGreaterThan(35);
-      // The actual ellipsis suffix paints baseline dots, not a clipped tall letter.
-      expect(ink.suffixUpper).toBe(0);
-      expect(ink.suffixLower).toBeGreaterThanOrEqual(3);
+      expect(leaf.y + leaf.height).toBeLessThanOrEqual(caption.y + caption.height + 1);
+      expect(caption.y + caption.height).toBeLessThanOrEqual(card.y + card.height + 1);
     }
   }
 });
@@ -598,7 +597,7 @@ for (const [language, appearance, zoom] of [
     await host(page, "close");
     await host(page, "reopen");
     const initial = await observed(page);
-    const catalog = [false, true].flatMap(dark => initial.themeCatalog.filter(theme => theme.dark === dark));
+    const catalog = themeDisplayOrder(initial.themeCatalog);
     const actualCards = initial.controls.filter(control => control.role === "RadioButton" && control.id.startsWith("settings-theme-"));
     expect(actualCards.map(card => card.id).sort()).toEqual(catalog.map(theme => `settings-theme-${theme.slug}`).sort());
     expect(new Set(catalog.map(theme => theme.slug)).size).toBe(initial.themeCount);
@@ -770,3 +769,41 @@ for (const [language, appearance, zoom] of [
     await info.attach("appearance-lower.png", { body: await page.screenshot(), contentType: "image/png" });
   });
 }
+
+test("actual theme catalog paints paired families first and keyboard follows real X order", async ({ page }, info) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 900, height: 760 }); await boot(page);
+  // Fixed consumer identities from the requested four pairs, not a computed
+  // sort key. Each entry must really exist in the catalog and rendered tree.
+  const pairs = [
+    ["apple-light", "catppuccin-latte", "nagi-light", "one-light"],
+    ["apple-dark", "catppuccin", "nagi-dark", "one-dark"],
+  ];
+  const names = [
+    ["Apple Light", "Catppuccin Latte", "Nagi Light", "One Light"],
+    ["Apple Dark", "Catppuccin Mocha", "Nagi Dark", "One Dark"],
+  ];
+  for (const appearance of ["apple-light", "apple-dark"]) {
+    await host(page, "appearance", appearance);
+    const state = await observed(page);
+    const visual = [false, true].flatMap((dark, mode) => {
+      const catalog = state.themeCatalog.filter(theme => theme.dark === dark);
+      const cards = state.controls.filter(c => c.role === "RadioButton" && catalog.some(t => c.id === `settings-theme-${t.slug}`))
+        .sort((a, b) => a.x - b.x);
+      expect(cards.slice(0, 4).map(card => card.id)).toEqual(pairs[mode].map(slug => `settings-theme-${slug}`));
+      expect(cards.slice(0, 4).map(card => card.name)).toEqual(names[mode]);
+      expect(cards.slice(4).map(card => card.id)).toEqual(catalog.filter(t => !pairs[mode].includes(t.slug)).map(t => `settings-theme-${t.slug}`));
+      for (let index = 1; index < cards.length; index++) expect(cards[index].x).toBeGreaterThan(cards[index - 1].x + cards[index - 1].width);
+      return cards;
+    });
+    await click(page, "settings-theme-apple-light"); await page.keyboard.press("Home"); await frames(page);
+    const before = await observed(page);
+    for (const [index, card] of visual.entries()) {
+      expect((await probe(page, card.id)).focused, `keyboard slot${index} follows painted X order`).toBe(true);
+      expect((await observed(page)).theme).toBe(before.theme);
+      if (index < visual.length - 1) { await page.keyboard.press("ArrowRight"); await frames(page); }
+    }
+    await info.attach(`${appearance}-actual-order.json`, { body: JSON.stringify({ catalog: state.themeCatalog, visual }), contentType: "application/json" });
+    await info.attach(`${appearance}-actual-order.png`, { body: await page.screenshot(), contentType: "image/png" });
+  }
+});

@@ -10,9 +10,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Rebuild Settings as eight stable sidebar panes: Appearance, Graph, Editor, Terminal, Network & Sync, Smart Commit, Analyze and General. Retain every existing preference and native effect; use fixed category tiles, palette-driven theme cards, separate keyboard focus/selection/ON states, and wrapping EN/JA controls. Use the canonical fixed 900×760-point native window, with traffic lights in the sidebar inset and no Kagi-drawn title band; retain Analyze drafts across pane changes and reopening. (#1814, #1816, #1818)
   - Preserve selected sidebar rows and ON controls while hovered. Settings segments use raised white/light-gray selection in Apple Light/Dark, with a 24-point visible track and 20-point pill inside at least a 28-point hit target; long labels can grow rather than clip.
   - Keep keyboard focus separate from selection and ON state with a translucent, background-adjusted ring that maintains at least 3:1 composited contrast, including pale system accents.
-  - Browse themes in separate Light Mode and Dark Mode horizontal strips, classified by the actual palette metadata, with one global selection and keyboard order. Reveal selected/focused cards without undoing either strip's manual browsing; retain complete rings, long-name ellipses and independent vertical form scrolling. Keep the native frame fixed across panes and zoom, bounded only by the visible screen.
+  - Browse themes in separate Light Mode and Dark Mode horizontal strips, classified by the actual palette metadata, with one global selection and keyboard order. Reveal selected/focused cards without undoing either strip's manual browsing; retain complete rings, full wrapped captions and independent vertical form scrolling. Keep the native frame fixed across panes and zoom, bounded only by the visible screen.
   - Preserve PR #1814's canonical component craft: grouped Light/Dark theme choosers, then Accent/Layout/Motion/Custom themes, card hairlines, title/body/secondary hierarchy, label-sized segments, capsule and stepper geometry, neutral OFF switches with white knobs, fixed-hue tile gradients and 132-point data-driven theme previews. Provider/model choices use real keyboard-operable menus; focus and disabled state remain separate from selection.
-  - Keep long popup values and wrapped Japanese segment/status text inside their actual controls and groups, with visible ellipses, full-name hover help and right-aligned wrapped action clusters.
+  - Keep complete popup values and wrapped Japanese segment/status text inside their actual controls and groups, without duplicate full-name hover help, and retain right-aligned wrapped action clusters.
   - Translate the Analyze ignore placeholder and its save/reset feedback into production Japanese, while retaining the canonical English captions and ADR-0048 Git terms. Lock the visible heading to the locale rule rather than the old untranslated gallery output.
   - Give the shared multiline Settings editor the canonical inset-control fill and seven-point radius in both appearances, retaining real editing and a separate contrast-adjusted focus ring instead of the generic Input field appearance.
 
@@ -21,6 +21,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Share the actual Settings renderer and typed input events between native Settings and the deterministic WASM verification host. Native storage/discovery stays outside the portable API; existing persistence remains authoritative. Browser coverage drives production controls, delayed/error Analyze outcomes, all panes, EN/JA, light/dark, resize and 167% zoom rather than a copied gallery. (#1816)
 
 ### Fixed
+
+- Settings no longer repeats visible help and ordinary names in hover tooltips.
+  Provider/model values use their actual text width and wrap long names; paired
+  Light/Dark themes share family order, and Monokai has a concise display name.
+- Settings の補足説明を短文へ差し替えず、既存の全文を行内へ折り返して常設表示する。Ollama の localhost、OS の Reduce Motion 連携、terminal lock の対象・例外を hover なしで読めるようにする。
+
 
 - Restore one bottom-left notification stack in the owning surface's centre content, including Conflict Mode and Settings' content pane. Persistent, transient and busy feedback share the same bounded anchor without shifting content or covering the sidebar, Inspector, toolbar or status bar. Remove conflict-footer routing while preserving typed notification ownership, audience-scoped Escape, actions, lifetimes and Operation Log detail. (Owner ruling, #1590 restored 2026-10-27.)
   - Keep busy cards from shrinking their Skip/Hide controls when durable notifications are expanded; bound caption/advice paint while retaining full text in accessibility names and hover help.

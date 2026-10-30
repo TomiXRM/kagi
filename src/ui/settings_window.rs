@@ -129,8 +129,7 @@ fn window_options(cx: &App) -> WindowOptions {
         is_minimizable: true,
         #[cfg(feature = "gui-e2e")]
         show: std::env::var_os("KAGI_GUI_E2E").is_none(),
-        #[cfg(feature = "gui-e2e")]
-        focus: std::env::var_os("KAGI_GUI_E2E").is_none(),
+        focus: should_activate(),
         ..Default::default()
     }
 }
@@ -436,15 +435,21 @@ fn remember_geometry(window: &Window, cx: &App) {
     });
 }
 
-fn raise(window: &mut Window) {
-    // Native E2E windows stay hidden and never take the user's foreground.
-    // OS ordering/activation is exercised by the PID-isolated Tier B controller.
+fn should_activate() -> bool {
+    // Apply the existing isolated-launch contract to secondary windows too.
     #[cfg(feature = "gui-e2e")]
     if std::env::var_os("KAGI_GUI_E2E").is_some() {
-        window.refresh();
-        return;
+        return false;
     }
-    window.activate_window();
+    std::env::var_os("KAGI_NO_ACTIVATE").as_deref() != Some(std::ffi::OsStr::new("1"))
+}
+
+fn raise(window: &mut Window) {
+    if should_activate() {
+        window.activate_window();
+    } else {
+        window.refresh();
+    }
 }
 
 fn close(window: &mut Window, cx: &App) {

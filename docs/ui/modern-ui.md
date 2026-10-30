@@ -215,11 +215,16 @@ Do not import unused experiment controls just to reproduce its module surface.
 | Used role | Production owner | Contract carried forward |
 | --- | --- | --- |
 | Metrics and ink | `kit_style.rs` | 15/13/11.5-point hierarchy; theme-derived surfaces, neutral OFF/control fills and distinct hover/pressed fills. No global theme loosening or per-pane restyling. |
-| Sidebar and sections | `sidebar.rs`, `controls.rs`, `model.rs` | One selected destination, matching page title, fixed category `Hue` table and one 20-point sidebar tile; 212-point inset panel, 40-point top padding, 32-point rows and 2-point gap. Selection uses the kit's neutral `segment_selected_bg()`. |
+| Sidebar and sections | `sidebar.rs`, `controls.rs`, `model.rs` | One selected destination, matching page title, fixed category `Hue` table and one 20-point sidebar tile; 212-point inset panel, 40-point top padding, 32-point row minima and 2-point gap. Full destination labels wrap when constrained. Selection uses the kit's neutral `segment_selected_bg()`. |
 | Groups and rows | `controls.rs` | One card per related group, with 12-point horizontal padding, a 1px border only in Light and no reserved border in Dark. In-flow 1px separators make card height equal the sum of actual row heights plus separators and Light's two border pixels; content width equals card width minus padding and actual borders. 40/52-point row minima may grow for real text. No nested cards. |
 | Switch, segments, capsules, stepper | `control_parts.rs` | Role-specific geometry, not one generic div look: 28×16 switch/12-point knob, 24-point normal visible controls and ≥28-point hits. Label-derived equal segments stay in one rail; long labels may wrap and grow. |
-| Provider/model popup | `popups.rs`, pinned `PopupMenu` | Canonical `popup_value`: unfilled rest trigger and 18-point filled chevron box. Real named radio menu roots, checked/disabled state and eligible keyboard navigation. Long/open catalogs are menus, not growing segmented rails. |
-| Theme choice | `theme_cards.rs` | Canonical 132×84-point previews with palette-driven content, accent badge/cursor/eight ANSI swatches, one-line caption with real ellipsis and full name. Two peer Light/Dark sections each contain one group card around their independent strip; `Theme.dark` classification and one global selection. Accent has its own titled section. |
+| Provider/model popup | `popups.rs`, pinned `PopupMenu` | Canonical `popup_value`: unfilled rest trigger and 18-point filled chevron box. Real named radio menu roots, checked/disabled state and eligible keyboard navigation. Actual shaped value width, bounded wrapping for long values; 24/28-point minima for ordinary names. Long/open catalogs are menus, not growing segmented rails. |
+| Theme choice | `theme_cards.rs` | Canonical 132×84-point previews with palette-driven content, accent badge/cursor/eight ANSI swatches, full caption wrapping within the fixed card width, without a name tooltip substitute. Paired Apple/Catppuccin/Nagi/One families lead both appearances in matching visual/keyboard order; others retain stable source order. Two peer Light/Dark sections each contain one group card around their independent strip; `Theme.dark` classification and one global selection. Accent has its own titled section. |
+
+Settings の補足説明は、各行へ渡された完全な EN/JA Description を既存の説明欄に常設する
+（オーナー決定、2026-10-30）。長文は行・group 内で折り返し、必要な条件や例外を
+Summary、横一列の hover、AX だけへ退避しない。通常の文字サイズ・control 寸法は維持し、
+本当に複数行になる説明だけ自然に行高を増やす。
 
 Preserve every applicable role state, not only its rest screenshot:
 

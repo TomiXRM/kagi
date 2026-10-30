@@ -253,3 +253,26 @@ Metal images do not contain the OS-drawn lights. Composition evidence lives in
 canonical/native sheets. Bounds relations are asserted on the native owner,
 not on copied implementation constants.
 
+
+## Amendment — 2026-10-30: Settings text and paired ordering (#1821–#1823)
+
+Visible form help and AX descriptions retain their existing text. Redundant
+row, Analyze-help, sidebar and complete-name hover copies are removed. Theme
+contrast warnings remain. The owner clarifies that #1822's full-name requirement
+also covers theme captions and sidebar destinations: they wrap visibly within
+their actual owner, superseding the earlier one-line caption/ellipsis wording.
+Preview132x84, fixed window geometry and short-name density remain unchanged.
+Provider/model values use font-shaped preferred widths, bounded by their row,
+and wrap within an expanding trigger/menu item rather than eliding. Short
+values keep the canonical 24-point visual / 28-point hit minima and trailing
+18-point chevron; long values grow their row and enclosing group naturally.
+The Settings-only ordered vector drives both visual and roving keyboard order:
+Apple, Catppuccin, Nagi, One first in each appearance, then the remaining
+catalog in stable source order. Registry/default/persisted slugs and palettes
+are unchanged. Monokai's display label omits its former explanatory suffix,
+including the command entry; its implementation/provenance remain unchanged.
+
+The existing `KAGI_NO_ACTIVATE=1` isolated-launch option also governs creation
+and raising of this secondary window. Its normal activation behavior remains
+unchanged when the option is absent. This closes a verification-safety gap:
+previously the repository respected the option while Cmd-comma Settings did not.

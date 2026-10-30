@@ -37,6 +37,7 @@ fn assert_rgb(actual: [u8; 4], expected: [u8; 3], relation: &str) {
 }
 
 fn assert_sidebar_paint(
+    scale: f32,
     panel: Bounds<Pixels>,
     probes: &[ControlProbe],
     sample: &impl Fn(Point<Pixels>) -> [u8; 4],
@@ -113,15 +114,68 @@ fn assert_sidebar_paint(
     ] {
         let tile = probe(probes, &format!("settings-pane-tile-{id}")).bounds;
         let base = if dark { dark_rgb } else { light };
-        let expected = [16, 8, 0].map(|shift| {
-            let channel = ((base >> shift) & 255) as f32;
-            (channel + (255. - channel) * 0.11).round() as u8
-        });
-        assert_rgb(
-            sample(Point::new(tile.left() + px(2.), tile.center().y)),
-            expected,
-            "canonical category hue at tile gradient midpoint",
+        let row = probe(probes, &format!("settings-pane-{id}"));
+        let background = if row.selected {
+            if dark {
+                [58, 58, 60]
+            } else {
+                [211, 211, 211]
+            }
+        } else {
+            sidebar
+        };
+        assert_category_gradient(tile, base, background, scale, sample);
+    }
+}
+
+/// Literal canonical hues/22% highlight. Pinned edfc689 shaders.metal::fill_color
+/// adds triangular RGB±2/255 AND alpha±3/255 dither before SourceAlpha blending
+/// (metal_renderer.rs:1621–1624). The old RGB±2 midpoint rule omitted that blend
+/// and the sampled physical pixel's phase. Solid-color assert_rgb stays intact.
+fn assert_category_gradient(
+    tile: Bounds<Pixels>,
+    base: u32,
+    background: [u8; 3],
+    scale: f32,
+    sample: &impl Fn(Point<Pixels>) -> [u8; 4],
+) {
+    for fraction in [0.25, 0.5, 0.75] {
+        let point = Point::new(
+            tile.left() + px(2.),
+            tile.top() + tile.size.height * fraction,
         );
+        let physical_y = (f32::from(point.y) * scale).floor() + 0.5;
+        let t =
+            (physical_y - f32::from(tile.top()) * scale) / (f32::from(tile.size.height) * scale);
+        let actual = sample(point);
+        for (channel, shift) in [16, 8, 0].into_iter().enumerate() {
+            let bottom = ((base >> shift) & 255) as f32;
+            let top = (bottom + (255. - bottom) * 0.22).round();
+            let ideal = top * (1. - t) + bottom * t;
+            let blend = |noise: f32, normalized: bool| {
+                let rgb = ideal + noise * 2.;
+                let alpha = 1. + noise * 3. / 255.;
+                // Both pre-clamp and normalized source bounds are included;
+                // the envelope comes only from shader limits, not captured bytes
+                // or CPU/GPU sin precision. Output is UNORM8.
+                let (rgb, alpha) = if normalized {
+                    (rgb.clamp(0., 255.), alpha.clamp(0., 1.))
+                } else {
+                    (rgb, alpha)
+                };
+                (rgb * alpha + f32::from(background[channel]) * (1. - alpha)).clamp(0., 255.)
+            };
+            let values = [
+                blend(-1., false),
+                blend(1., false),
+                blend(-1., true),
+                blend(1., true),
+            ];
+            let low = values.into_iter().fold(f32::INFINITY, f32::min).floor() as u8;
+            let high = values.into_iter().fold(f32::NEG_INFINITY, f32::max).ceil() as u8;
+            assert!((low..=high).contains(&actual[channel]),
+                "canonical category gradient channel{channel} at{fraction}: {actual:?}, physical t={t}, shader envelope{low}..={high}");
+        }
     }
 }
 
@@ -438,7 +492,7 @@ pub fn assert_composition(
             "canonical neutral selection: {pixel:?}"
         );
     }
-    assert_sidebar_paint(panel, &probes, &sample);
+    assert_sidebar_paint(window.scale_factor(), panel, &probes, &sample);
     assert_eq!(traffic_lights.len(), 3);
     for &[x, y, width, height] in traffic_lights {
         let light = Bounds::new(

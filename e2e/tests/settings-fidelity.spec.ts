@@ -1,8 +1,28 @@
-import { test, expect } from "@playwright/test";
-import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, luminance, expectSnappedLength, type Probe } from "./settings-helpers";
+import { test, expect, type Page } from "@playwright/test";
+import { boot, host, pane, panes, probe, reveal, click, frames, observed, paintedPixels, luminance, expectSnappedLength, themeDisplayOrder, type Probe } from "./settings-helpers";
 import canonicalText from "../../tests/recovery/settings_text.json";
 
 test.use({ deviceScaleFactor: 1 });
+
+async function settleScrollbarsBeforeHover(page: Page) {
+  // Pinned scrollbar.rs fades from 2s to 3s after scrolling. Settle outside
+  // the target so a real tooltip still appears only inside the observed delay.
+  await page.mouse.move(2, 2);
+  await page.waitForTimeout(3100);
+  await frames(page);
+}
+
+function expectRowDensity(row: Probe, helpText: Probe, trigger: Probe, zoom: number) {
+  const contentEnd = Math.max(helpText.y + helpText.height, trigger.y + trigger.height);
+  const trailingSpace = row.y + row.height - contentEnd;
+  // Canonical row:7pt vertical padding,52pt two-line minimum. A short
+  // child may be centred in minimum-height slack. Wrapped labels/stacked
+  // controls grow naturally; there is no upper bound on the row's height.
+  const minimumSlack = Math.max(0, 52 * zoom - Math.max(helpText.height, trigger.height));
+  expect(trailingSpace, "actual content ends near the owning row's padded bottom").toBeGreaterThanOrEqual(Math.floor(7 * zoom));
+  expect(trailingSpace, "minimum-height slack cannot become a large empty tail").toBeLessThanOrEqual(Math.ceil(Math.max(7 * zoom, minimumSlack / 2)));
+}
+
 
 for (const appearance of ["apple-light", "apple-dark"]) {
   for (const language of ["en", "ja"]) {
@@ -211,7 +231,12 @@ for (const [language, appearance] of [["en", "apple-light"], ["ja", "apple-dark"
       const item = await probe(page, `settings-pane-${destination}`);
       expect(item.focused).toBe(true);
       expect(item.name.length).toBeGreaterThan(0);
-      expectSnappedLength(item.height, 64);
+      const label = await probe(page, `${item.id}-label-text`);
+      expect(label.value).toBe(item.name);
+      // Full translated names may wrap at200%. Preserve the32pt minimum
+      // and4pt top/bottom padding around the actual leaf; never crop to64px.
+      expectSnappedLength(item.height, Math.max(64, label.height + 16));
+      contains(item, label);
       contains(viewport, item);
       // A pointer click focuses the row without a ring, as in macOS sidebars;
       // keyboard navigation from it shows the ring.
@@ -283,12 +308,18 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(true);
     const trigger = await probe(page, "sc-provider-select");
     const menu = await probe(page, "settings-popup-menu");
-    // A below-trigger popup can overlap the trigger's centre at JA/167%.
-    // Click its actual exposed top band, not the menu's padding.
-    const point = { x: trigger.x + trigger.width / 2, y: (trigger.y + Math.min(trigger.y + trigger.height, menu.y)) / 2 };
+    // Wrapped descriptions can make the menu open above or below the trigger.
+    // Reclick an actually exposed band, never the menu's overlapping padding.
+    const topBandEnd = Math.min(trigger.y + trigger.height, menu.y);
+    const bottomBandStart = Math.max(trigger.y, menu.y + menu.height);
+    const band = topBandEnd > trigger.y
+      ? [trigger.y, topBandEnd]
+      : [bottomBandStart, trigger.y + trigger.height];
+    expect(band[1]).toBeGreaterThan(band[0]);
+    const point = { x: trigger.x + trigger.width / 2, y: (band[0] + band[1]) / 2 };
     expect(point.y).toBeGreaterThan(trigger.y);
     expect(point.y).toBeLessThan(trigger.y + trigger.height);
-    expect(point.y).toBeLessThan(menu.y);
+    expect(point.y < menu.y || point.y > menu.y + menu.height).toBe(true);
     await info.attach("popup-reclick-hit.json", { body: JSON.stringify({ trigger, menu, point }), contentType: "application/json" });
     await page.mouse.click(point.x, point.y); await frames(page);
     expect((await observed(page)).controls.some(control => control.id === "settings-popup-menu")).toBe(false);
@@ -345,6 +376,8 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       const modelRow = await probe(page, "settings-model-row");
       const trigger = await probe(page, "sc-model-select");
       const triggerText = await probe(page, "sc-model-select-text");
+      const helpText = await probe(page, "settings-model-help-text");
+      expectRowDensity(modelRow, helpText, trigger, zoom);
       const border = appearance === "apple-light" ? 1 : 0;
       // A wrapped row must contribute its actual height to its group, not
       // merely keep its control somewhere inside the overall viewport.
@@ -356,7 +389,7 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       }
       expect(trigger.y + trigger.height).toBeLessThanOrEqual(modelRow.y + modelRow.height);
       expect(triggerText.name).toBe(models.at(-1));
-      expect(triggerText.value).toMatch(/(?:…|\.\.\.)$/);
+      expect(triggerText.value).toBe(models.at(-1));
       expect(Math.abs(triggerText.x - trigger.x - 8 * zoom)).toBeLessThanOrEqual(0.5);
       const chevron = await probe(page, "sc-model-select-chevron");
       expectSnappedLength(chevron.width, 18 * zoom);
@@ -364,7 +397,7 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
       expect(Math.abs(chevron.x - triggerText.x - triggerText.width - 8 * zoom)).toBeLessThanOrEqual(0.5);
       expect(Math.abs(trigger.x + trigger.width - chevron.x - chevron.width - 3 * zoom)).toBeLessThanOrEqual(0.5);
       await info.attach(`long-model-row-${count}.png`, { body: await page.screenshot(), contentType: "image/png" });
-      await info.attach(`long-model-row-${count}.json`, { body: JSON.stringify({ group, modelRow, trigger, triggerText }), contentType: "application/json" });
+      await info.attach(`long-model-row-${count}.json`, { body: JSON.stringify({ group, modelRow, trigger, triggerText, helpText }), contentType: "application/json" });
       await click(page, "sc-model-select");
       const openGroup = await probe(page, "settings-smart-group");
       const openTrigger = await probe(page, "sc-model-select");
@@ -383,28 +416,30 @@ for (const [language, appearance, zoom] of [["en", "apple-light", 1], ["ja", "ap
         if (index === 0 || index === models.length - 1) {
           const leaf = await probe(page, `${item.id}-text`);
           expect(leaf.name).toBe(model);
-          expect(leaf.value).toMatch(/(?:…|\.\.\.)$/);
+          expect(leaf.value).toBe(model);
           expect(leaf.x).toBe(item.x);
           expect(leaf.width).toBe(item.width);
-          expect(leaf.height).toBeLessThanOrEqual(Math.ceil(20 * zoom));
-          const points = [[leaf.x + leaf.width - 1, leaf.y + 1]];
-          for (let y = Math.ceil(leaf.y); y < leaf.y + leaf.height; y++) {
-            for (let x = Math.ceil(leaf.x + leaf.width - 16 * zoom); x < leaf.x + leaf.width; x++) points.push([x, y]);
+          expect(leaf.height).toBeGreaterThan(Math.floor(20 * zoom));
+          expect(leaf.y).toBeGreaterThanOrEqual(item.y);
+          expect(leaf.y + leaf.height).toBeLessThanOrEqual(item.y + item.height);
+          const points = [[leaf.x + 1, leaf.y + 1]];
+          // The final line must paint real glyphs, not just echo the AX name.
+          for (let y = Math.ceil(leaf.y + leaf.height - 20 * zoom); y < leaf.y + leaf.height; y++) {
+            for (let x = Math.ceil(leaf.x); x < leaf.x + leaf.width; x++) points.push([x, y]);
           }
           const paint = await paintedPixels(page, points);
           expect(paint.colors.slice(1).some(color => color.reduce((sum, value, channel) =>
             sum + Math.abs(value - paint.colors[0][channel]), 0) > 45),
-          "ellipsis has actual ink at the usable trailing edge").toBe(true);
+          "wrapped final line has actual ink inside its owner").toBe(true);
           await info.attach(`models-${count}-${index}.png`, { body: paint.png, contentType: "image/png" });
           await info.attach(`models-${count}-${index}.json`, { body: JSON.stringify({ item, leaf }), contentType: "application/json" });
           if (count === 20 && index === count - 1) {
             await page.mouse.move(2, 2); await frames(page);
             const point = { x: item.x + item.width / 2, y: item.y + item.height / 2 };
             await page.mouse.move(point.x, point.y);
-            // Actual GPUI hover delay; the resulting full-name tooltip image
-            // is visually reviewed, not inferred from the item's AX label.
+            // The complete name is already painted; hovering adds no duplicate.
             await page.waitForTimeout(1000); await frames(page);
-            await info.attach("model-full-name-tooltip.png", { body: await page.screenshot(), contentType: "image/png" });
+            await info.attach("model-no-duplicate-tooltip.png", { body: await page.screenshot(), contentType: "image/png" });
             await info.attach("model-tooltip-target.json", { body: JSON.stringify({ item, point, expectedFullName: model }), contentType: "application/json" });
           }
         }
@@ -429,7 +464,7 @@ test("catalog replacements preserve live theme focus and repair removed choices"
   const id = `settings-theme-${slug}`;
   await host(page, "custom-theme-name", name);
   await click(page, "settings-theme-apple-light");
-  const catalog = (await observed(page)).themeCatalog.filter(theme => !theme.dark);
+  const catalog = themeDisplayOrder((await observed(page)).themeCatalog).filter(theme => !theme.dark);
   await page.keyboard.press("Home"); await frames(page);
   for (let index = 0; index < catalog.findIndex(theme => theme.slug === slug); index++) {
     await page.keyboard.press("ArrowRight"); await frames(page);
@@ -643,4 +678,128 @@ for (const appearance of ["apple-light", "apple-dark"]) {
       });
     }
   }
+}
+
+for (const language of ["en", "ja"]) for (const appearance of ["apple-light", "apple-dark"]) for (const zoom of [1, 1.67]) {
+  test(`complete popup values and quiet help: ${language} ${appearance} ${zoom}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 640, height: 640 });
+    await boot(page);
+    await host(page, "language", language);
+    await host(page, "appearance", appearance);
+    await host(page, "zoom", String(zoom));
+    await host(page, "available-providers", JSON.stringify(["ollama", "claude-code", "codex"]));
+    await pane(page, "smart_commit");
+    await click(page, "sc-provider-select");
+    await click(page, "sc-provider-claude-code");
+    const provider = await probe(page, "sc-provider-select-text");
+    expect(provider.value).toBe("Claude Code");
+    // Trigger inherits the body's ~21pt single-line layout, whereas menu
+    // items explicitly use20pt. Assert the independent canonical visual/hit.
+    expect(provider.height).toBeLessThanOrEqual(Math.ceil(24 * zoom));
+    expectSnappedLength((await probe(page, "sc-provider-select-visual")).height, 24 * zoom);
+    expectSnappedLength((await probe(page, "sc-provider-select")).height, 28 * zoom);
+    const shortRow = await probe(page, "settings-provider-row");
+    const shortTrigger = await probe(page, "sc-provider-select");
+    const providerHelp = await probe(page, "settings-provider-help-text");
+    expectRowDensity(shortRow, providerHelp, shortTrigger, zoom);
+    await info.attach("ordinary-provider.png", { body: await page.screenshot(), contentType: "image/png" });
+    await info.attach("ordinary-provider.json", { body: JSON.stringify({ row: shortRow, trigger: shortTrigger, leaf: provider, helpText: providerHelp }), contentType: "application/json" });
+    expect(shortTrigger.y).toBeGreaterThanOrEqual(shortRow.y);
+    expect(shortTrigger.y + shortTrigger.height).toBeLessThanOrEqual(shortRow.y + shortRow.height);
+    await click(page, "sc-provider-select");
+    await click(page, "sc-provider-ollama");
+    expect((await probe(page, "sc-provider-select-text")).value).toBe("Ollama");
+    expectSnappedLength((await probe(page, "sc-provider-select-visual")).height, 24 * zoom);
+    expectSnappedLength((await probe(page, "sc-provider-select")).height, 28 * zoom);
+    for (const model of ["gemma4:latest", "モデル名-with-a-very-long-local-model-name-01234567890123456789:latest"]) {
+      await host(page, "models", JSON.stringify([model]));
+      await click(page, "sc-model-select");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter"); await frames(page);
+      const trigger = await reveal(page, "sc-model-select");
+      const leaf = await probe(page, "sc-model-select-text");
+      const row = await probe(page, "settings-model-row");
+      const group = await probe(page, "settings-smart-group");
+      const helpText = await probe(page, "settings-model-help-text");
+      expectRowDensity(row, helpText, trigger, zoom);
+      expect(leaf.value).toBe(model);
+      for (const [child, owner] of [[leaf, trigger], [trigger, row], [row, group]]) {
+        expect(child.x).toBeGreaterThanOrEqual(owner.x);
+        expect(child.y).toBeGreaterThanOrEqual(owner.y);
+        expect(child.x + child.width).toBeLessThanOrEqual(owner.x + owner.width + 1);
+        expect(child.y + child.height).toBeLessThanOrEqual(owner.y + owner.height + 1);
+      }
+      if (model === "gemma4:latest") {
+        expect(leaf.height).toBeLessThanOrEqual(Math.ceil(24 * zoom));
+        expectSnappedLength((await probe(page, "sc-model-select-visual")).height, 24 * zoom);
+        expectSnappedLength(trigger.height, 28 * zoom);
+      }
+      else expect(leaf.height).toBeGreaterThan(Math.floor(24 * zoom));
+      await settleScrollbarsBeforeHover(page);
+      await page.mouse.move(trigger.x + trigger.width / 2, trigger.y + trigger.height / 2);
+      await page.waitForTimeout(150); await frames(page);
+      const beforeHoverDelay = await page.screenshot();
+      await page.waitForTimeout(1100); await frames(page);
+      const afterHoverDelay = await page.screenshot();
+      await info.attach(`${model === "gemma4:latest" ? "ordinary" : "long"}-value-before.png`, { body: beforeHoverDelay, contentType: "image/png" });
+      await info.attach(`${model === "gemma4:latest" ? "ordinary" : "long"}-value.png`, { body: afterHoverDelay, contentType: "image/png" });
+      await info.attach(`${model === "gemma4:latest" ? "ordinary" : "long"}-value.json`, { body: JSON.stringify({ leaf, trigger, row, group, helpText }), contentType: "application/json" });
+      expect(afterHoverDelay.equals(beforeHoverDelay), "no duplicate value tooltip after hover delay").toBe(true);
+    }
+    // Full theme names keep the fixed132x84 preview; the actual caption and
+    // card grow together, including selected semibold and unbroken identifiers.
+    await pane(page, "appearance");
+    const longName = "LongThemeIdentifier012345678901234567890123456789 — 日本語の長いテーマ名称 ending";
+    await host(page, "custom-theme-name", longName);
+    for (const selected of [false, true]) {
+      if (selected) await click(page, "settings-theme-fixture-long-caption");
+      const card = await reveal(page, "settings-theme-fixture-long-caption");
+      const caption = await probe(page, "settings-theme-caption-fixture-long-caption");
+      const leaf = await probe(page, "settings-theme-caption-text-fixture-long-caption");
+      expect(leaf.value).toBe(longName);
+      expect(leaf.height).toBeGreaterThan(24 * zoom);
+      expect(leaf.x).toBeGreaterThanOrEqual(caption.x);
+      expect(leaf.x + leaf.width).toBeLessThanOrEqual(caption.x + caption.width + 1);
+      expect(leaf.y + leaf.height).toBeLessThanOrEqual(caption.y + caption.height + 1);
+      expect(caption.y + caption.height).toBeLessThanOrEqual(card.y + card.height + 1);
+      expectSnappedLength(card.width, 132 * zoom);
+      await info.attach(`complete-theme-${selected}.png`, { body: await page.screenshot(), contentType: "image/png" });
+      await info.attach(`complete-theme-${selected}.json`, { body: JSON.stringify({ card, caption, leaf }), contentType: "application/json" });
+    }
+    await host(page, "appearance", appearance);
+    // Real long translated destination names, plus a narrower boundary that
+    // exercises wrapping without introducing a fixture-only label.
+    for (const width of [640, 480]) {
+      await page.setViewportSize({ width, height: 640 }); await frames(page);
+      for (const destination of panes) {
+        const row = await reveal(page, `settings-pane-${destination}`);
+        const label = await probe(page, `${row.id}-label`);
+        const leaf = await probe(page, `${row.id}-label-text`);
+        expect(leaf.value).toBe(row.name);
+        expect(leaf.x).toBeGreaterThanOrEqual(label.x);
+        expect(leaf.x + leaf.width).toBeLessThanOrEqual(label.x + label.width + 1);
+        expect(leaf.y).toBeGreaterThanOrEqual(row.y);
+        expect(leaf.y + leaf.height).toBeLessThanOrEqual(row.y + row.height + 1);
+        expect(row.height).toBeGreaterThanOrEqual(Math.floor(32 * zoom));
+      }
+      await info.attach(`full-sidebar-${width}.png`, { body: await page.screenshot(), contentType: "image/png" });
+      await info.attach(`full-sidebar-${width}.json`, { body: JSON.stringify(await observed(page)), contentType: "application/json" });
+    }
+    await page.setViewportSize({ width: 640, height: 640 }); await frames(page);
+    await pane(page, "smart_commit");
+    // Help remains visibly laid out; hovering does not add a second copy.
+    const help = await reveal(page, "settings-provider-help");
+    expect(help.value.length).toBeGreaterThan(10);
+    const helpText = await probe(page, "settings-provider-help-text");
+    expect(helpText.value).toBe(help.value);
+    await settleScrollbarsBeforeHover(page);
+    await page.mouse.move(help.x + help.width / 2, help.y + help.height / 2);
+    await page.waitForTimeout(150); await frames(page);
+    const quietHelp = await page.screenshot();
+    await page.waitForTimeout(1100); await frames(page);
+    const delayedHelp = await page.screenshot();
+    await info.attach("visible-help.png", { body: quietHelp, contentType: "image/png" });
+    await info.attach("visible-help-after.png", { body: delayedHelp, contentType: "image/png" });
+    expect(delayedHelp.equals(quietHelp), "no duplicate description tooltip").toBe(true);
+  });
 }

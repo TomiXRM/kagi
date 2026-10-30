@@ -3,7 +3,6 @@ use super::kit_style::{ink, metrics, pt};
 use super::*;
 use gpui_component::ElementExt as _;
 use kagi_ui_core::theme::{self, theme};
-use kagi_ui_core::tooltip::HoverTooltip as _;
 
 #[derive(IntoElement)]
 pub(crate) struct SettingsGroup {
@@ -255,18 +254,6 @@ impl SettingsView {
         control: impl IntoElement,
     ) -> AnyElement {
         let description = description.into();
-        let summary = match title {
-            Msg::SettingsLaneCompact => Some(Msg::SettingsLaneCompactSummary),
-            Msg::SettingsAutoFetch => Some(Msg::SettingsAutoFetchSummary),
-            Msg::SettingsGraphCopy => Some(Msg::SettingsGraphCopySummary),
-            Msg::SettingsReduceMotion => Some(Msg::SettingsReduceMotionSummary),
-            Msg::SettingsTerminalAutoLock => Some(Msg::SettingsTerminalAutoLockSummary),
-            Msg::SettingsSmartEnable => Some(Msg::SettingsSmartEnableSummary),
-            Msg::SettingsSmartProvider => Some(Msg::SettingsSmartProviderSummary),
-            _ => None,
-        };
-        let visible: SharedString =
-            summary.map_or_else(|| description.clone(), |text| text.t().into());
         let id = match title {
             Msg::SettingsLaneCompact => "settings-avatar-help",
             Msg::SettingsAutoFetch => "settings-fetch-help",
@@ -286,7 +273,7 @@ impl SettingsView {
             Msg::SettingsSmartModel => "settings-model-help",
             _ => unreachable!("only Settings row titles are accepted"),
         };
-        let row = div()
+        div()
             .id(SharedString::from(format!(
                 "{}-row",
                 id.trim_end_matches("-help")
@@ -326,12 +313,12 @@ impl SettingsView {
                     .flex_col()
                     .gap(pt(2.))
                     .child(title.t())
-                    .children((!visible.is_empty()).then(|| {
-                        let text = StyledText::new(visible.clone());
+                    .children((!description.is_empty()).then(|| {
+                        let text = StyledText::new(description.clone());
                         #[cfg(feature = "gui-e2e")]
                         let text_probe = Some(self.measured_text(
                             format!("{id}-text"),
-                            visible.to_string(),
+                            description.to_string(),
                             &text,
                         ));
                         #[cfg(not(feature = "gui-e2e"))]
@@ -343,7 +330,7 @@ impl SettingsView {
                             .flex()
                             .flex_col()
                             .role(Role::Label)
-                            .aria_label(visible.clone())
+                            .aria_label(description.clone())
                             .aria_description(description.clone())
                             .text_size(pt(metrics::SECONDARY))
                             .text_color(ink::secondary())
@@ -352,7 +339,7 @@ impl SettingsView {
                                     id.into(),
                                     Role::Label,
                                     title.t().into(),
-                                    visible.to_string(),
+                                    description.to_string(),
                                     false,
                                     false,
                                     false,
@@ -370,13 +357,8 @@ impl SettingsView {
                     .max_w_full()
                     .ml_auto()
                     .child(control),
-            );
-        if summary.is_some() {
-            row.hover_tooltip(SharedString::from(format!("{id}-full")), description)
-                .into_any_element()
-        } else {
-            row.into_any_element()
-        }
+            )
+            .into_any_element()
     }
     pub(super) fn handle(&mut self, id: &str, cx: &mut App) -> FocusHandle {
         self.focus

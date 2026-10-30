@@ -3,7 +3,6 @@ use super::kit_style::{ink, metrics, pt, Hue};
 use super::*;
 use gpui_component::{Icon, IconName, Sizable, Size};
 use kagi_ui_core::theme::{self, theme};
-use kagi_ui_core::tooltip::HoverTooltip as _;
 
 impl SettingsView {
     pub(crate) fn sidebar(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -57,6 +56,15 @@ impl SettingsView {
             };
             let selected = pane == self.pane;
             let hue = hue.rgb(theme().dark);
+            let label_text = StyledText::new(pane.title());
+            #[cfg(feature = "gui-e2e")]
+            let label_text_probe = Some(self.measured_text(
+                format!("{}-label-text", ids[index]),
+                pane.title().into(),
+                &label_text,
+            ));
+            #[cfg(not(feature = "gui-e2e"))]
+            let label_text_probe = None::<AnyElement>;
             let item = self
                 .control(
                     ids[index].clone(),
@@ -119,7 +127,6 @@ impl SettingsView {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .truncate()
                         .font_weight(if selected {
                             FontWeight::SEMIBOLD
                         } else {
@@ -136,7 +143,8 @@ impl SettingsView {
                                 false,
                             ))
                         })
-                        .child(pane.title()),
+                        .child(label_text)
+                        .children(label_text_probe),
                 );
             let item = item.when(focused == Some(index), |item| {
                 let measurements = self.layout_measurements.clone();
@@ -153,10 +161,7 @@ impl SettingsView {
                     .size_full(),
                 )
             });
-            sidebar = sidebar.child(item.hover_tooltip(
-                SharedString::from(format!("settings-pane-name-{}", pane.id())),
-                pane.title(),
-            ));
+            sidebar = sidebar.child(item);
         }
         if let Some(index) = focused {
             sidebar = sidebar.child(self.sidebar_focus_overlay(index));

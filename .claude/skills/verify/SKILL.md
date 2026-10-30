@@ -41,10 +41,13 @@ Theme-caption coverage measures the actual caption allocation and screenshot
 ink span for short names in both Apple themes. Accessible-name or fixture-string
 echoes are insufficient: a caption can have 122px of usable space but paint only
 a 9px ellipsis after an incorrect text-layout cache reuse.
-Long names also require the painted `StyledText` layout's actual ellipsis text
-and leaf bounds to fit the caption, plus visible baseline-dot suffix pixels.
-Do not replace this with the original full label: a correct 138px truncation
-measurement can still be hard-clipped if the final text leaf is allocated 165px.
+Long names require the painted `StyledText` layout's complete value and leaf
+bounds inside the growing caption/card, plus actual final-line ink. Theme
+captions and sidebar labels wrap; no full-name hover substitutes for visible
+content (#1822 owner clarification,2026-10-30). Fixed132x84 previews, ordinary
+32-point sidebar rows and24/28-point popup visual/hits retain their roles;
+only genuine multiline content grows. Compare EN/JA at100%/167%,640px, plus
+480px sidebar boundary using real translated destination labels.
 The canonical chooser has two Light/Dark sections, each enclosing its horizontal
 strip in a group card, one global radio selection and Light-then-Dark keyboard
 order, not a value slider. Cards use the owner-selected132×84 preview geometry.
@@ -78,6 +81,14 @@ not the chrome-free browser host, and writes PNGs plus actual renderer bounds to
 `target/ui-fidelity/settings/`. The native window is fixed900×760pt, reduced only
 to fit the display's visible frame; switching panes never resizes it, and taller
 content scrolls inside the detail. It draws no extra host title band.
+Category-gradient paint uses canonical literal hue endpoints and the pinned
+native renderer's physical-pixel/dither/compositing model, not a fixed RGB
+midpoint tolerance. The pinned Metal shader adds RGB±2/255 and alpha±3/255
+triangular dither before SourceAlpha blend; solid-color checks retain their
+existing tolerance. A one-off test-only diagnostic established this with
+nonselected Gray tiles and independent literal gradient/base/highlight references
+in one native PNG+JSON state. Its scaffold/scenario is not part of the final
+runner; preserve diagnostic failures separately from acquired renderer evidence.
 OS-drawn traffic lights are absent from Metal images; the scenario separately
 records their actual AppKit rectangles in content
 coordinates. Compare those with the measured sidebar panel/top inset; do not
@@ -124,12 +135,32 @@ overflow into another wrapper. Then run affected segment/focus neighbors; do not
 repeat native/workspace gates for each unreviewed visual iteration.
 
 `production popup` cases require closed/open model triggers to remain inside
-their actual row/group, and actual text-layout ellipses plus trailing ink to
-use the menu's available label width in EN/JA. Hover the **current long model
-item** and inspect the full-name tooltip PNG; an earlier unavailable-value
-tooltip or the full AX-name field is not that proof. Actual exposed trigger
-bounds determine the second-click target when the popup overlaps its centre.
-Keep real disabled-first/wrap/confirm and host-reopen-discard assertions.
+their actual row/group, with the complete painted TextLayout value and final-line
+ink inside the expanding trigger/menu item. No duplicate value tooltip appears.
+The `complete popup values and quiet help` cells cover EN/JA × Apple Light/Dark
+×100%/167% at640px: Ollama, Claude Code and gemma4:latest stay single-line;
+native provider coverage also includes migrated111.1% at Retina scale. Preferred
+popup widths budget measured text and each padding/gap/chevron separately in
+device pixels, because rounding their combined width can wrap a short name.
+For normal values and changed catalogs, compare actual help/trigger bottoms with
+the row bottom using the original52pt minimum and7pt padding. Bound empty trailing
+space rather than imposing a fixed row-height ceiling on natural JA/zoom stacks;
+retain actual help TextLayout alongside the same-state PNG+JSON.
+Genuinely long models wrap within text → trigger → row → group. Delayed-hover PNGs compare
+the same state before/after the tooltip deadline; visible descriptions stay.
+hover の比較前にポインタを対象外へ置き、固定revisionのscrollbarの消退を待つ
+（2秒idle→3秒で消退完了）。その後のhover待ち時間と画像一致は維持し、
+不一致でも前後PNG・同状態JSONが残るようassertionより先に保存する。
+The browser adapter's `available-providers` command supplies a deterministic
+availability snapshot only; preference changes still use the real popup input.
+Actual exposed trigger bounds determine the second-click target when the popup
+overlaps its centre. Keep real disabled-first/wrap/confirm and host-reopen-discard
+assertions. Theme traversal expects paired Apple/Catppuccin/Nagi/One families
+first in both appearances, then stable remaining catalog order. The independent
+consumer test asserts actual catalog identities (Mocha's slug is `catppuccin`),
+first-four painted X order and keyboard order; do not copy the product sort key
+into its only oracle. Theme/sidebar names paint in full without name hover;
+the distinct contrast warning remains.
 The existing native `settings_provider_keys` leg also opens its actual popup,
 sends Cmd-W, reopens the retained production view in a new native window and
 requires no stale menu. Reopening and dismissing a fresh menu must restore
@@ -1658,7 +1689,7 @@ For #1200 use `KAGI_GUI_E2E_ONLY=settings` for the complete Settings matrix.
 group/control bounds, full visible explanations, page wheel ownership and a
 stationary sidebar at EN/JA × 100%/167%. Ordinary controls and both Analyze editor
 edges must remain reachable. Help is form content, not a tooltip-only fallback;
-theme-name tooltips supplement one-line truncation. Native and browser probes
+theme/sidebar names wrap visibly without tooltip-only substitutes. Native and browser probes
 are emitted by the same production elements, not root-only legacy renderers.
 
 For #1271/#1272 use `KAGI_GUI_E2E_ONLY=palette_` with KEEP_GOING. The
@@ -4087,7 +4118,15 @@ Build `scripts/pidclick.swift` and, into the same directory, `scripts/pidcursor.
 all three isolation flags. `USER` namespaces the per-user socket name, while
 `KAGI_NO_RESTORE=1` and `KAGI_LOG_DIR` prevent fixture work from changing the
 user's persisted session, settings, trust, or oplog. `KAGI_NO_ACTIVATE=1` avoids
-stealing the foreground application.
+stealing the foreground application, including opening/raising the native Settings
+window. Record the frontmost application before and after the real Cmd-comma path;
+no application activation or tab-strip click is needed.
+After the last `--features gui-e2e` Cargo command, restore the ordinary binary
+with `cargo build --message-format=json-render-diagnostics`: integration tests can
+replace `target/debug/kagi` with the GUI-E2E binary, whose terminal shell fence
+rejects an ordinary launch. Retain the compiler artifact's `features=[]`, source
+and byte hash, and launch a preserved copy so later Cargo commands cannot replace
+it. Record the actual launch binary, not a stale hash of the target path.
 
 #### 通常 binary と倍率の来歴
 

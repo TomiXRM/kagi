@@ -49,6 +49,7 @@ pub(crate) fn bounds(
 fn matrix(
     cx: &mut VisualTestAppContext,
     pane: &str,
+    zooms: &[f32],
     leg: fn(&mut VisualTestAppContext, &Entity<KagiApp>, AnyWindowHandle),
 ) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
@@ -61,7 +62,7 @@ fn matrix(
     let previous = cx.read(|cx| cx.global::<SettingsHostForE2e>().native);
     cx.update(|cx| cx.set_global(SettingsHostForE2e { native: true }));
     for lang in [i18n::Lang::En, i18n::Lang::Ja] {
-        for zoom in [1., 1.67] {
+        for &zoom in zooms {
             for preset in ["apple-light", "apple-dark"] {
                 i18n::set_lang(lang);
                 theme::set_zoom(zoom);
@@ -137,6 +138,24 @@ fn assert_popup_radio_tree(
 fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     crate::native_ax::activate(cx);
     draw(cx, window);
+    // Keep the original long singleton/many-model legs below intact. Normal
+    // values get a separate consumer state, including fractional native zoom.
+    app.update(cx, |app, cx| {
+        app.smart_commit.provider = SmartProvider::Ollama;
+        app.smart_commit.ollama_available = true;
+        app.smart_commit.detecting = false;
+        app.smart_commit.detected_models = vec!["gemma4:latest".into()];
+        app.smart_commit.model = Some("gemma4:latest".into());
+        app.seed_settings(cx);
+    });
+    draw(cx, window);
+    let normal = probe(cx, window, "sc-model-select-text").unwrap();
+    assert_eq!(normal.value, "gemma4:latest");
+    assert!(normal.bounds.size.height <= gpui::px(24. * theme::zoom()).ceil());
+    assert!(
+        bounds(cx, window, "sc-model-select").unwrap().size.height
+            <= gpui::px(28. * theme::zoom()).ceil()
+    );
     for count in [0, 1, 20] {
         app.update(cx, |app, cx| {
             app.smart_commit.provider = SmartProvider::Ollama;
@@ -151,6 +170,17 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             app.seed_settings(cx);
         });
         draw(cx, window);
+        let provider = probe(cx, window, "sc-provider-select-text").unwrap();
+        assert_eq!(provider.value, "Ollama");
+        assert!(provider.bounds.size.height <= gpui::px(24. * theme::zoom()).ceil());
+        assert!(
+            bounds(cx, window, "sc-provider-select")
+                .unwrap()
+                .size
+                .height
+                <= gpui::px(28. * theme::zoom()).ceil(),
+            "short provider stays single-line even at fractional native pixel budgets"
+        );
         let saved_provider = settings::read_setting("smart_commit_provider");
         open_popup(cx, window, false);
         assert_eq!(
@@ -226,6 +256,18 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             settings::read_setting("smart_commit_provider").as_deref(),
             Some("codex")
         );
+        if count > 0 {
+            let provider = probe(cx, window, "sc-provider-select-text").unwrap();
+            assert_eq!(provider.value, "Claude Code");
+            assert!(provider.bounds.size.height <= gpui::px(24. * theme::zoom()).ceil());
+            assert!(
+                bounds(cx, window, "sc-provider-select")
+                    .unwrap()
+                    .size
+                    .height
+                    <= gpui::px(28. * theme::zoom()).ceil()
+            );
+        }
         open_popup(cx, window, false);
         click(cx, window, "sc-provider-ollama");
         if count > 0 {
@@ -238,6 +280,21 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
                 settings::read_setting("smart_commit_model"),
                 cx.read(|cx| app.read(cx).smart_commit.detected_models.last().cloned()),
             );
+            let model = cx
+                .read(|cx| app.read(cx).smart_commit.model.clone())
+                .unwrap();
+            let leaf = probe(cx, window, "sc-model-select-text").unwrap();
+            assert_eq!(
+                leaf.value, model,
+                "the painted trigger retains the full model"
+            );
+            let trigger = probe(cx, window, "sc-model-select").unwrap().bounds;
+            let row = probe(cx, window, "settings-model-row").unwrap().bounds;
+            let group = probe(cx, window, "settings-smart-group").unwrap().bounds;
+            for (child, owner) in [(leaf.bounds, trigger), (trigger, row), (row, group)] {
+                assert!(child.left() >= owner.left() && child.right() <= owner.right());
+                assert!(child.top() >= owner.top() && child.bottom() <= owner.bottom());
+            }
             open_popup(cx, window, true);
             let selected = cx.read(|cx| {
                 app.read(cx)
@@ -265,6 +322,11 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
                 );
                 let option = probe(cx, window, &format!("sc-model-{model}")).unwrap();
                 assert_popup_radio_tree(cx, window, &option);
+                let leaf = probe(cx, window, &format!("sc-model-{model}-text")).unwrap();
+                assert_eq!(leaf.value, model, "actual menu text wraps without eliding");
+                assert!(leaf.bounds.left() >= option.bounds.left());
+                assert!(leaf.bounds.right() <= option.bounds.right());
+                assert!(leaf.bounds.bottom() <= option.bounds.bottom());
             }
             let selected_model = cx
                 .read(|cx| app.read(cx).smart_commit.model.clone())
@@ -421,8 +483,10 @@ fn popup_reopens_in_new_native_host(cx: &mut VisualTestAppContext, window: AnyWi
 }
 
 pub fn scenario_settings_provider_keys(cx: &mut VisualTestAppContext) {
-    matrix(cx, "smart_commit", provider_leg);
-    eprintln!("[gui-e2e] PASS settings_provider_keys EN/JA Light/Dark 100/167%, 0/1/20 models");
+    matrix(cx, "smart_commit", &[1., 1.111, 1.67], provider_leg);
+    eprintln!(
+        "[gui-e2e] PASS settings_provider_keys EN/JA Light/Dark 100/111.1/167%, 0/1/20 models"
+    );
 }
 
 pub(crate) fn reveal(
@@ -800,7 +864,7 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
 }
 
 pub fn scenario_settings_analyze_ignore_feedback(cx: &mut VisualTestAppContext) {
-    matrix(cx, "analyze", analyze_leg);
+    matrix(cx, "analyze", &[1., 1.67], analyze_leg);
     eprintln!(
         "[gui-e2e] PASS settings_analyze_ignore_feedback EN/JA Light/Dark 100/167% Save/Reset failure and recovery"
     );

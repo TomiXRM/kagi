@@ -122,6 +122,8 @@ pub struct GitCliOptions<'a> {
     /// Bytes fed to the child's stdin, then EOF (`git update-ref --stdin`,
     /// #344). `None` = `/dev/null`, so no child ever waits on a terminal.
     pub stdin: Option<&'a [u8]>,
+    /// A longer deadline for an explicitly approved large transfer.
+    pub timeout: Option<Duration>,
 }
 
 fn hardening_args(fsmonitor: FsmonitorMode) -> Vec<&'static str> {
@@ -366,7 +368,10 @@ pub fn git_command(repo_dir: &Path) -> std::process::Command {
     git_command_with_executable(repo_dir, Path::new("git"))
 }
 
-fn git_command_with_executable(repo_dir: &Path, executable: &Path) -> std::process::Command {
+pub(crate) fn git_command_with_executable(
+    repo_dir: &Path,
+    executable: &Path,
+) -> std::process::Command {
     let mut cmd = std::process::Command::new(executable);
     for var in REPO_LOCAL_ENV {
         cmd.env_remove(var);
@@ -436,7 +441,26 @@ pub fn run_git_with_options(
     args: &[&str],
     options: GitCliOptions<'_>,
 ) -> Result<GitCliOutput, GitError> {
-    run_git_internal(repo_dir, args, options, None)
+    run_git_internal(repo_dir, args, options, None, None)
+}
+
+/// A hardened Git command whose stdin is a file, for streaming LFS clean.
+pub(crate) fn run_git_with_input_file(
+    repo_dir: &Path,
+    args: &[&str],
+    file: std::fs::File,
+    timeout: Duration,
+) -> Result<GitCliOutput, GitError> {
+    run_git_internal(
+        repo_dir,
+        args,
+        GitCliOptions {
+            timeout: Some(timeout),
+            ..Default::default()
+        },
+        None,
+        Some(file),
+    )
 }
 
 /// Only approved commit executors may opt into the user's hooks. The private
@@ -446,7 +470,7 @@ pub(crate) fn run_git_commit(
     index: &Path,
     args: &[&str],
 ) -> Result<GitCliOutput, GitError> {
-    run_git_internal(repo_dir, args, GitCliOptions::default(), Some(index))
+    run_git_internal(repo_dir, args, GitCliOptions::default(), Some(index), None)
 }
 
 fn run_git_internal(
@@ -454,6 +478,7 @@ fn run_git_internal(
     args: &[&str],
     options: GitCliOptions<'_>,
     commit_index: Option<&Path>,
+    stdin_file: Option<std::fs::File>,
 ) -> Result<GitCliOutput, GitError> {
     let local_overrides = repo_local_overrides(repo_dir)?;
     let mut full = hardening_args(options.fsmonitor);
@@ -473,11 +498,14 @@ fn run_git_internal(
         cmd.env("GIT_INDEX_FILE", index);
     }
 
-    let run = run_child(
-        &mut cmd,
-        Duration::from_secs(GIT_CLI_TIMEOUT_SECS),
-        options.stdin,
-    )
+    let timeout = options
+        .timeout
+        .unwrap_or(Duration::from_secs(GIT_CLI_TIMEOUT_SECS));
+    let run = if let Some(file) = stdin_file {
+        crate::proc::run_child_with_stdin_file(&mut cmd, timeout, file)
+    } else {
+        run_child(&mut cmd, timeout, options.stdin)
+    }
     .map_err(|e| GitError::Other(format!("failed to start git {}: {}", args.join(" "), e)))?;
 
     // A deadline that expires is not an exit: `git push` may already have moved

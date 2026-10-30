@@ -238,9 +238,14 @@ pub(crate) fn execute_force_with_lease_push(
     // where `--` cannot protect it — the leading-dash reject is the guard there.
     check_operand("remote", &remote)?;
     check_operand("branch", &branch)?;
+    let local_oid = head_ref
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target".into()))?;
+    crate::lfs::upload_for_push(repo, repo_path, &remote, local_oid)?;
+    let refspec = format!("{local_oid}:refs/heads/{branch}");
 
     let lease_arg = format!("--force-with-lease={}:{}", branch, lease_oid);
-    let out = run_git(repo_path, &["push", &lease_arg, "--", &remote, &branch])
+    let out = run_git(repo_path, &["push", &lease_arg, "--", &remote, &refspec])
         .map_err(|e| crate::cli::context("push failed", e))?;
 
     if out.status != 0 {

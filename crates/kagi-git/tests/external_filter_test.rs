@@ -31,24 +31,31 @@ fn fixture() -> TempDir {
     dir
 }
 
-fn assert_filter(error: GitError) {
+fn assert_filter(error: GitError, driver: &str) {
     assert!(
         matches!(error, GitError::Blocked(_)),
         "typed filter refusal: {error:?}"
     );
     assert!(
-        error.to_string().contains("external filter (lfs)"),
+        error
+            .to_string()
+            .contains(&format!("external filter ({driver})")),
         "{error}"
     );
 }
 
 #[test]
-fn external_filter_single_and_bulk_stage_preserve_index() {
+fn unknown_filter_single_and_bulk_stage_preserve_index() {
     if !isolated::run_isolated() {
         return;
     }
     for bulk in [false, true] {
         let dir = fixture();
+        write_file(
+            dir.path(),
+            ".git/info/attributes",
+            "asset.bin filter=custom\n",
+        );
         let backend = Backend::open(dir.path()).unwrap();
         let before = std::fs::read(dir.path().join(".git/index")).unwrap();
         let result = if bulk {
@@ -58,7 +65,10 @@ fn external_filter_single_and_bulk_stage_preserve_index() {
         } else {
             backend.stage_file(Path::new("asset.bin"))
         };
-        assert_filter(result.expect_err("raw worktree bytes must not be staged"));
+        assert_filter(
+            result.expect_err("unknown filter must not be staged"),
+            "custom",
+        );
         assert_eq!(
             std::fs::read(dir.path().join(".git/index")).unwrap(),
             before
@@ -87,6 +97,7 @@ fn external_filter_hunk_and_discard_preserve_index_and_worktree() {
         backend
             .stage_hunk(Path::new("asset.bin"), approved)
             .unwrap_err(),
+        "lfs",
     );
     let op = Operation::Discard {
         paths: vec!["asset.bin".into()],
@@ -118,7 +129,6 @@ fn external_filter_info_attributes_and_lfs_markers_are_honored() {
         return;
     }
     for attributes in [
-        "asset.bin filter=lfs\n",
         "asset.bin diff=lfs\n",
         "asset.bin merge=lfs\n",
         "asset.bin filter=custom\n",

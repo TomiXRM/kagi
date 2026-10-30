@@ -412,6 +412,12 @@ impl Backend {
         status::working_tree_status(&self.repo)
     }
 
+    /// Effective LFS attribute for a current worktree path. Pure read; the UI
+    /// uses it to choose its existing binary preview for Stage/Commit review.
+    pub fn is_lfs_path(&self, path: &Path) -> Result<bool, GitError> {
+        crate::special_repo::FilterCheck::new(&self.repo)?.is_lfs(path)
+    }
+
     /// [`Backend::working_tree_status`], additionally writing the refreshed
     /// index stat cache back. **Only the UI refresh path may call this**
     /// (ADR-0193) — every `plan_*` / `preflight_*` / snapshot caller must keep
@@ -850,7 +856,7 @@ impl Backend {
     }
 
     pub fn plan(&self, op: &Operation) -> Result<OperationPlan, GitError> {
-        match op {
+        let mut plan = match op {
             Operation::Commit { message } => self.plan_commit(message),
             Operation::MergeCommit { message } => self.plan_merge_commit(message),
             Operation::Checkout { branch } => self.plan_checkout(branch),
@@ -949,7 +955,15 @@ impl Backend {
             Operation::RestoreToPoint { entry_id } => {
                 ops::plan_restore_to_point(&self.repo, *entry_id)
             }
+        }?;
+        if let Some(blocker) = crate::lfs::worktree_write_blocker(&self.repo, op)? {
+            if !plan.blockers.contains(&blocker) {
+                plan.blockers.push(blocker);
+            }
+            plan.disposition =
+                kagi_domain::plan_note::PlanDisposition::for_blockers(&plan.blockers);
         }
+        Ok(plan)
     }
 
     /// Execute a confirmed Operation plan through mandatory owner trust,

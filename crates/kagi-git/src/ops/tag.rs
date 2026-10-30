@@ -337,6 +337,12 @@ pub(crate) fn execute_push_tag(repo_path: &Path, plan: &OperationPlan) -> Result
     preflight_push_tag(&repo, plan, &approved.remote, &approved.name)?;
     check_operand("remote", &approved.remote)?;
     check_operand("tag", &approved.name)?;
+    let object = repo
+        .revparse_single(&format!("refs/tags/{}", approved.name))
+        .map_err(|e| GitError::Other(format!("cannot read tag for LFS upload: {e}")))?;
+    if let Ok(commit) = object.peel_to_commit() {
+        crate::lfs::upload_for_push(&repo, repo_path, &approved.remote, commit.id())?;
+    }
     let refspec = format!("{}:refs/tags/{}", approved.object_oid, approved.name);
     let out = run_git(repo_path, &["push", "--", &approved.remote, &refspec])
         .map_err(|e| crate::cli::context("push tag failed", e))?;

@@ -133,14 +133,20 @@ impl MainDiffRead {
         };
         match result {
             Ok(file_diff) => {
-                let pair = prepare_diff_media(
-                    &backend,
-                    &file_diff,
-                    &source,
-                    path,
-                    compare_head.as_ref(),
-                    rename_from,
-                );
+                // The backend classifies both sides before generating hunks.
+                // LFS pointers are binary presentation, never media sources.
+                let pair = if file_diff.is_lfs {
+                    None
+                } else {
+                    prepare_diff_media(
+                        &backend,
+                        &file_diff,
+                        &source,
+                        path,
+                        compare_head.as_ref(),
+                        rename_from,
+                    )
+                };
                 let pdfs = pair.as_ref().and_then(SidePair::pdf_sources);
                 let images = pair.as_ref().and_then(image_pair);
                 let view = if pair
@@ -1058,6 +1064,7 @@ mod tests {
             },
             hunks: Vec::new(),
             is_binary: false,
+            is_lfs: false,
         };
         assert_eq!(
             super::side_paths(&diff, requested, None),

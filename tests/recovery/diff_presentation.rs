@@ -1,5 +1,5 @@
 //! Rendered diff mode and binary-state regression coverage (#1235/#1236).
-use crate::diff_highlight::{commit_image_index, png_bytes};
+use crate::diff_highlight::{commit_image_index, main_view, png_bytes};
 use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, git, mount, unmount};
 use crate::recovery_layout::{draw, GlobalSettings};
@@ -8,6 +8,8 @@ use kagi::ui::conflict_view::ConflictView;
 use kagi::ui::diff_view::retired_side_image_count_for_e2e;
 use kagi::ui::e2e;
 use kagi_ui_core::{i18n, theme};
+use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::Ordering;
 
 fn frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
@@ -15,6 +17,98 @@ fn frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
         cx.run_until_parked();
         draw(cx, win, (1440., 900.));
     }
+}
+
+pub fn scenario_lfs_binary_preview(cx: &mut VisualTestAppContext) {
+    let available = Command::new("git-lfs")
+        .arg("version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if std::env::var_os("CI").is_some() {
+        assert!(
+            available,
+            "CI must install git-lfs for the LFS GUI scenario"
+        );
+    }
+    if !available {
+        eprintln!("[gui-e2e] SKIP lfs_binary_preview: git-lfs unavailable");
+        return;
+    }
+
+    let restore = GlobalSettings::capture();
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    std::fs::create_dir(repo.join("mechanical")).unwrap();
+    std::fs::write(
+        repo.join("mechanical/.gitattributes"),
+        "*.step filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .unwrap();
+    git(repo, &["add", "mechanical/.gitattributes"]);
+    git(repo, &["commit", "-qm", "track CAD with LFS"]);
+    let path = Path::new("mechanical/part.step");
+    std::fs::write(
+        repo.join(path),
+        b"ISO-10303-21;\nDATA;\nold CAD;\nENDSEC;\n",
+    )
+    .unwrap();
+    let backend = kagi_git::Backend::open(repo).unwrap();
+    backend.stage_file(path).unwrap();
+    git(repo, &["commit", "-qm", "add CAD"]);
+    std::fs::write(
+        repo.join(path),
+        b"ISO-10303-21;\nDATA;\nnew CAD;\nENDSEC;\n",
+    )
+    .unwrap();
+
+    let (app, win) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.to_path_buf(), cx);
+    });
+    cx.run_until_parked();
+    for staged in [false, true] {
+        if staged {
+            backend.stage_file(path).unwrap();
+            app.update(cx, |app, cx| app.reload_external(cx));
+            frame(cx, win);
+        }
+        for locale in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            let expected = if locale == "en" {
+                "Binary file — no text diff. Open in external editor to compare."
+            } else {
+                "binary ファイル — テキスト diff はありません。外部エディタで開いて比較してください。"
+            };
+            e2e::diff_presentation::clear();
+            app.update(cx, |app, cx| {
+                let file = if staged {
+                    kagi::ui::commit_panel::CommitPanelFileRef::Staged { index: 0 }
+                } else {
+                    kagi::ui::commit_panel::CommitPanelFileRef::Unstaged { index: 0 }
+                };
+                app.open_main_diff_wip(file, cx);
+            });
+            frame(cx, win);
+            let view = main_view(cx, &app).expect("open CAD diff");
+            assert!(matches!(
+                view.rows.as_slice(),
+                [kagi::ui::diff_view::DiffRow::Binary]
+            ));
+            assert!(
+                view.side_pair.is_none(),
+                "LFS pointer cannot become side media"
+            );
+            assert_eq!(
+                e2e::diff_presentation::description().as_deref(),
+                Some(expected),
+                "{locale}/{staged}: CAD must hide pointer text"
+            );
+        }
+    }
+    unmount(cx, app, win);
+    drop(restore);
+    eprintln!("[gui-e2e] PASS lfs_binary_preview");
 }
 
 pub fn scenario_diff_mode_segment(cx: &mut VisualTestAppContext) {

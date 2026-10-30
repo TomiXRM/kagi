@@ -1354,6 +1354,7 @@ mod unsafe_unicode_tests {
                 content_identity: None,
             }],
             is_binary: false,
+            is_lfs: false,
         }
     }
 

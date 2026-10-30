@@ -4378,6 +4378,10 @@ mod macos {
                 Box::new(crate::recovery_diff_presentation::scenario_diff_binary_states),
             ),
             (
+                "lfs_binary_preview",
+                Box::new(crate::recovery_diff_presentation::scenario_lfs_binary_preview),
+            ),
+            (
                 "conflict_image_zoom",
                 Box::new(crate::recovery_diff_presentation::scenario_conflict_image_zoom),
             ),

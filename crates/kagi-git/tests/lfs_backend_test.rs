@@ -6,7 +6,7 @@ mod isolated;
 
 use git_fixture::{git, git_output, init_repo, write_file};
 use kagi_domain::plan_note::PlanDisposition;
-use kagi_git::{Backend, Operation};
+use kagi_git::{Backend, CommitId, Operation};
 use std::{path::Path, process::Command};
 use tempfile::TempDir;
 
@@ -22,6 +22,59 @@ fn lfs_available() -> bool {
         );
     }
     available
+}
+
+#[test]
+fn lfs_diff_reads_use_historical_attributes_and_never_build_pointer_hunks() {
+    if !isolated::run_isolated() || !lfs_available() {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path();
+    init_repo(repo, "main");
+    let path = Path::new("mechanical/part.step");
+    std::fs::create_dir(repo.join("mechanical")).unwrap();
+    write_file(
+        repo,
+        "mechanical/.gitattributes",
+        "*.step filter=lfs diff=lfs merge=lfs -text\n",
+    );
+    git(repo, &["add", "mechanical/.gitattributes"]);
+    git(repo, &["commit", "-qm", "LFS attributes"]);
+    write_file(repo, "mechanical/part.step", "ISO-10303-21;\nold CAD\n");
+    let backend = Backend::open(repo).unwrap();
+    backend.stage_file(path).unwrap();
+    let staged = backend.staged_file_diff(path).unwrap();
+    assert!(staged.is_lfs && staged.is_binary && staged.hunks.is_empty());
+    git(repo, &["commit", "-qm", "LFS CAD"]);
+    let lfs_commit = CommitId(git_output(repo, &["rev-parse", "HEAD"]));
+
+    write_file(repo, "mechanical/part.step", "ISO-10303-21;\nnew CAD\n");
+    let unstaged = backend.unstaged_file_diff(path).unwrap();
+    assert!(unstaged.is_lfs && unstaged.is_binary && unstaged.hunks.is_empty());
+    write_file(repo, "mechanical/.gitattributes", "# LFS removed\n");
+    git(
+        repo,
+        &["add", "mechanical/.gitattributes", "mechanical/part.step"],
+    );
+    git(repo, &["commit", "-qm", "plain CAD"]);
+    let plain_commit = CommitId(git_output(repo, &["rev-parse", "HEAD"]));
+
+    let historical = backend.commit_file_diff(&lfs_commit, path).unwrap();
+    assert!(historical.is_lfs && historical.is_binary && historical.hunks.is_empty());
+    let transition = backend.commit_file_diff(&plain_commit, path).unwrap();
+    assert!(transition.is_lfs && transition.is_binary && transition.hunks.is_empty());
+    let compared = backend
+        .compare_file_diff(&lfs_commit, &plain_commit, path)
+        .unwrap();
+    assert!(compared.is_lfs && compared.is_binary && compared.hunks.is_empty());
+
+    write_file(repo, "mechanical/part.step", "ISO-10303-21;\nplain edit\n");
+    git(repo, &["add", "mechanical/part.step"]);
+    git(repo, &["commit", "-qm", "plain edit"]);
+    let current = CommitId(git_output(repo, &["rev-parse", "HEAD"]));
+    let ordinary = backend.commit_file_diff(&current, path).unwrap();
+    assert!(!ordinary.is_lfs && !ordinary.is_binary && !ordinary.hunks.is_empty());
 }
 
 #[test]

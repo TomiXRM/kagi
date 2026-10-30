@@ -190,6 +190,7 @@ pub fn parse_file_diff(text: &str) -> FileDiff {
         change,
         hunks,
         is_binary,
+        is_lfs: false,
     }
 }
 

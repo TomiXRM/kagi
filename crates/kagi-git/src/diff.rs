@@ -222,7 +222,13 @@ pub fn commit_file_diff(
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut diff_opts))
         .map_err(|e| diff_error(repo, &e))?;
 
-    diff_to_file_diff(repo, &mut diff, path)
+    let new_lfs = crate::special_repo::FilterCheck::for_tree(repo, &new_tree)?.is_lfs(path)?;
+    let old_lfs = match parent_tree.as_ref() {
+        Some(tree) => crate::special_repo::FilterCheck::for_tree(repo, tree)?.is_lfs(path)?,
+        None => false,
+    };
+    let lfs = new_lfs || old_lfs;
+    diff_to_file_diff(repo, &mut diff, path, lfs)
 }
 
 /// Return files changed between two commits (`a` → `b`) without touching the
@@ -284,7 +290,9 @@ pub fn compare_file_diff(
     let mut diff = repo
         .diff_tree_to_tree(Some(&a_tree), Some(&b_tree), Some(&mut diff_opts))
         .map_err(|e| diff_error(repo, &e))?;
-    diff_to_file_diff(repo, &mut diff, path)
+    let lfs = crate::special_repo::FilterCheck::for_tree(repo, &b_tree)?.is_lfs(path)?
+        || crate::special_repo::FilterCheck::for_tree(repo, &a_tree)?.is_lfs(path)?;
+    diff_to_file_diff(repo, &mut diff, path, lfs)
 }
 
 /// Return files changed between a commit and the current working tree,
@@ -319,7 +327,9 @@ pub fn compare_commit_to_workdir_file_diff(
     let mut diff = repo
         .diff_tree_to_workdir_with_index(Some(&a_tree), Some(&mut diff_opts))
         .map_err(|e| diff_error(repo, &e))?;
-    diff_to_file_diff(repo, &mut diff, path)
+    let lfs = crate::special_repo::FilterCheck::new(repo)?.is_lfs(path)?
+        || crate::special_repo::FilterCheck::for_tree(repo, &a_tree)?.is_lfs(path)?;
+    diff_to_file_diff(repo, &mut diff, path, lfs)
 }
 
 fn find_commit<'repo>(
@@ -379,13 +389,16 @@ fn diff_to_file_diff(
     repo: &Repository,
     diff: &mut Diff<'_>,
     path: &Path,
+    lfs: bool,
 ) -> Result<FileDiff, GitError> {
-    let mut find_opts = DiffFindOptions::new();
-    find_opts.renames(true);
-    diff.find_similar(Some(&mut find_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    if !lfs {
+        let mut find_opts = DiffFindOptions::new();
+        find_opts.renames(true);
+        diff.find_similar(Some(&mut find_opts))
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+    }
 
-    patch_to_file_diff(repo, diff, path)
+    patch_to_file_diff(repo, diff, path, lfs)
 }
 
 /// Convert the selected delta without changing the caller's rename/pathspec policy.
@@ -395,6 +408,7 @@ pub(crate) fn patch_to_file_diff(
     repo: &Repository,
     diff: &git2::Diff<'_>,
     path: &Path,
+    lfs: bool,
 ) -> Result<FileDiff, GitError> {
     // Never fall back to delta 0: a missing exact match must not show another file.
     let Some(delta_idx) = diff.deltas().position(|delta| {
@@ -406,10 +420,15 @@ pub(crate) fn patch_to_file_diff(
             change: ChangeKind::Modified,
             hunks: vec![],
             is_binary: false,
+            is_lfs: lfs,
         });
     };
 
-    let patch = git2::Patch::from_diff(diff, delta_idx).map_err(|e| diff_error(repo, &e))?;
+    let patch = if lfs {
+        None
+    } else {
+        git2::Patch::from_diff(diff, delta_idx).map_err(|e| diff_error(repo, &e))?
+    };
     // libgit2 inspects content lazily. Re-read the delta after materializing the
     // patch rather than using flags copied before inspection or guessing from
     // zero hunks (which also occur for empty files, renames and mode-only changes).
@@ -427,7 +446,7 @@ pub(crate) fn patch_to_file_diff(
         git2::Delta::Typechange => ChangeKind::TypeChange,
         _ => ChangeKind::Modified,
     };
-    let is_binary = delta.old_file().is_binary() || delta.new_file().is_binary();
+    let is_binary = lfs || delta.old_file().is_binary() || delta.new_file().is_binary();
     let mut hunks = match patch {
         Some(patch) if !is_binary => patch_hunks(&patch)?,
         _ => Vec::new(),
@@ -453,6 +472,7 @@ pub(crate) fn patch_to_file_diff(
         change,
         hunks,
         is_binary,
+        is_lfs: lfs,
     })
 }
 

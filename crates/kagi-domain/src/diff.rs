@@ -343,6 +343,9 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
     /// `true` if git detected the file as binary (no text diff available).
     pub is_binary: bool,
+    /// LFS attributes apply to a side of this diff; no pointer text or media
+    /// should be projected from it.
+    pub is_lfs: bool,
 }
 
 #[cfg(test)]

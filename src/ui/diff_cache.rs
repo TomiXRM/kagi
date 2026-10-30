@@ -138,6 +138,7 @@ mod tests {
                 change: kagi_git::ChangeKind::Modified,
                 hunks: Vec::new(),
                 is_binary: false,
+                is_lfs: false,
             })
             .into(),
         );

@@ -5,6 +5,7 @@ mod git_fixture;
 mod isolated;
 
 use git_fixture::{commit_all, git, git_output, init_repo, write_file};
+use kagi_domain::diff::{HunkApproval, HunkRange};
 use kagi_git::{Backend, GitError, Operation};
 use std::path::Path;
 use tempfile::TempDir;
@@ -92,10 +93,18 @@ fn external_filter_hunk_and_discard_preserve_index_and_worktree() {
     let before = std::fs::read(dir.path().join(".git/index")).unwrap();
     let bytes = std::fs::read(dir.path().join("asset.bin")).unwrap();
     let diff = backend.unstaged_file_diff(Path::new("asset.bin")).unwrap();
-    let approved = diff.hunks[0].approval().unwrap();
+    assert!(diff.is_lfs && diff.is_binary && diff.hunks.is_empty());
+    let forged = HunkApproval {
+        range: HunkRange {
+            old: (1, 1),
+            new: (1, 1),
+        },
+        old_digest: [0; 32],
+        new_digest: [0; 32],
+    };
     assert_filter(
         backend
-            .stage_hunk(Path::new("asset.bin"), approved)
+            .stage_hunk(Path::new("asset.bin"), forged)
             .unwrap_err(),
         "lfs",
     );
@@ -190,14 +199,7 @@ fn external_filter_unstage_restores_pointer_without_importing_worktree() {
     git(dir.path(), &["add", "asset.bin"]);
     let backend = Backend::open(dir.path()).unwrap();
     let diff = backend.staged_file_diff(Path::new("asset.bin")).unwrap();
-    backend
-        .unstage_hunk(Path::new("asset.bin"), diff.hunks[0].approval().unwrap())
-        .unwrap();
-    assert_eq!(
-        git_output(dir.path(), &["show", ":asset.bin"]),
-        POINTER.trim()
-    );
-    git(dir.path(), &["add", "asset.bin"]);
+    assert!(diff.is_lfs && diff.is_binary && diff.hunks.is_empty());
     backend.unstage_file(Path::new("asset.bin")).unwrap();
     assert_eq!(
         git_output(dir.path(), &["show", ":asset.bin"]),

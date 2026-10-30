@@ -179,13 +179,17 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
 pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitError> {
+    let lfs = crate::special_repo::FilterCheck::new(repo)?.is_lfs(path)?
+        || crate::special_repo::FilterCheck::for_index(repo)?.is_lfs(path)?;
     // A conflicted path first: it has no stage-0 index entry, so the normal
     // index→workdir diff emits a Conflicted delta that Patch::from_diff has no
     // content for, and the pane painted "+0 −0" with no hunks (GUI report,
     // after a conflicted stash pop). Show ours (stage 2) → worktree instead —
     // exactly what the conflicted operation injected, markers included.
-    if let Some(fallback) = conflicted_file_diff(repo, path)? {
-        return Ok(fallback);
+    if !lfs {
+        if let Some(fallback) = conflicted_file_diff(repo, path)? {
+            return Ok(fallback);
+        }
     }
 
     let mut diff_opts = DiffOptions::new();
@@ -202,7 +206,7 @@ pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, Gi
         .diff_index_to_workdir(None, Some(&mut diff_opts))
         .map_err(|e| GitError::Other(format!("diff_index_to_workdir failed: {}", e.message())))?;
 
-    patch_to_file_diff(repo, &diff, path)
+    patch_to_file_diff(repo, &diff, path, lfs)
 }
 
 /// Outer `None` means no conflict for this path; `Some(None)` means a conflict
@@ -275,6 +279,7 @@ fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDif
         },
         hunks: patch_hunks(&patch)?,
         is_binary: false,
+        is_lfs: false,
     }))
 }
 
@@ -326,7 +331,13 @@ pub fn staged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitE
         .diff_tree_to_index(old_tree.as_ref(), None, Some(&mut diff_opts))
         .map_err(|e| GitError::Other(format!("diff_tree_to_index failed: {}", e.message())))?;
 
-    patch_to_file_diff(repo, &diff, path)
+    let index_lfs = crate::special_repo::FilterCheck::for_index(repo)?.is_lfs(path)?;
+    let head_lfs = match old_tree.as_ref() {
+        Some(tree) => crate::special_repo::FilterCheck::for_tree(repo, tree)?.is_lfs(path)?,
+        None => false,
+    };
+    let lfs = index_lfs || head_lfs;
+    patch_to_file_diff(repo, &diff, path, lfs)
 }
 
 // ────────────────────────────────────────────────────────────

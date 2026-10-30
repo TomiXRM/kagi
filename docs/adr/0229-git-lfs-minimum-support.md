@@ -129,6 +129,14 @@ passes Kagi's safety policy. Both repositories were cloned at the pinned heads.
   Binary LFS files are selectable as whole files. Show specific setup and
   transfer failures through those surfaces in EN and JA; no new top-level LFS
   screen or repository-wide mode is needed. Progress detail is a later UI slice.
+- The diff backend checks both sides' effective attributes before materializing
+  text hunks. For Commit/Compare it reads each historical tree's attributes;
+  for WIP it reads the index and worktree or HEAD as appropriate. If either
+  side is LFS, `FileDiff` carries `is_lfs` and a binary, hunk-free presentation.
+  The UI skips side-media preparation so pointer text cannot become a preview.
+  An LFS-to-ordinary transition remains binary for that one comparison; later
+  ordinary commits regain text diffs. This classification stays testable with
+  `cargo test -p kagi-git` without GPUI.
 
 ## Acceptance matrix
 

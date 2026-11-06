@@ -5,6 +5,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-11-06
+
 ### Changed
 
 - Rebuild Settings as eight stable sidebar panes: Appearance, Graph, Editor, Terminal, Network & Sync, Smart Commit, Analyze and General. Retain every existing preference and native effect; use fixed category tiles, palette-driven theme cards, separate keyboard focus/selection/ON states, and wrapping EN/JA controls. Use the canonical fixed 900×760-point native window, with traffic lights in the sidebar inset and no Kagi-drawn title band; retain Analyze drafts across pane changes and reopening. (#1814, #1816, #1818)
